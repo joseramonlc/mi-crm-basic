@@ -1,0 +1,7 @@
+:root {
+  /* ── Elevation ── */
+  --shadow-0: none; /* primary surfaces — flat */
+  --shadow-1: 0 1px 2px rgba(15,23,42,.06), 0 1px 3px rgba(15,23,42,.08); /* cards at rest */
+  --shadow-2: 0 4px 12px rgba(15,23,42,.1); /* elevated cards, dropdowns */
+  --shadow-3: 0 12px 32px rgba(15,23,42,.18); /* modals, bottom sheets */
+}

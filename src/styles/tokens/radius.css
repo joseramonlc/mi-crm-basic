@@ -1,0 +1,10 @@
+:root {
+  /* ── Border radius ── */
+  --radius-none: 0;
+  --radius-sm: 4px;    /* small inputs */
+  --radius-md: 8px;    /* cards, standard inputs, buttons */
+  --radius-lg: 12px;   /* modals, sheets */
+  --radius-xl: 16px;   /* large cards */
+  --radius-card: 14px; /* prospect card */
+  --radius-full: 9999px; /* badges, pills, FAB */
+}

@@ -1,0 +1,13 @@
+:root {
+  /* ── Borders ── */
+  --border-width: 1px;
+  --border-width-thick: 2px;
+  --border-default: #E2E8F0; /* cards, dividers */
+  --border-strong: #CBD5E1;  /* inputs */
+  --border-focus: #16A34A;   /* focus */
+  --border-error: #DC2626;   /* error */
+
+  /* Focus ring: 3px halo of the focus/error color at 15% */
+  --focus-ring: 0 0 0 3px rgba(22,163,74,.15);
+  --focus-ring-error: 0 0 0 3px rgba(220,38,38,.15);
+}

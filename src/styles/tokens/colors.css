@@ -1,0 +1,72 @@
+:root {
+  /* ── Primary · Green (action & trust) ── */
+  --color-primary-50:  #ECFDF3;
+  --color-primary-100: #D1FADF;
+  --color-primary-200: #A6F4C5;
+  --color-primary-300: #6CE9A6;
+  --color-primary-400: #32D583;
+  --color-primary-500: #16A34A; /* base */
+  --color-primary-600: #15803D;
+  --color-primary-700: #166534;
+  --color-primary-800: #14532D;
+  --color-primary-900: #052E16;
+
+  /* ── Accent · Violet (secondary highlights, sparingly) ── */
+  --color-accent-50:  #F5F3FF;
+  --color-accent-100: #EDE9FE;
+  --color-accent-500: #7C3AED; /* base */
+  --color-accent-700: #6D28D9;
+
+  /* ── Neutrals · Slate ── */
+  --color-neutral-white: #FFFFFF;
+  --color-neutral-50:  #F8FAFC;
+  --color-neutral-100: #F1F5F9;
+  --color-neutral-200: #E2E8F0;
+  --color-neutral-300: #CBD5E1;
+  --color-neutral-400: #94A3B8;
+  --color-neutral-500: #64748B;
+  --color-neutral-600: #475569;
+  --color-neutral-700: #334155;
+  --color-neutral-800: #1E293B;
+  --color-neutral-900: #0F172A;
+  --color-neutral-black: #020617;
+
+  /* ── Semantic ── */
+  --color-success: #16A34A;
+  --color-success-bg: #ECFDF3;
+  --color-success-text: #15803D;
+  --color-warning: #F59E0B;
+  --color-warning-bg: #FFFBEB;
+  --color-warning-text: #B45309;
+  --color-error: #EF4444;
+  --color-error-bg: #FEF2F2;
+  --color-error-text: #DC2626;
+  --color-info: #3B82F6;
+  --color-info-bg: #EFF6FF;
+  --color-info-text: #2563EB;
+
+  /* ── Pipeline stages (6) — bg / text / dot ── */
+  --color-stage-new-bg:        #EEF2F7; --color-stage-new-text:        #475569; --color-stage-new-dot:        #64748B;
+  --color-stage-contacted-bg:  #EEF2FF; --color-stage-contacted-text:  #4338CA; --color-stage-contacted-dot:  #4F46E5;
+  --color-stage-presented-bg:  #F5F3FF; --color-stage-presented-text:  #6D28D9; --color-stage-presented-dot:  #7C3AED;
+  --color-stage-evaluating-bg: #FFF7ED; --color-stage-evaluating-text: #C2410C; --color-stage-evaluating-dot: #EA580C;
+  --color-stage-joined-bg:     #ECFDF3; --color-stage-joined-text:     #15803D; --color-stage-joined-dot:     #16A34A;
+  --color-stage-discarded-bg:  #F1F5F9; --color-stage-discarded-text:  #64748B; --color-stage-discarded-dot:  #94A3B8;
+
+  /* ── Priority (3) — bg / text / dot ── */
+  --color-priority-high-bg:   #FEF2F2; --color-priority-high-text:   #DC2626; --color-priority-high-dot:   #EF4444;
+  --color-priority-medium-bg: #FFFBEB; --color-priority-medium-text: #B45309; --color-priority-medium-dot: #F59E0B;
+  --color-priority-low-bg:    #F0FDF4; --color-priority-low-text:    #15803D; --color-priority-low-dot:    #86EFAC;
+
+  /* ── Semantic surface aliases ── */
+  --surface-app:    var(--color-neutral-100);
+  --surface-card:   var(--color-neutral-white);
+  --surface-sunken: var(--color-neutral-50);
+  --text-strong:    var(--color-neutral-900);
+  --text-body:      var(--color-neutral-600);
+  --text-muted:     var(--color-neutral-400);
+  --text-on-primary: var(--color-neutral-white);
+  --action:         var(--color-primary-500);
+  --action-hover:   var(--color-primary-600);
+  --action-pressed: var(--color-primary-700);
+}

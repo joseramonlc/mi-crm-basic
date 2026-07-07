@@ -1,0 +1,12 @@
+:root {
+  /* ── Motion ── Subtle, quick, no bounce. UI fades & 150ms transitions. */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1); /* @kind other */
+  --ease-out: cubic-bezier(0, 0, 0.2, 1); /* @kind other */
+  --duration-fast: 120ms; /* @kind other */
+  --duration-base: 150ms; /* @kind other */
+  --duration-slow: 240ms; /* @kind other */
+}
+
+@keyframes el-spin { to { transform: rotate(360deg); } }
+@keyframes el-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes el-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }

@@ -1,0 +1,23 @@
+<!-- @dsCard group="Colors" viewport="700x130" name="Pipeline stages" subtitle="6 stages — bg + text + dot, in flow order" -->
+<!DOCTYPE html><html><head><meta charset="UTF-8"/><link rel="stylesheet" href="../styles.css"/>
+<style>
+  body{margin:0;padding:20px;background:#fff;font-family:'Inter',sans-serif;}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+  .pill{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:9999px;font-size:13px;font-weight:600;}
+  .dot{width:8px;height:8px;border-radius:50%;}
+  .arr{color:var(--color-neutral-300);font-size:14px;}
+</style></head>
+<body>
+<div class="row">
+  <span class="pill" style="background:var(--color-stage-new-bg);color:var(--color-stage-new-text)"><span class="dot" style="background:var(--color-stage-new-dot)"></span>Nuevo</span>
+  <span class="arr">→</span>
+  <span class="pill" style="background:var(--color-stage-contacted-bg);color:var(--color-stage-contacted-text)"><span class="dot" style="background:var(--color-stage-contacted-dot)"></span>Contactado</span>
+  <span class="arr">→</span>
+  <span class="pill" style="background:var(--color-stage-presented-bg);color:var(--color-stage-presented-text)"><span class="dot" style="background:var(--color-stage-presented-dot)"></span>Presentación realizada</span>
+  <span class="arr">→</span>
+  <span class="pill" style="background:var(--color-stage-evaluating-bg);color:var(--color-stage-evaluating-text)"><span class="dot" style="background:var(--color-stage-evaluating-dot)"></span>En valoración</span>
+  <span class="arr">→</span>
+  <span class="pill" style="background:var(--color-stage-joined-bg);color:var(--color-stage-joined-text)"><span class="dot" style="background:var(--color-stage-joined-dot)"></span>Incorporado</span>
+  <span class="pill" style="background:var(--color-stage-discarded-bg);color:var(--color-stage-discarded-text)"><span class="dot" style="background:var(--color-stage-discarded-dot)"></span>Descartado</span>
+</div>
+</body></html>

@@ -1,0 +1,1005 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Evolución Líder CRM — Design System v1.0</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: #F1F5F9;
+  color: #0F172A;
+  -webkit-font-smoothing: antialiased;
+  padding: 40px;
+  min-width: 1400px;
+}
+i[data-lucide] { display: inline-flex; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Layout ── */
+.canvas { position: relative; }
+.section-wrap {
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 1px 3px rgba(15,23,42,.06), 0 8px 24px rgba(15,23,42,.04);
+  padding: 32px;
+  margin-bottom: 24px;
+}
+.section-label {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: #94A3B8; margin-bottom: 20px;
+}
+.section-title { font-size: 14px; font-weight: 700; color: #0F172A; margin-bottom: 4px; }
+.section-sub { font-size: 12px; color: #94A3B8; font-family: ui-monospace, monospace; margin-bottom: 18px; }
+.divider { height: 1px; background: #F1F5F9; margin: 28px 0; }
+.row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.col { display: flex; flex-direction: column; gap: 6px; }
+
+/* ── 01 Brand ── */
+.brand-logo-mark {
+  width: 60px; height: 60px; border-radius: 16px; background: #16A34A;
+  display: flex; align-items: flex-end; justify-content: center;
+  gap: 5px; padding: 14px; box-shadow: 0 6px 16px rgba(22,163,74,.32);
+}
+.brand-logo-mark span {
+  background: #fff; border-radius: 2px; width: 7px;
+}
+.brand-name { font-size: 24px; font-weight: 700; color: #0F172A; letter-spacing: -0.02em; line-height: 1.1; }
+.brand-sub { font-size: 13px; font-weight: 600; color: #16A34A; letter-spacing: 0.04em; text-transform: uppercase; margin-top: 3px; }
+.brand-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.brand-tag {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border-radius: 9999px;
+  background: #F1F5F9; color: #334155; font-size: 12px; font-weight: 600;
+}
+.brand-tag .dot { width: 8px; height: 8px; border-radius: 9999px; background: #16A34A; }
+
+/* ── 02 Colors ── */
+.swatch-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.swatch-item { width: 76px; }
+.swatch-block { height: 52px; border-radius: 8px; border: 1px solid rgba(15,23,42,.06); margin-bottom: 6px; }
+.swatch-token { font-size: 11px; font-weight: 700; color: #0F172A; font-family: ui-monospace, monospace; }
+.swatch-hex { font-size: 10px; color: #94A3B8; font-family: ui-monospace, monospace; }
+
+.semantic-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+.semantic-card { flex: 1; min-width: 160px; border: 1px solid #E2E8F0; border-radius: 12px; overflow: hidden; }
+.semantic-top { height: 44px; }
+.semantic-body { padding: 12px 14px; }
+.semantic-name { font-weight: 700; font-size: 14px; }
+.semantic-meta { font-family: ui-monospace, monospace; font-size: 10px; color: #64748B; margin-top: 4px; }
+
+/* ── 03 Typography ── */
+.type-row { padding: 14px 0; border-top: 1px solid #F1F5F9; }
+.type-meta-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+.type-name { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: #16A34A; }
+.type-meta { font-family: ui-monospace, monospace; font-size: 11px; color: #94A3B8; }
+
+/* ── 04 Spacing ── */
+.space-row { display: flex; align-items: center; gap: 16px; padding: 7px 0; }
+.space-token { width: 90px; font-family: ui-monospace, monospace; font-size: 12px; color: #0F172A; font-weight: 600; }
+.space-px { width: 36px; font-family: ui-monospace, monospace; font-size: 12px; color: #94A3B8; }
+.space-bar { height: 14px; border-radius: 3px; background: #16A34A; }
+
+/* ── 05 Radius & Shadows ── */
+.radius-grid { display: flex; flex-wrap: wrap; gap: 20px; }
+.radius-item { text-align: center; }
+.radius-box { width: 72px; height: 72px; background: #ECFDF3; border: 2px solid #16A34A; }
+.radius-token { font-family: ui-monospace, monospace; font-size: 11px; color: #0F172A; font-weight: 600; margin-top: 8px; }
+.radius-val { font-family: ui-monospace, monospace; font-size: 10px; color: #94A3B8; }
+
+.shadow-grid { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 28px; }
+.shadow-item { text-align: center; }
+.shadow-box { width: 96px; height: 72px; background: #fff; border-radius: 12px; }
+.shadow-token { font-family: ui-monospace, monospace; font-size: 11px; color: #0F172A; font-weight: 600; margin-top: 14px; }
+.shadow-label { font-size: 10px; color: #94A3B8; }
+
+/* ── 06 Icons ── */
+.icon-grid { display: grid; grid-template-columns: repeat(auto-fill, 96px); gap: 10px; }
+.icon-cell {
+  border: 1px solid #E2E8F0; border-radius: 12px; padding: 14px 8px;
+  display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;
+}
+.icon-label { font-size: 10px; color: #64748B; line-height: 1.3; }
+
+/* ── 07 Pipeline stages ── */
+.stage-row { display: flex; align-items: center; gap: 14px; padding: 10px 0; border-top: 1px solid #F1F5F9; }
+.stage-num { width: 22px; font-family: ui-monospace, monospace; font-size: 12px; color: #CBD5E1; font-weight: 700; }
+.stage-badge {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 13px; border-radius: 9999px;
+  font-size: 13px; font-weight: 600;
+}
+.stage-dot { width: 8px; height: 8px; border-radius: 9999px; }
+.stage-token { margin-left: auto; font-family: ui-monospace, monospace; font-size: 11px; color: #94A3B8; }
+
+.priority-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid #F1F5F9; }
+
+/* ── 08 Buttons ── */
+.btn-table { display: grid; grid-template-columns: 100px repeat(5, 1fr); gap: 12px; align-items: center; }
+.btn-col-label { font-size: 11px; font-weight: 600; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.03em; }
+.btn-row-label { font-size: 13px; font-weight: 600; color: #475569; }
+
+button {
+  padding: 10px 16px; border-radius: 8px; font-size: 14px; font-weight: 600;
+  border: none; font-family: inherit; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.btn-primary { background: #16A34A; color: #fff; }
+.btn-primary-hover { background: #15803D; color: #fff; }
+.btn-primary-pressed { background: #166534; color: #fff; box-shadow: inset 0 2px 4px rgba(0,0,0,.2); }
+.btn-primary-disabled { background: #D1FADF; color: #86EFAC; cursor: not-allowed; }
+.btn-primary-loading { background: #16A34A; color: #fff; }
+
+.btn-secondary { background: #fff; color: #0F172A; border: 1px solid #CBD5E1; }
+.btn-secondary-hover { background: #F8FAFC; color: #0F172A; border: 1px solid #94A3B8; }
+.btn-secondary-pressed { background: #F1F5F9; color: #0F172A; border: 1px solid #94A3B8; }
+.btn-secondary-disabled { background: #fff; color: #CBD5E1; border: 1px solid #E2E8F0; cursor: not-allowed; }
+
+.btn-destructive { background: #DC2626; color: #fff; }
+.btn-destructive-hover { background: #B91C1C; color: #fff; }
+.btn-destructive-pressed { background: #991B1B; color: #fff; box-shadow: inset 0 2px 4px rgba(0,0,0,.2); }
+.btn-destructive-disabled { background: #FEE2E2; color: #FCA5A5; cursor: not-allowed; }
+
+.btn-ghost { background: transparent; color: #15803D; }
+.btn-ghost-hover { background: #ECFDF3; color: #15803D; }
+.btn-ghost-pressed { background: #D1FADF; color: #15803D; }
+.btn-ghost-disabled { background: transparent; color: #CBD5E1; cursor: not-allowed; }
+
+.spinner {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,.4); border-top-color: #fff;
+  animation: spin .7s linear infinite;
+}
+.spinner-green {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid #E2E8F0; border-top-color: #16A34A;
+  animation: spin .7s linear infinite;
+}
+
+/* ── Badges ── */
+.badge-section { display: flex; flex-wrap: wrap; gap: 8px; }
+.badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border-radius: 9999px;
+  font-size: 13px; font-weight: 600;
+}
+
+/* ── Avatar ── */
+.avatar {
+  border-radius: 9999px; display: flex; align-items: center; justify-content: center;
+  font-weight: 600; flex-shrink: 0; background: #ECFDF3; color: #15803D;
+}
+.avatar-sm { width: 28px; height: 28px; font-size: 12px; }
+.avatar-md { width: 40px; height: 40px; font-size: 15px; }
+.avatar-lg { width: 56px; height: 56px; font-size: 20px; }
+
+/* ── Toggle ── */
+.toggle { width: 44px; height: 26px; border-radius: 9999px; position: relative; }
+.toggle-thumb {
+  position: absolute; top: 3px; width: 20px; height: 20px;
+  border-radius: 9999px; background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,.3);
+}
+.toggle-on { background: #16A34A; }
+.toggle-on .toggle-thumb { left: 21px; }
+.toggle-off { background: #CBD5E1; }
+.toggle-off .toggle-thumb { left: 3px; }
+
+/* ── Inputs ── */
+.input-group { display: flex; flex-direction: column; gap: 4px; }
+.input-label-text { font-size: 12px; font-weight: 600; color: #475569; }
+.input-field {
+  padding: 10px 12px; border-radius: 8px;
+  border: 1px solid #CBD5E1; font-family: inherit; font-size: 14px;
+  color: #0F172A; background: #fff; outline: none;
+}
+.input-focus { border-color: #16A34A; box-shadow: 0 0 0 3px rgba(22,163,74,.15); }
+.input-error { border-color: #DC2626; box-shadow: 0 0 0 3px rgba(220,38,38,.12); }
+.input-disabled { background: #F1F5F9; color: #94A3B8; border-color: #E2E8F0; }
+.input-error-msg { font-size: 11px; color: #DC2626; margin-top: 4px; }
+.input-textarea { height: 80px; resize: vertical; }
+
+/* ── 09 Navigation ── */
+.nav-mobile {
+  width: 320px; border: 1px solid #E2E8F0; border-radius: 20px;
+  overflow: hidden; box-shadow: 0 12px 32px rgba(15,23,42,.1);
+}
+.nav-content-area {
+  height: 140px; background: #F8FAFC;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; color: #CBD5E1; font-weight: 600;
+  border-bottom: 1px solid #E2E8F0;
+}
+.tab-bar {
+  position: relative; background: #fff; padding: 10px 0 18px;
+  display: flex; align-items: flex-start; justify-content: space-around;
+}
+.tab-item { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 80px; }
+.tab-indicator {
+  position: absolute; top: -2px; width: 28px; height: 3px;
+  border-radius: 0 0 3px 3px; background: #16A34A;
+}
+.tab-label { font-size: 11px; font-weight: 500; color: #94A3B8; }
+.tab-label-active { font-size: 11px; font-weight: 700; color: #16A34A; }
+.fab {
+  position: absolute; right: 12px; top: -28px;
+  width: 52px; height: 52px; border-radius: 9999px;
+  background: #16A34A; color: #fff; border: 3px solid #fff;
+  box-shadow: 0 8px 20px rgba(22,163,74,.4);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px; font-weight: 300;
+}
+
+/* Desktop sidebar */
+.sidebar {
+  width: 220px; background: #0F172A; border-radius: 16px;
+  padding: 24px 16px; display: flex; flex-direction: column; gap: 4px;
+}
+.sidebar-logo { font-size: 15px; font-weight: 800; color: #16A34A; margin-bottom: 24px; letter-spacing: -0.02em; }
+.sidebar-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 8px;
+  font-size: 13px; color: #64748B; cursor: pointer;
+}
+.sidebar-item-active { background: rgba(22,163,74,.15); color: #4ADE80; }
+.sidebar-item-active i { color: #16A34A; }
+.sidebar-divider { height: 1px; background: rgba(255,255,255,.06); margin: 8px 0; }
+.sidebar-add {
+  margin-top: 16px; display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 10px; border-radius: 8px; background: #16A34A; color: #fff;
+  font-size: 13px; font-weight: 700; cursor: pointer;
+}
+
+/* ── 10 Prospect card ── */
+.prospect-card {
+  background: #fff; border: 1px solid #E2E8F0; border-radius: 14px;
+  padding: 14px; box-shadow: 0 1px 2px rgba(15,23,42,.04);
+  max-width: 340px;
+}
+.prospect-card-header { display: flex; gap: 12px; align-items: flex-start; }
+.prospect-info { flex: 1; min-width: 0; }
+.prospect-name-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.prospect-name { font-size: 16px; font-weight: 600; color: #0F172A; }
+.prospect-priority { width: 8px; height: 8px; border-radius: 9999px; }
+.prospect-stage-wrap { margin-top: 7px; }
+.prospect-meta { display: flex; align-items: center; gap: 6px; margin-top: 9px; color: #94A3B8; font-size: 12px; }
+.prospect-actions { display: flex; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #F1F5F9; }
+.action-btn {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+  height: 36px; border-radius: 9px; background: #ECFDF3; color: #15803D;
+  font-size: 13px; font-weight: 600; border: none; cursor: pointer; font-family: inherit;
+}
+.action-icon {
+  width: 42px; display: flex; align-items: center; justify-content: center;
+  height: 36px; border-radius: 9px; border: 1px solid #E2E8F0; color: #475569;
+  background: #fff; cursor: pointer;
+}
+
+/* ── Filter bar ── */
+.filter-bar { border: 1px solid #E2E8F0; border-radius: 12px; padding: 12px; background: #F8FAFC; }
+.filter-inner { display: flex; align-items: center; gap: 8px; }
+.filter-chips { flex: 1; display: flex; gap: 7px; overflow: hidden; }
+.filter-chip {
+  white-space: nowrap; padding: 6px 13px; border-radius: 9999px;
+  font-size: 13px; font-weight: 600;
+}
+.filter-chip-active { background: #16A34A; color: #fff; }
+.filter-chip-inactive { background: #F1F5F9; color: #475569; }
+.filter-menu {
+  flex-shrink: 0; width: 36px; height: 34px; border-radius: 9999px;
+  border: 1px solid #E2E8F0; background: #fff; display: flex; align-items: center; justify-content: center;
+  color: #475569; position: relative; cursor: pointer;
+}
+.filter-badge {
+  position: absolute; top: -5px; right: -4px;
+  min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 9999px; background: #16A34A; color: #fff;
+  font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center;
+  border: 1.5px solid #F8FAFC;
+}
+
+/* ── Empty state ── */
+.empty-state {
+  border: 1px dashed #CBD5E1; border-radius: 12px; padding: 28px;
+  text-align: center; background: #fff; max-width: 280px;
+}
+.empty-icon {
+  width: 56px; height: 56px; border-radius: 9999px;
+  background: #ECFDF3; display: inline-flex; align-items: center;
+  justify-content: center; color: #16A34A; margin-bottom: 12px;
+}
+.empty-title { font-size: 14px; font-weight: 700; color: #0F172A; }
+.empty-desc { font-size: 12px; color: #64748B; margin-top: 4px; }
+
+/* ── KPI card ── */
+.kpi-card {
+  background: #fff; border: 1px solid #E2E8F0; border-radius: 12px; padding: 18px;
+  min-width: 140px;
+}
+.kpi-label { font-size: 11px; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+.kpi-value { font-size: 28px; font-weight: 700; color: #0F172A; margin: 6px 0 4px; letter-spacing: -0.02em; font-feature-settings: 'tnum' 1; }
+.kpi-delta { font-size: 12px; font-weight: 600; }
+.kpi-up { color: #16A34A; }
+.kpi-down { color: #DC2626; }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════
+     01 · BRAND
+══════════════════════════════════════════════════════════ -->
+<div class="section-wrap">
+  <div class="section-label">01 · Brand</div>
+  <div style="display:flex; align-items:center; gap:20px;">
+    <div class="brand-logo-mark">
+      <span style="height:14px; opacity:.55;"></span>
+      <span style="height:22px; opacity:.8;"></span>
+      <span style="height:30px;"></span>
+    </div>
+    <div>
+      <div class="brand-name">Evolución Líder</div>
+      <div class="brand-sub">CRM Networker</div>
+      <div class="brand-tags">
+        <span class="brand-tag"><span class="dot"></span>Design System v1.0</span>
+        <span class="brand-tag">Mobile-first · 375px</span>
+        <span class="brand-tag">Inter</span>
+        <span class="brand-tag">Modo claro</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div style="font-size:15px; line-height:1.6; color:#475569; max-width:560px;">
+    Sistema de diseño <strong style="color:#0F172A;">minimalista y mobile-first</strong> para gestionar prospectos y hacer crecer tu red comercial. Un solo color de acción — verde. Sin gradientes, sin ruido visual.
+  </div>
+
+  <div style="margin-top:24px; display:grid; grid-template-columns:repeat(3,1fr); gap:10px; max-width:340px;">
+    <div style="border:1px solid #E2E8F0; border-radius:10px; overflow:hidden;">
+      <div style="height:40px; background:#16A34A;"></div>
+      <div style="padding:8px 10px; font-family:ui-monospace,monospace; font-size:11px; color:#64748B;">#16A34A<br><span style="color:#0F172A;font-weight:600;">Primario</span></div>
+    </div>
+    <div style="border:1px solid #E2E8F0; border-radius:10px; overflow:hidden;">
+      <div style="height:40px; background:#0F172A;"></div>
+      <div style="padding:8px 10px; font-family:ui-monospace,monospace; font-size:11px; color:#64748B;">#0F172A<br><span style="color:#0F172A;font-weight:600;">Tinta</span></div>
+    </div>
+    <div style="border:1px solid #E2E8F0; border-radius:10px; overflow:hidden;">
+      <div style="height:40px; background:#F8FAFC; border-bottom:1px solid #E2E8F0;"></div>
+      <div style="padding:8px 10px; font-family:ui-monospace,monospace; font-size:11px; color:#64748B;">#F8FAFC<br><span style="color:#0F172A;font-weight:600;">Canvas</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     02 · COLOR PALETTE
+══════════════════════════════════════════════════════════ -->
+<div class="section-wrap">
+  <div class="section-label">02 · Color Palette</div>
+
+  <div class="section-title">Primary · Verde — acción &amp; crecimiento</div>
+  <div class="section-sub">--color-primary-{50…900}</div>
+  <div class="swatch-row">
+    <div class="swatch-item"><div class="swatch-block" style="background:#ECFDF3;"></div><div class="swatch-token">50</div><div class="swatch-hex">#ECFDF3</div></div>
+    <div class="swatch-item"><div class="swatch-block" style="background:#D1FADF;"></div><div class="swatch-token">100</div><div class="swatch-hex">#D1FADF</div></div>
+    <div class="swatch-item"><div class="swatch-block" style="background:#A6F4C5;"></div><div class="swatch-token">200</div><div class="swatch-hex">#A6F4C5</div></div>
+    <div class="swatch-item"><div class="swatch-block" style="background:#6CE9A6;"></div><div class="swatch-token">300</div><div class="swatch-hex">#6CE9A6</div></div>
+    <div class="swatch-item"><div class="swatch-block" style="background:#32D583;"></div><div class="swatch-token">400</div><div class="swatch-hex">#32D583</div></div>
+    <div class="swatch-item"><div class="swatch-block" style="background:#16A34A;"></div><div class="swatch-token">500 ★</div><div class="swatch-hex">#16A34A</div></div>
+    <div class="swatch-item"><div class="swatch-block" style="background:#15803D;"></div><div class="swatch-token">600</div><div class="swatch-hex">#15803D</div></div>
+    <div class="swatch-item"><div class="swatch-block" style="background:#166534;"></div><div class="swatch-token">700</div><div class="swatch-hex">#166534</div></div>
+    <div class="swatch-item"><div class="swatch-block" style="background:#14532D;"></div><div class="swatch-token">800</div><div class="swatch-hex">#14532D</div></div>
+    <div class="swatch-item"><div class="swatch-block" style="background:#052E16;"></div><div class="swatch-token">900</div><div class="swatch-hex">#052E16</div></div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="section-title">Neutrals · Slate</div>
+  <div class="section-sub">--color-neutral-{white…black}</div>
+  <div class="swatch-row">
+    <div class="swatch-item"><div class="swatch-block" style="background:#FFFFFF; border:1px solid #E2E8F0;"></div><div class="swatch-token">white</div><div class="swatch-hex">#FFFFFF</div></div>
+    <div class="swatch-item"><div class="swatch-block" style="background:#F8FAFC;"></div><div class="swatch-token">50</div><div class="swatch-hex">#F8FAFC</div></div>
+    <div class="swatch-item"><div class="swatch-block" style="background:#F1F5F9;"></div><div class="swatch-token">100</div><div class="swatch-hex">#F1F5F9</div></div>
+    <div class="swatch-item"><div class="swatch-block" style="background:#E2E8F0;"></div><div class="swatch-token">200</div><div class="swatch-hex">#E2E8F0</div></div>
+    <div class="swatch-item"><div class="swatch-block" style="background:#CBD5E1;"></div><div class="swatch-token">300</div><div class="swatch-hex">#CBD5E1</div></div>
+    <div class="swatch-item"><div class="swatch-block" style="background:#94A3B8;"></div><div class="swatch-token">400</div><div class="swatch-hex">#94A3B8</div></div>
+    <div class="swatch-item"><div class="swatch-block" style="background:#64748B;"></div><div class="swatch-token">500</div><div class="swatch-hex">#64748B</div></div>
+    <div class="swatch-item"><div class="swatch-block" style="background:#475569;"></div><div class="swatch-token">600</div><div class="swatch-hex">#475569</div></div>
+    <div class="swatch-item"><div class="swatch-block" style="background:#334155;"></div><div class="swatch-token">700</div><div class="swatch-hex">#334155</div></div>
+    <div class="swatch-item"><div class="swatch-block" style="background:#1E293B;"></div><div class="swatch-token">800</div><div class="swatch-hex">#1E293B</div></div>
+    <div class="swatch-item"><div class="swatch-block" style="background:#0F172A;"></div><div class="swatch-token">900</div><div class="swatch-hex">#0F172A</div></div>
+    <div class="swatch-item"><div class="swatch-block" style="background:#020617;"></div><div class="swatch-token">950</div><div class="swatch-hex">#020617</div></div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="section-title">Semánticos</div>
+  <div class="semantic-grid">
+    <div class="semantic-card">
+      <div class="semantic-top" style="background:#16A34A;"></div>
+      <div class="semantic-body" style="background:#ECFDF3;">
+        <div class="semantic-name" style="color:#15803D;">Éxito</div>
+        <div class="semantic-meta">base #16A34A<br>--color-success</div>
+      </div>
+    </div>
+    <div class="semantic-card">
+      <div class="semantic-top" style="background:#F59E0B;"></div>
+      <div class="semantic-body" style="background:#FFFBEB;">
+        <div class="semantic-name" style="color:#B45309;">Alerta</div>
+        <div class="semantic-meta">base #F59E0B<br>--color-warning</div>
+      </div>
+    </div>
+    <div class="semantic-card">
+      <div class="semantic-top" style="background:#EF4444;"></div>
+      <div class="semantic-body" style="background:#FEF2F2;">
+        <div class="semantic-name" style="color:#DC2626;">Error</div>
+        <div class="semantic-meta">base #EF4444<br>--color-error</div>
+      </div>
+    </div>
+    <div class="semantic-card">
+      <div class="semantic-top" style="background:#3B82F6;"></div>
+      <div class="semantic-body" style="background:#EFF6FF;">
+        <div class="semantic-name" style="color:#2563EB;">Info</div>
+        <div class="semantic-meta">base #3B82F6<br>--color-info</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     03 · TYPOGRAPHY
+══════════════════════════════════════════════════════════ -->
+<div class="section-wrap">
+  <div class="section-label">03 · Typography</div>
+  <div style="font-size:13px; color:#64748B; margin-bottom:20px;">Inter · pesos 400 / 500 / 600 / 700 · cifras tabulares en KPIs</div>
+
+  <div class="type-row">
+    <div class="type-meta-row"><span class="type-name">Display</span><span class="type-meta">32 / 700 / 1.15 / -0.02em</span></div>
+    <div style="font-size:32px;font-weight:700;color:#0F172A;letter-spacing:-0.02em;line-height:1.15;">Haz crecer tu red</div>
+  </div>
+  <div class="type-row">
+    <div class="type-meta-row"><span class="type-name">Heading 1</span><span class="type-meta">28 / 700 / 1.2 / -0.02em</span></div>
+    <div style="font-size:28px;font-weight:700;color:#0F172A;letter-spacing:-0.02em;line-height:1.2;">Pipeline de prospectos</div>
+  </div>
+  <div class="type-row">
+    <div class="type-meta-row"><span class="type-name">Heading 2</span><span class="type-meta">22 / 600 / 1.25 / -0.01em</span></div>
+    <div style="font-size:22px;font-weight:600;color:#0F172A;letter-spacing:-0.01em;line-height:1.25;">Actividad de hoy</div>
+  </div>
+  <div class="type-row">
+    <div class="type-meta-row"><span class="type-name">Heading 3</span><span class="type-meta">18 / 600 / 1.3 / -0.01em</span></div>
+    <div style="font-size:18px;font-weight:600;color:#0F172A;letter-spacing:-0.01em;line-height:1.3;">Ana Martínez</div>
+  </div>
+  <div class="type-row">
+    <div class="type-meta-row"><span class="type-name">Body Large</span><span class="type-meta">17 / 400 / 1.5 / 0</span></div>
+    <div style="font-size:17px;font-weight:400;color:#0F172A;line-height:1.5;">Presentación realizada el martes pasado.</div>
+  </div>
+  <div class="type-row">
+    <div class="type-meta-row"><span class="type-name">Body</span><span class="type-meta">15 / 400 / 1.5 / 0</span></div>
+    <div style="font-size:15px;font-weight:400;color:#0F172A;line-height:1.5;">Seguimiento pendiente esta semana.</div>
+  </div>
+  <div class="type-row">
+    <div class="type-meta-row"><span class="type-name">Body Small</span><span class="type-meta">13 / 400 / 1.45 / 0</span></div>
+    <div style="font-size:13px;font-weight:400;color:#0F172A;line-height:1.45;">Última interacción hace 3 días.</div>
+  </div>
+  <div class="type-row">
+    <div class="type-meta-row"><span class="type-name">Caption</span><span class="type-meta">12 / 400 / 1.4 / 0.01em</span></div>
+    <div style="font-size:12px;font-weight:400;color:#64748B;letter-spacing:0.01em;line-height:1.4;">Actualizado hace 2 h</div>
+  </div>
+  <div class="type-row">
+    <div class="type-meta-row"><span class="type-name">Label / Overline</span><span class="type-meta">12 / 600 / 1.2 / 0.05em · uppercase</span></div>
+    <div style="font-size:12px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:#64748B;line-height:1.2;">Etapa actual</div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:12px;padding:20px;">
+    <div style="font-size:13px;font-weight:700;color:#0F172A;margin-bottom:4px;">Numeric / Tabular</div>
+    <div style="font-size:12px;color:#64748B;margin-bottom:4px;">Inter con cifras tabulares · KPIs, importes, tablas</div>
+    <div style="font-family:ui-monospace,monospace;font-size:11px;color:#16A34A;margin-bottom:18px;">font-feature-settings: "tnum" 1, "lnum" 1</div>
+    <div style="display:flex;gap:40px;flex-wrap:wrap;">
+      <div>
+        <div style="font-size:11px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#16A34A;margin-bottom:8px;">KPI / Stat</div>
+        <div style="font-size:32px;font-weight:700;color:#0F172A;letter-spacing:-0.02em;font-feature-settings:'tnum' 1,'lnum' 1;">1.480</div>
+        <div style="font-size:11px;color:#94A3B8;margin-top:2px;">32 / 700 / tnum</div>
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#16A34A;margin-bottom:8px;">Tabla</div>
+        <div style="font-size:15px;font-weight:500;color:#0F172A;font-feature-settings:'tnum' 1,'lnum' 1;line-height:1.6;">11.118<br>40.084<br>97.231</div>
+        <div style="font-size:11px;color:#94A3B8;margin-top:2px;">15 / 500 / tnum</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     04 · SPACING
+══════════════════════════════════════════════════════════ -->
+<div class="section-wrap">
+  <div class="section-label">04 · Spacing · base 4px</div>
+  <div class="space-row"><div class="space-token">--space-1</div><div class="space-px">4px</div><div class="space-bar" style="width:4px;"></div></div>
+  <div class="space-row"><div class="space-token">--space-2</div><div class="space-px">8px</div><div class="space-bar" style="width:8px;"></div></div>
+  <div class="space-row"><div class="space-token">--space-3</div><div class="space-px">12px</div><div class="space-bar" style="width:12px;"></div></div>
+  <div class="space-row"><div class="space-token">--space-4</div><div class="space-px">16px</div><div class="space-bar" style="width:16px;"></div></div>
+  <div class="space-row"><div class="space-token">--space-5</div><div class="space-px">20px</div><div class="space-bar" style="width:20px;"></div></div>
+  <div class="space-row"><div class="space-token">--space-6</div><div class="space-px">24px</div><div class="space-bar" style="width:24px;"></div></div>
+  <div class="space-row"><div class="space-token">--space-8</div><div class="space-px">32px</div><div class="space-bar" style="width:32px;"></div></div>
+  <div class="space-row"><div class="space-token">--space-10</div><div class="space-px">40px</div><div class="space-bar" style="width:40px;"></div></div>
+  <div class="space-row"><div class="space-token">--space-12</div><div class="space-px">48px</div><div class="space-bar" style="width:48px;"></div></div>
+  <div class="space-row"><div class="space-token">--space-16</div><div class="space-px">64px</div><div class="space-bar" style="width:64px;"></div></div>
+  <div class="space-row"><div class="space-token">--space-20</div><div class="space-px">80px</div><div class="space-bar" style="width:80px;"></div></div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     05 · RADIUS & SHADOWS
+══════════════════════════════════════════════════════════ -->
+<div class="section-wrap">
+  <div class="section-label">05 · Radius &amp; Shadows</div>
+
+  <div class="section-title">Border Radius</div>
+  <div class="radius-grid" style="margin-bottom:32px;">
+    <div class="radius-item">
+      <div class="radius-box" style="border-radius:0;"></div>
+      <div class="radius-token">--radius-none</div><div class="radius-val">0</div>
+    </div>
+    <div class="radius-item">
+      <div class="radius-box" style="border-radius:4px;"></div>
+      <div class="radius-token">--radius-sm</div><div class="radius-val">4px</div>
+    </div>
+    <div class="radius-item">
+      <div class="radius-box" style="border-radius:8px;"></div>
+      <div class="radius-token">--radius-md</div><div class="radius-val">8px</div>
+    </div>
+    <div class="radius-item">
+      <div class="radius-box" style="border-radius:12px;"></div>
+      <div class="radius-token">--radius-lg</div><div class="radius-val">12px</div>
+    </div>
+    <div class="radius-item">
+      <div class="radius-box" style="border-radius:16px;"></div>
+      <div class="radius-token">--radius-xl</div><div class="radius-val">16px</div>
+    </div>
+    <div class="radius-item">
+      <div class="radius-box" style="border-radius:9999px;"></div>
+      <div class="radius-token">--radius-full</div><div class="radius-val">9999px</div>
+    </div>
+  </div>
+
+  <div class="section-title">Elevation</div>
+  <div class="shadow-grid">
+    <div class="shadow-item">
+      <div class="shadow-box" style="box-shadow:none; border:1px solid #E2E8F0;"></div>
+      <div class="shadow-token">shadow-0</div><div class="shadow-label">Flat</div>
+    </div>
+    <div class="shadow-item">
+      <div class="shadow-box" style="box-shadow:0 1px 2px rgba(15,23,42,.06),0 1px 3px rgba(15,23,42,.08);"></div>
+      <div class="shadow-token">shadow-1</div><div class="shadow-label">Card</div>
+    </div>
+    <div class="shadow-item">
+      <div class="shadow-box" style="box-shadow:0 4px 12px rgba(15,23,42,.1);"></div>
+      <div class="shadow-token">shadow-2</div><div class="shadow-label">Elevada</div>
+    </div>
+    <div class="shadow-item">
+      <div class="shadow-box" style="box-shadow:0 12px 32px rgba(15,23,42,.18);"></div>
+      <div class="shadow-token">shadow-3</div><div class="shadow-label">Modal</div>
+    </div>
+    <div class="shadow-item">
+      <div class="shadow-box" style="box-shadow:0 8px 20px rgba(22,163,74,.4); border-radius:9999px; width:52px; height:52px; background:#16A34A; margin:0 auto;"></div>
+      <div class="shadow-token" style="margin-top:16px;">shadow-fab</div><div class="shadow-label">FAB verde</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     06 · ICON SET
+══════════════════════════════════════════════════════════ -->
+<div class="section-wrap">
+  <div class="section-label">06 · Icon Set · Lucide</div>
+  <div style="font-size:13px;color:#64748B;margin-bottom:20px;">Stroke 2px · 24px · currentColor</div>
+  <div class="icon-grid">
+    <div class="icon-cell"><i data-lucide="home" width="24" height="24"></i><span class="icon-label">Inicio</span></div>
+    <div class="icon-cell"><i data-lucide="users" width="24" height="24"></i><span class="icon-label">Prospectos</span></div>
+    <div class="icon-cell"><i data-lucide="bar-chart-3" width="24" height="24"></i><span class="icon-label">Dashboard</span></div>
+    <div class="icon-cell"><i data-lucide="phone" width="24" height="24"></i><span class="icon-label">Llamada</span></div>
+    <div class="icon-cell"><i data-lucide="message-circle" width="24" height="24"></i><span class="icon-label">WhatsApp</span></div>
+    <div class="icon-cell"><i data-lucide="mail" width="24" height="24"></i><span class="icon-label">Email</span></div>
+    <div class="icon-cell"><i data-lucide="plus" width="24" height="24"></i><span class="icon-label">Añadir</span></div>
+    <div class="icon-cell"><i data-lucide="square-pen" width="24" height="24"></i><span class="icon-label">Editar</span></div>
+    <div class="icon-cell"><i data-lucide="save" width="24" height="24"></i><span class="icon-label">Guardar</span></div>
+    <div class="icon-cell"><i data-lucide="arrow-left" width="24" height="24"></i><span class="icon-label">Volver</span></div>
+    <div class="icon-cell"><i data-lucide="filter" width="24" height="24"></i><span class="icon-label">Filtrar</span></div>
+    <div class="icon-cell"><i data-lucide="calendar" width="24" height="24"></i><span class="icon-label">Fecha</span></div>
+    <div class="icon-cell"><i data-lucide="clock" width="24" height="24"></i><span class="icon-label">Tiempo</span></div>
+    <div class="icon-cell"><i data-lucide="chevron-right" width="24" height="24"></i><span class="icon-label">Chevron</span></div>
+    <div class="icon-cell"><i data-lucide="check" width="24" height="24"></i><span class="icon-label">Check</span></div>
+    <div class="icon-cell"><i data-lucide="x" width="24" height="24"></i><span class="icon-label">Cerrar</span></div>
+    <div class="icon-cell"><i data-lucide="user" width="24" height="24"></i><span class="icon-label">Avatar</span></div>
+    <div class="icon-cell"><i data-lucide="sticky-note" width="24" height="24"></i><span class="icon-label">Nota</span></div>
+    <div class="icon-cell"><i data-lucide="layers" width="24" height="24"></i><span class="icon-label">Pipeline</span></div>
+    <div class="icon-cell"><i data-lucide="alert-circle" width="24" height="24"></i><span class="icon-label">Alerta</span></div>
+    <div class="icon-cell"><i data-lucide="star" width="24" height="24"></i><span class="icon-label">Prioridad</span></div>
+    <div class="icon-cell"><i data-lucide="trash-2" width="24" height="24"></i><span class="icon-label">Eliminar</span></div>
+    <div class="icon-cell"><i data-lucide="more-vertical" width="24" height="24"></i><span class="icon-label">Más</span></div>
+    <div class="icon-cell"><i data-lucide="bell" width="24" height="24"></i><span class="icon-label">Notif.</span></div>
+    <div class="icon-cell"><i data-lucide="zap" width="24" height="24"></i><span class="icon-label">Acción</span></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     07 · PIPELINE & PRIORITY
+══════════════════════════════════════════════════════════ -->
+<div class="section-wrap">
+  <div class="section-label">07 · Pipeline &amp; Priority</div>
+
+  <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:40px;">
+    <div>
+      <div class="section-title">6 etapas del pipeline</div>
+      <div class="section-sub">Nuevo → Contactado → Presentación → Valoración → Incorporado → Descartado</div>
+
+      <div class="stage-row">
+        <span class="stage-num">1</span>
+        <span class="stage-badge" style="background:#EEF2F7;color:#475569;"><span class="stage-dot" style="background:#64748B;"></span>Nuevo</span>
+        <span class="stage-token">--stage-new</span>
+      </div>
+      <div class="stage-row">
+        <span class="stage-num">2</span>
+        <span class="stage-badge" style="background:#EEF2FF;color:#4338CA;"><span class="stage-dot" style="background:#4F46E5;"></span>Contactado</span>
+        <span class="stage-token">--stage-contacted</span>
+      </div>
+      <div class="stage-row">
+        <span class="stage-num">3</span>
+        <span class="stage-badge" style="background:#F5F3FF;color:#6D28D9;"><span class="stage-dot" style="background:#7C3AED;"></span>Presentación realizada</span>
+        <span class="stage-token">--stage-presented</span>
+      </div>
+      <div class="stage-row">
+        <span class="stage-num">4</span>
+        <span class="stage-badge" style="background:#FFF7ED;color:#C2410C;"><span class="stage-dot" style="background:#EA580C;"></span>En valoración</span>
+        <span class="stage-token">--stage-evaluating</span>
+      </div>
+      <div class="stage-row">
+        <span class="stage-num">5</span>
+        <span class="stage-badge" style="background:#ECFDF3;color:#15803D;"><span class="stage-dot" style="background:#16A34A;"></span>Incorporado</span>
+        <span class="stage-token">--stage-joined</span>
+      </div>
+      <div class="stage-row">
+        <span class="stage-num">6</span>
+        <span class="stage-badge" style="background:#F1F5F9;color:#64748B;"><span class="stage-dot" style="background:#94A3B8;"></span>Descartado</span>
+        <span class="stage-token">--stage-discarded</span>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">3 niveles de prioridad</div>
+      <div class="section-sub">Alta · Media · Baja</div>
+
+      <div class="priority-row">
+        <span class="stage-badge" style="background:#FEF2F2;color:#DC2626;"><span class="stage-dot" style="background:#EF4444;"></span>Alta</span>
+        <span class="stage-token">--priority-high</span>
+      </div>
+      <div class="priority-row">
+        <span class="stage-badge" style="background:#FFFBEB;color:#B45309;"><span class="stage-dot" style="background:#F59E0B;"></span>Media</span>
+        <span class="stage-token">--priority-medium</span>
+      </div>
+      <div class="priority-row">
+        <span class="stage-badge" style="background:#F0FDF4;color:#15803D;"><span class="stage-dot" style="background:#86EFAC;"></span>Baja</span>
+        <span class="stage-token">--priority-low</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     08 · ATOMIC COMPONENTS
+══════════════════════════════════════════════════════════ -->
+<div class="section-wrap">
+  <div class="section-label">08 · Atomic Components</div>
+
+  <!-- Buttons -->
+  <div class="section-title">Botones · estados</div>
+  <div class="btn-table" style="margin-bottom:32px;">
+    <div></div>
+    <div class="btn-col-label">Default</div>
+    <div class="btn-col-label">Hover</div>
+    <div class="btn-col-label">Pressed</div>
+    <div class="btn-col-label">Disabled</div>
+    <div class="btn-col-label">Loading</div>
+
+    <div class="btn-row-label">Primario</div>
+    <button class="btn-primary">Guardar</button>
+    <button class="btn-primary-hover">Guardar</button>
+    <button class="btn-primary-pressed">Guardar</button>
+    <button class="btn-primary-disabled">Guardar</button>
+    <button class="btn-primary-loading"><span class="spinner"></span>Guardando</button>
+
+    <div class="btn-row-label">Secundario</div>
+    <button class="btn-secondary">Editar</button>
+    <button class="btn-secondary-hover">Editar</button>
+    <button class="btn-secondary-pressed">Editar</button>
+    <button class="btn-secondary-disabled">Editar</button>
+    <button class="btn-secondary"><span class="spinner-green"></span>Editar</button>
+
+    <div class="btn-row-label">Destructivo</div>
+    <button class="btn-destructive">Eliminar</button>
+    <button class="btn-destructive-hover">Eliminar</button>
+    <button class="btn-destructive-pressed">Eliminar</button>
+    <button class="btn-destructive-disabled">Eliminar</button>
+    <button class="btn-destructive"><span class="spinner"></span>Borrando</button>
+
+    <div class="btn-row-label">Ghost</div>
+    <button class="btn-ghost">Cancelar</button>
+    <button class="btn-ghost-hover">Cancelar</button>
+    <button class="btn-ghost-pressed">Cancelar</button>
+    <button class="btn-ghost-disabled">Cancelar</button>
+    <button class="btn-ghost"><span class="spinner-green"></span>Cancelar</button>
+  </div>
+
+  <div class="divider"></div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:40px;">
+    <div>
+      <!-- Badges -->
+      <div class="section-title" style="margin-bottom:12px;">Badges de etapa</div>
+      <div class="badge-section" style="margin-bottom:24px;">
+        <span class="badge" style="background:#EEF2F7;color:#475569;"><span class="stage-dot" style="background:#64748B;"></span>Nuevo</span>
+        <span class="badge" style="background:#EEF2FF;color:#4338CA;"><span class="stage-dot" style="background:#4F46E5;"></span>Contactado</span>
+        <span class="badge" style="background:#F5F3FF;color:#6D28D9;"><span class="stage-dot" style="background:#7C3AED;"></span>Presentación</span>
+        <span class="badge" style="background:#FFF7ED;color:#C2410C;"><span class="stage-dot" style="background:#EA580C;"></span>En valoración</span>
+        <span class="badge" style="background:#ECFDF3;color:#15803D;"><span class="stage-dot" style="background:#16A34A;"></span>Incorporado</span>
+        <span class="badge" style="background:#F1F5F9;color:#64748B;"><span class="stage-dot" style="background:#94A3B8;"></span>Descartado</span>
+      </div>
+
+      <div class="section-title" style="margin-bottom:12px;">Badges de prioridad</div>
+      <div class="badge-section">
+        <span class="badge" style="background:#FEF2F2;color:#DC2626;"><span class="stage-dot" style="background:#EF4444;"></span>Alta</span>
+        <span class="badge" style="background:#FFFBEB;color:#B45309;"><span class="stage-dot" style="background:#F59E0B;"></span>Media</span>
+        <span class="badge" style="background:#F0FDF4;color:#15803D;"><span class="stage-dot" style="background:#86EFAC;"></span>Baja</span>
+      </div>
+    </div>
+
+    <div>
+      <!-- Avatar + Toggle + Divider -->
+      <div class="section-title" style="margin-bottom:12px;">Avatar · iniciales</div>
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:24px;">
+        <div class="avatar avatar-sm">AM</div>
+        <div class="avatar avatar-md">AM</div>
+        <div class="avatar avatar-lg">AM</div>
+        <span style="font-family:ui-monospace,monospace;font-size:11px;color:#94A3B8;">sm · md · lg</span>
+      </div>
+
+      <div class="section-title" style="margin-bottom:12px;">Toggle / Switch</div>
+      <div style="display:flex;align-items:center;gap:24px;margin-bottom:24px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div class="toggle toggle-on"><div class="toggle-thumb"></div></div>
+          <span style="font-size:12px;color:#64748B;">On</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div class="toggle toggle-off"><div class="toggle-thumb"></div></div>
+          <span style="font-size:12px;color:#64748B;">Off</span>
+        </div>
+      </div>
+
+      <div class="section-title" style="margin-bottom:12px;">Divider</div>
+      <div style="height:1px;background:#E2E8F0;"></div>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:14px;">
+        <div style="flex:1;height:1px;background:#E2E8F0;"></div>
+        <span style="font-size:11px;color:#94A3B8;font-weight:600;">HOY</span>
+        <div style="flex:1;height:1px;background:#E2E8F0;"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- Inputs -->
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:32px;">
+    <div>
+      <div class="section-title" style="margin-bottom:16px;">Input de texto</div>
+      <div style="font-size:11px;font-weight:600;color:#64748B;margin-bottom:6px;">Default</div>
+      <div class="input-field" style="color:#94A3B8;margin-bottom:14px;">Nombre del prospecto</div>
+      <div style="font-size:11px;font-weight:600;color:#64748B;margin-bottom:6px;">Focus</div>
+      <div class="input-field input-focus" style="margin-bottom:14px;">Ana Martínez<span style="color:#16A34A;">|</span></div>
+      <div style="font-size:11px;font-weight:600;color:#64748B;margin-bottom:6px;">Filled</div>
+      <div class="input-field" style="margin-bottom:14px;">Ana Martínez</div>
+      <div style="font-size:11px;font-weight:600;color:#64748B;margin-bottom:6px;">Error</div>
+      <div class="input-field input-error" style="display:flex;align-items:center;justify-content:space-between;">Ana<span style="color:#DC2626;display:inline-flex;"><i data-lucide="alert-circle" width="16" height="16"></i></span></div>
+      <div style="font-size:11px;color:#DC2626;margin:6px 0 14px;">Campo obligatorio</div>
+      <div style="font-size:11px;font-weight:600;color:#64748B;margin-bottom:6px;">Disabled</div>
+      <div class="input-field input-disabled">No disponible</div>
+    </div>
+
+    <div>
+      <div class="section-title" style="margin-bottom:16px;">Textarea</div>
+      <div style="font-size:11px;font-weight:600;color:#64748B;margin-bottom:6px;">Default</div>
+      <div class="input-field input-textarea" style="color:#94A3B8;margin-bottom:14px;">Notas de la interacción…</div>
+      <div style="font-size:11px;font-weight:600;color:#64748B;margin-bottom:6px;">Focus</div>
+      <div class="input-field input-textarea input-focus" style="margin-bottom:14px;">Le interesa el plan anual.<span style="color:#16A34A;">|</span></div>
+    </div>
+
+    <div>
+      <div class="section-title" style="margin-bottom:16px;">Selector / Dropdown</div>
+      <div style="font-size:11px;font-weight:600;color:#64748B;margin-bottom:6px;">Closed</div>
+      <div class="input-field" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+        Contactado<span style="color:#64748B;display:inline-flex;"><i data-lucide="chevron-down" width="16" height="16"></i></span>
+      </div>
+      <div style="font-size:11px;font-weight:600;color:#64748B;margin-bottom:6px;">Open</div>
+      <div style="border-radius:8px;border:1px solid #16A34A;box-shadow:0 0 0 3px rgba(22,163,74,.15);background:#fff;overflow:hidden;">
+        <div style="padding:10px 12px;font-size:14px;color:#0F172A;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #F1F5F9;">Contactado<span style="color:#16A34A;display:inline-flex;"><i data-lucide="chevron-up" width="16" height="16"></i></span></div>
+        <div style="padding:10px 12px;font-size:14px;color:#64748B;">Nuevo</div>
+        <div style="padding:10px 12px;font-size:14px;color:#0F172A;background:#ECFDF3;display:flex;align-items:center;justify-content:space-between;">Contactado<span style="color:#16A34A;display:inline-flex;"><i data-lucide="check" width="16" height="16"></i></span></div>
+        <div style="padding:10px 12px;font-size:14px;color:#64748B;">Presentación realizada</div>
+        <div style="padding:10px 12px;font-size:14px;color:#64748B;">En valoración</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     09 · NAVIGATION
+══════════════════════════════════════════════════════════ -->
+<div class="section-wrap">
+  <div class="section-label">09 · Layout &amp; Navegación</div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:start;">
+
+    <div>
+      <div class="section-title" style="margin-bottom:4px;">Navegación móvil · Tab bar inferior</div>
+      <div style="font-size:12px;color:#94A3B8;margin-bottom:16px;">3 destinos (Inicio · Prospectos · Resumen) + FAB flotante · 60px seguro</div>
+
+      <div class="nav-mobile">
+        <div class="nav-content-area">área de contenido</div>
+        <div class="tab-bar">
+          <div class="tab-item">
+            <div class="tab-indicator" style="left:calc(10% - 14px);"></div>
+            <i data-lucide="home" width="24" height="24" style="color:#16A34A;"></i>
+            <span class="tab-label-active">Inicio</span>
+          </div>
+          <div class="tab-item">
+            <i data-lucide="users" width="24" height="24" style="color:#94A3B8;"></i>
+            <span class="tab-label">Prospectos</span>
+          </div>
+          <div class="tab-item">
+            <i data-lucide="bar-chart-3" width="24" height="24" style="color:#94A3B8;"></i>
+            <span class="tab-label">Resumen</span>
+          </div>
+          <div class="fab"><i data-lucide="plus" width="26" height="26"></i></div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:18px;margin-top:14px;font-size:12px;color:#475569;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:7px;"><span style="width:10px;height:10px;border-radius:9999px;background:#16A34A;"></span>Activo · primary-500</div>
+        <div style="display:flex;align-items:center;gap:7px;"><span style="width:10px;height:10px;border-radius:9999px;background:#94A3B8;"></span>Inactivo · neutral-400</div>
+      </div>
+
+      <div style="margin-top:14px;padding:14px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:12px;font-size:12px;color:#475569;line-height:1.55;">
+        En <strong style="color:#0F172A;">escritorio</strong> la tab bar se transforma en el <strong style="color:#0F172A;">sidebar de 220px</strong> con los mismos destinos en vertical. El FAB pasa a botón "Añadir prospecto" en la cabecera.
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title" style="margin-bottom:16px;">Sidebar desktop · 220px</div>
+      <div class="sidebar">
+        <div class="sidebar-logo">Evolución Líder</div>
+        <div class="sidebar-item sidebar-item-active">
+          <i data-lucide="home" width="16" height="16"></i> Inicio
+        </div>
+        <div class="sidebar-item">
+          <i data-lucide="users" width="16" height="16"></i> Prospectos
+        </div>
+        <div class="sidebar-item">
+          <i data-lucide="bar-chart-3" width="16" height="16"></i> Resumen
+        </div>
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-add">
+          <i data-lucide="plus" width="16" height="16"></i> Añadir prospecto
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     10 · CARDS & PATTERNS
+══════════════════════════════════════════════════════════ -->
+<div class="section-wrap">
+  <div class="section-label">10 · Cards &amp; Patterns</div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:40px;align-items:start;">
+
+    <div>
+      <div class="section-title" style="margin-bottom:4px;">Tarjeta de prospecto</div>
+      <div style="font-size:12px;color:#94A3B8;margin-bottom:16px;">Avatar · etapa · prioridad · canal · acciones visibles</div>
+
+      <div class="prospect-card">
+        <div class="prospect-card-header">
+          <div class="avatar avatar-md">AM</div>
+          <div class="prospect-info">
+            <div class="prospect-name-row">
+              <span class="prospect-name">Ana Martínez</span>
+              <span class="prospect-priority" style="background:#EF4444;"></span>
+            </div>
+            <div class="prospect-stage-wrap">
+              <span class="badge" style="background:#EEF2FF;color:#4338CA;font-size:12px;padding:4px 10px;"><span class="stage-dot" style="background:#4F46E5;"></span>Contactado</span>
+            </div>
+            <div class="prospect-meta">
+              <i data-lucide="message-circle" width="13" height="13"></i>
+              <span style="color:#64748B;">Le interesa el plan anual</span>
+              <span style="width:3px;height:3px;border-radius:9999px;background:#CBD5E1;"></span>
+              <i data-lucide="clock" width="13" height="13"></i>
+              <span>Hace 2 h</span>
+            </div>
+          </div>
+        </div>
+        <div class="prospect-actions">
+          <button class="action-btn"><i data-lucide="phone" width="15" height="15"></i>Llamar</button>
+          <button class="action-btn"><i data-lucide="message-circle" width="15" height="15"></i>WhatsApp</button>
+          <button class="action-icon"><i data-lucide="sticky-note" width="15" height="15"></i></button>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title" style="margin-bottom:4px;">Barra de filtros + Estado vacío</div>
+      <div style="font-size:12px;color:#94A3B8;margin-bottom:16px;">Chips · menú con contador · empty state</div>
+
+      <div class="filter-bar" style="margin-bottom:20px;">
+        <div class="filter-inner">
+          <div class="filter-chips">
+            <span class="filter-chip filter-chip-active">Todos · 24</span>
+            <span class="filter-chip filter-chip-inactive">Nuevo · 5</span>
+            <span class="filter-chip filter-chip-inactive">Contactado · 8</span>
+          </div>
+          <div class="filter-menu">
+            <i data-lucide="sliders-horizontal" width="16" height="16"></i>
+            <div class="filter-badge">2</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="empty-state">
+        <div class="empty-icon"><i data-lucide="users" width="26" height="26"></i></div>
+        <div class="empty-title">Aún no tienes prospectos</div>
+        <div class="empty-desc">Añade tu primer candidato para empezar a construir tu red</div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- KPI Cards -->
+  <div class="section-title" style="margin-bottom:16px;">KPI Cards · Dashboard</div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;">
+    <div class="kpi-card">
+      <div class="kpi-label">Total prospectos</div>
+      <div class="kpi-value">24</div>
+      <div class="kpi-delta kpi-up">↑ +3 esta semana</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Incorporados</div>
+      <div class="kpi-value" style="color:#16A34A;">5</div>
+      <div class="kpi-delta kpi-up">↑ +1 este mes</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Seguimientos hoy</div>
+      <div class="kpi-value" style="color:#F59E0B;">7</div>
+      <div class="kpi-delta" style="color:#64748B;">3 vencidos</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Tasa conversión</div>
+      <div class="kpi-value">20,8%</div>
+      <div class="kpi-delta kpi-up">↑ +2,1pp</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  if (window.lucide) window.lucide.createIcons();
+  document.addEventListener('DOMContentLoaded', () => {
+    if (window.lucide) window.lucide.createIcons();
+  });
+</script>
+</body>
+</html>

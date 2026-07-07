@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<meta name="design_doc_mode" content="canvas">
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+  body { margin:0; font-family:'Inter',system-ui,-apple-system,sans-serif; -webkit-font-smoothing:antialiased; }
+  i[data-lucide] { display:inline-flex; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+</style>
+</helmet>
+
+<div style="position:absolute; left:0; top:0; width:460px;">
+  <div data-drags-parent="1" style="font-size:12px; font-weight:600; letter-spacing:0.05em; text-transform:uppercase; color:#64748B; margin:0 0 10px 4px;">Marca</div>
+  <div style="background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(2,6,23,.08),0 12px 32px rgba(2,6,23,.05); padding:36px;">
+    <div style="display:flex; align-items:center; gap:16px;">
+      <div style="width:60px; height:60px; border-radius:16px; background:#16A34A; display:flex; align-items:flex-end; justify-content:center; gap:5px; padding:15px; box-sizing:border-box; box-shadow:0 6px 16px rgba(22,163,74,.32);">
+        <span style="width:7px; height:14px; background:#fff; border-radius:2px; opacity:.55;"></span>
+        <span style="width:7px; height:22px; background:#fff; border-radius:2px; opacity:.8;"></span>
+        <span style="width:7px; height:30px; background:#fff; border-radius:2px;"></span>
+      </div>
+      <div>
+        <div style="font-size:24px; font-weight:700; color:#0F172A; letter-spacing:-0.02em; line-height:1.1;">Evolución Líder</div>
+        <div style="font-size:13px; font-weight:600; color:#16A34A; letter-spacing:0.04em; text-transform:uppercase; margin-top:3px;">CRM Networker</div>
+      </div>
+    </div>
+
+    <div style="height:1px; background:#E2E8F0; margin:28px 0;"></div>
+
+    <div style="font-size:15px; line-height:1.6; color:#475569;">Sistema de diseño <strong style="color:#0F172A;">mobile-first</strong> para gestionar prospectos y hacer crecer tu red comercial. Profesional, sin fricción, orientado a la acción.</div>
+
+    <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:24px;">
+      <span style="display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:9999px; background:#F1F5F9; color:#334155; font-size:12px; font-weight:600;"><span style="width:8px; height:8px; border-radius:9999px; background:#16A34A;"></span>Design System v1.0</span>
+      <span style="display:inline-flex; align-items:center; padding:6px 12px; border-radius:9999px; background:#F1F5F9; color:#334155; font-size:12px; font-weight:600;">375px · Mobile-first</span>
+      <span style="display:inline-flex; align-items:center; padding:6px 12px; border-radius:9999px; background:#F1F5F9; color:#334155; font-size:12px; font-weight:600;">Inter</span>
+    </div>
+
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:24px;">
+      <div style="border:1px solid #E2E8F0; border-radius:10px; overflow:hidden;">
+        <div style="height:40px; background:#16A34A;"></div>
+        <div style="padding:8px 10px; font-family:ui-monospace,monospace; font-size:11px; color:#64748B;">#16A34A<br><span style="color:#0F172A; font-weight:600;">Primario</span></div>
+      </div>
+      <div style="border:1px solid #E2E8F0; border-radius:10px; overflow:hidden;">
+        <div style="height:40px; background:#7C3AED;"></div>
+        <div style="padding:8px 10px; font-family:ui-monospace,monospace; font-size:11px; color:#64748B;">#7C3AED<br><span style="color:#0F172A; font-weight:600;">Acento</span></div>
+      </div>
+      <div style="border:1px solid #E2E8F0; border-radius:10px; overflow:hidden;">
+        <div style="height:40px; background:#0F172A;"></div>
+        <div style="padding:8px 10px; font-family:ui-monospace,monospace; font-size:11px; color:#64748B;">#0F172A<br><span style="color:#0F172A; font-weight:600;">Tinta</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="position:absolute; left:520px; top:0; width:900px;">
+  <div data-drags-parent="1" style="font-size:12px; font-weight:600; letter-spacing:0.05em; text-transform:uppercase; color:#64748B; margin:0 0 10px 4px;">01 · Color Palette</div>
+  <div style="background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(2,6,23,.08),0 12px 32px rgba(2,6,23,.05); padding:32px;">
+
+    <div style="font-size:13px; font-weight:700; color:#0F172A; margin:0 0 4px;">Primary · Verde — acción & confianza</div>
+    <div style="font-size:12px; color:#94A3B8; font-family:ui-monospace,monospace; margin-bottom:14px;">--color-primary-{50…900}</div>
+    <div style="display:flex; flex-wrap:wrap; gap:10px;">
+      <sc-for list="{{ primary }}" as="c" hint-placeholder-count="10">
+        <div style="width:76px;">
+          <div style="height:52px; border-radius:8px; background:{{ c.hex }}; border:1px solid rgba(2,6,23,.06);"></div>
+          <div style="font-size:12px; font-weight:700; color:#0F172A; font-family:ui-monospace,monospace; margin-top:6px;">{{ c.token }}</div>
+          <div style="font-size:10px; color:#94A3B8; font-family:ui-monospace,monospace;">{{ c.hex }}</div>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="font-size:13px; font-weight:700; color:#0F172A; margin:28px 0 4px;">Accent · Violeta — highlights secundarios</div>
+    <div style="font-size:12px; color:#94A3B8; font-family:ui-monospace,monospace; margin-bottom:14px;">--color-accent-{50…700}</div>
+    <div style="display:flex; flex-wrap:wrap; gap:10px;">
+      <sc-for list="{{ accent }}" as="c" hint-placeholder-count="4">
+        <div style="width:76px;">
+          <div style="height:52px; border-radius:8px; background:{{ c.hex }}; border:1px solid rgba(2,6,23,.06);"></div>
+          <div style="font-size:12px; font-weight:700; color:#0F172A; font-family:ui-monospace,monospace; margin-top:6px;">{{ c.token }}</div>
+          <div style="font-size:10px; color:#94A3B8; font-family:ui-monospace,monospace;">{{ c.hex }}</div>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="font-size:13px; font-weight:700; color:#0F172A; margin:28px 0 4px;">Neutrals · Slate</div>
+    <div style="font-size:12px; color:#94A3B8; font-family:ui-monospace,monospace; margin-bottom:14px;">--color-neutral-{white…black}</div>
+    <div style="display:flex; flex-wrap:wrap; gap:10px;">
+      <sc-for list="{{ neutral }}" as="c" hint-placeholder-count="12">
+        <div style="width:76px;">
+          <div style="height:52px; border-radius:8px; background:{{ c.hex }}; border:1px solid rgba(2,6,23,.1);"></div>
+          <div style="font-size:12px; font-weight:700; color:#0F172A; font-family:ui-monospace,monospace; margin-top:6px;">{{ c.token }}</div>
+          <div style="font-size:10px; color:#94A3B8; font-family:ui-monospace,monospace;">{{ c.hex }}</div>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="font-size:13px; font-weight:700; color:#0F172A; margin:28px 0 14px;">Semánticos</div>
+    <div style="display:flex; flex-wrap:wrap; gap:12px;">
+      <sc-for list="{{ semantic }}" as="s" hint-placeholder-count="4">
+        <div style="flex:1; min-width:180px; border:1px solid #E2E8F0; border-radius:12px; overflow:hidden;">
+          <div style="height:44px; background:{{ s.base }};"></div>
+          <div style="padding:12px 14px; background:{{ s.bg }};">
+            <div style="font-weight:700; color:{{ s.text }}; font-size:14px;">{{ s.label }}</div>
+            <div style="font-family:ui-monospace,monospace; font-size:10px; color:#64748B; margin-top:6px;">base {{ s.base }}</div>
+            <div style="font-family:ui-monospace,monospace; font-size:10px; color:#64748B;">{{ s.token }}</div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+</div>
+
+<div style="position:absolute; left:1480px; top:0; width:640px;">
+  <div data-drags-parent="1" style="font-size:12px; font-weight:600; letter-spacing:0.05em; text-transform:uppercase; color:#64748B; margin:0 0 10px 4px;">02 · Typography</div>
+  <div style="background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(2,6,23,.08),0 12px 32px rgba(2,6,23,.05); padding:32px;">
+    <div style="font-size:13px; color:#64748B; margin-bottom:20px;">Inter · pesos 400 / 500 / 600 / 700</div>
+    <sc-for list="{{ typeScale }}" as="t" hint-placeholder-count="9">
+      <div style="padding:14px 0; border-top:1px solid #F1F5F9;">
+        <div style="display:flex; justify-content:space-between; align-items:baseline; gap:12px; margin-bottom:6px;">
+          <span style="font-size:11px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:#16A34A;">{{ t.name }}</span>
+          <span style="font-family:ui-monospace,monospace; font-size:11px; color:#94A3B8;">{{ t.meta }}</span>
+        </div>
+        <div style="color:#0F172A; font-size:{{ t.size }}; font-weight:{{ t.weight }}; line-height:{{ t.lh }}; letter-spacing:{{ t.ls }};">{{ t.sample }}</div>
+      </div>
+    </sc-for>
+
+    <div style="margin-top:28px; padding:20px; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:12px;">
+      <div style="font-size:13px; font-weight:700; color:#0F172A; margin-bottom:4px;">Numeric / Tabular</div>
+      <div style="font-size:12px; color:#64748B; margin-bottom:4px;">Inter con cifras tabulares · números, importes y tablas</div>
+      <div style="font-family:ui-monospace,monospace; font-size:11px; color:#16A34A; margin-bottom:18px;">--font-numeric · font-feature-settings: "tnum" 1, "lnum" 1</div>
+
+      <div style="display:flex; gap:32px; flex-wrap:wrap; align-items:flex-start;">
+        <div>
+          <div style="font-size:11px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:#16A34A; margin-bottom:8px;">Stat / KPI</div>
+          <div style="font-size:32px; font-weight:700; color:#0F172A; letter-spacing:-0.02em; font-feature-settings:'tnum' 1,'lnum' 1;">1.480</div>
+          <div style="font-size:11px; color:#94A3B8; margin-top:2px;">32 / 700 / tnum</div>
+        </div>
+        <div>
+          <div style="font-size:11px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:#16A34A; margin-bottom:8px;">Importe</div>
+          <div style="font-size:22px; font-weight:600; color:#0F172A; font-feature-settings:'tnum' 1,'lnum' 1;">€2.340,00</div>
+          <div style="font-size:11px; color:#94A3B8; margin-top:2px;">22 / 600 / tnum</div>
+        </div>
+        <div>
+          <div style="font-size:11px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:#16A34A; margin-bottom:8px;">Nº en tabla</div>
+          <div style="font-size:15px; font-weight:500; color:#0F172A; font-feature-settings:'tnum' 1,'lnum' 1; line-height:1.5;">11.118<br>40.084<br>97.231</div>
+          <div style="font-size:11px; color:#94A3B8; margin-top:2px;">15 / 500 / tnum</div>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:24px; margin-top:20px; padding-top:16px; border-top:1px solid #E2E8F0;">
+        <div>
+          <div style="font-size:10px; color:#94A3B8; margin-bottom:4px;">Sin tabular (Inter por defecto)</div>
+          <div style="font-size:15px; font-weight:500; color:#94A3B8; line-height:1.5;">11.118<br>40.084<br>97.231</div>
+        </div>
+        <div>
+          <div style="font-size:10px; color:#16A34A; margin-bottom:4px;">Con tabular ✓ columnas alineadas</div>
+          <div style="font-size:15px; font-weight:500; color:#0F172A; font-feature-settings:'tnum' 1,'lnum' 1; line-height:1.5;">11.118<br>40.084<br>97.231</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="position:absolute; left:2180px; top:0; width:600px;">
+  <div data-drags-parent="1" style="font-size:12px; font-weight:600; letter-spacing:0.05em; text-transform:uppercase; color:#64748B; margin:0 0 10px 4px;">05 · Icon Set · Lucide</div>
+  <div style="background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(2,6,23,.08),0 12px 32px rgba(2,6,23,.05); padding:32px;">
+    <div style="font-size:13px; color:#64748B; margin-bottom:20px;">Stroke 2px · 24px · currentColor</div>
+    <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px;">
+      <sc-for list="{{ icons }}" as="ic" hint-placeholder-count="25">
+        <div style="border:1px solid #E2E8F0; border-radius:12px; padding:14px 8px; display:flex; flex-direction:column; align-items:center; gap:8px; text-align:center;">
+          <span style="color:#0F172A;"><i data-lucide="{{ ic.id }}" width="24" height="24"></i></span>
+          <span style="font-size:10px; color:#64748B; line-height:1.3;">{{ ic.label }}</span>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+</div>
+
+<div style="position:absolute; left:0; top:1020px; width:1380px;">
+  <div data-drags-parent="1" style="font-size:12px; font-weight:600; letter-spacing:0.05em; text-transform:uppercase; color:#64748B; margin:0 0 10px 4px;">07 · Pipeline & Priority</div>
+  <div style="background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(2,6,23,.08),0 12px 32px rgba(2,6,23,.05); padding:32px; display:grid; grid-template-columns:1.4fr 1fr; gap:40px;">
+    <div>
+      <div style="font-size:13px; font-weight:700; color:#0F172A; margin:0 0 4px;">6 etapas del pipeline</div>
+      <div style="font-size:12px; color:#94A3B8; margin-bottom:18px;">Nuevo → Contactado → Presentación → Valoración → Incorporado → Descartado</div>
+      <sc-for list="{{ stages }}" as="st" hint-placeholder-count="6">
+        <div style="display:flex; align-items:center; gap:14px; padding:10px 0; border-top:1px solid #F1F5F9;">
+          <span style="width:22px; font-family:ui-monospace,monospace; font-size:12px; color:#CBD5E1; font-weight:700;">{{ st.num }}</span>
+          <span style="display:inline-flex; align-items:center; gap:7px; padding:6px 13px; border-radius:9999px; background:{{ st.bg }}; color:{{ st.text }}; font-size:13px; font-weight:600;">
+            <span style="width:8px; height:8px; border-radius:9999px; background:{{ st.dot }};"></span>{{ st.label }}
+          </span>
+          <span style="margin-left:auto; font-family:ui-monospace,monospace; font-size:11px; color:#94A3B8;">{{ st.token }}</span>
+        </div>
+      </sc-for>
+    </div>
+    <div>
+      <div style="font-size:13px; font-weight:700; color:#0F172A; margin:0 0 4px;">3 niveles de prioridad</div>
+      <div style="font-size:12px; color:#94A3B8; margin-bottom:18px;">Alta · Media · Baja</div>
+      <sc-for list="{{ priorities }}" as="p" hint-placeholder-count="3">
+        <div style="display:flex; align-items:center; gap:12px; padding:14px 0; border-top:1px solid #F1F5F9;">
+          <span style="display:inline-flex; align-items:center; gap:7px; padding:6px 13px; border-radius:9999px; background:{{ p.bg }}; color:{{ p.text }}; font-size:13px; font-weight:600;">
+            <span style="width:8px; height:8px; border-radius:9999px; background:{{ p.dot }};"></span>{{ p.label }}
+          </span>
+          <span style="margin-left:auto; font-family:ui-monospace,monospace; font-size:11px; color:#94A3B8;">{{ p.token }}</span>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+</div>
+
+<div style="position:absolute; left:0; top:1560px; width:600px;">
+  <div data-drags-parent="1" style="font-size:12px; font-weight:600; letter-spacing:0.05em; text-transform:uppercase; color:#64748B; margin:0 0 10px 4px;">03 · Spacing · base 4px</div>
+  <div style="background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(2,6,23,.08),0 12px 32px rgba(2,6,23,.05); padding:32px;">
+    <sc-for list="{{ spacing }}" as="sp" hint-placeholder-count="12">
+      <div style="display:flex; align-items:center; gap:16px; padding:7px 0;">
+        <span style="width:88px; font-family:ui-monospace,monospace; font-size:12px; color:#0F172A; font-weight:600;">{{ sp.token }}</span>
+        <span style="width:36px; font-family:ui-monospace,monospace; font-size:12px; color:#94A3B8;">{{ sp.px }}</span>
+        <span style="height:14px; border-radius:3px; background:#16A34A; width:{{ sp.w }};"></span>
+      </div>
+    </sc-for>
+  </div>
+</div>
+
+<div style="position:absolute; left:660px; top:1560px; width:720px;">
+  <div data-drags-parent="1" style="font-size:12px; font-weight:600; letter-spacing:0.05em; text-transform:uppercase; color:#64748B; margin:0 0 10px 4px;">04 · Radius & Shadows</div>
+  <div style="background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(2,6,23,.08),0 12px 32px rgba(2,6,23,.05); padding:32px;">
+    <div style="font-size:13px; font-weight:700; color:#0F172A; margin:0 0 16px;">Border Radius</div>
+    <div style="display:flex; flex-wrap:wrap; gap:18px; margin-bottom:32px;">
+      <sc-for list="{{ radii }}" as="r" hint-placeholder-count="6">
+        <div style="text-align:center;">
+          <div style="width:72px; height:72px; background:#ECFDF3; border:2px solid #16A34A; border-radius:{{ r.val }};"></div>
+          <div style="font-family:ui-monospace,monospace; font-size:11px; color:#0F172A; font-weight:600; margin-top:8px;">{{ r.token }}</div>
+          <div style="font-family:ui-monospace,monospace; font-size:10px; color:#94A3B8;">{{ r.label }}</div>
+        </div>
+      </sc-for>
+    </div>
+    <div style="font-size:13px; font-weight:700; color:#0F172A; margin:0 0 16px;">Elevation</div>
+    <div style="display:flex; flex-wrap:wrap; gap:22px;">
+      <sc-for list="{{ shadows }}" as="sh" hint-placeholder-count="4">
+        <div style="text-align:center;">
+          <div style="width:96px; height:72px; background:#fff; border-radius:12px; box-shadow:{{ sh.css }};"></div>
+          <div style="font-family:ui-monospace,monospace; font-size:11px; color:#0F172A; font-weight:600; margin-top:14px;">{{ sh.token }}</div>
+          <div style="font-size:10px; color:#94A3B8;">{{ sh.label }}</div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+</div>
+
+<div style="position:absolute; left:1480px; top:1200px; width:1300px;">
+  <div data-drags-parent="1" style="font-size:12px; font-weight:600; letter-spacing:0.05em; text-transform:uppercase; color:#64748B; margin:0 0 10px 4px;">06 · Atomic Components</div>
+  <div style="background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(2,6,23,.08),0 12px 32px rgba(2,6,23,.05); padding:32px;">
+
+    <div style="font-size:13px; font-weight:700; color:#0F172A; margin:0 0 16px;">Botones · estados</div>
+    <div style="display:grid; grid-template-columns:120px repeat(5,1fr); gap:12px; align-items:center;">
+      <div></div>
+      <div style="font-size:11px; font-weight:600; color:#94A3B8; text-transform:uppercase; letter-spacing:0.03em;">Default</div>
+      <div style="font-size:11px; font-weight:600; color:#94A3B8; text-transform:uppercase; letter-spacing:0.03em;">Hover</div>
+      <div style="font-size:11px; font-weight:600; color:#94A3B8; text-transform:uppercase; letter-spacing:0.03em;">Pressed</div>
+      <div style="font-size:11px; font-weight:600; color:#94A3B8; text-transform:uppercase; letter-spacing:0.03em;">Disabled</div>
+      <div style="font-size:11px; font-weight:600; color:#94A3B8; text-transform:uppercase; letter-spacing:0.03em;">Loading</div>
+
+      <div style="font-size:13px; font-weight:600; color:#475569;">Primario</div>
+      <button style="padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600; border:none; font-family:inherit; background:#16A34A; color:#fff; cursor:pointer;">Guardar</button>
+      <button style="padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600; border:none; font-family:inherit; background:#15803D; color:#fff; cursor:pointer;">Guardar</button>
+      <button style="padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600; border:none; font-family:inherit; background:#166534; color:#fff; cursor:pointer; box-shadow:inset 0 2px 4px rgba(0,0,0,.2);">Guardar</button>
+      <button style="padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600; border:none; font-family:inherit; background:#D1FADF; color:#86EFAC; cursor:not-allowed;">Guardar</button>
+      <button style="padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600; border:none; font-family:inherit; background:#16A34A; color:#fff; display:inline-flex; align-items:center; gap:8px;"><span style="width:14px; height:14px; border:2px solid rgba(255,255,255,.4); border-top-color:#fff; border-radius:50%; animation:spin .7s linear infinite;"></span>Guardando</button>
+
+      <div style="font-size:13px; font-weight:600; color:#475569;">Secundario</div>
+      <button style="padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600; font-family:inherit; background:#fff; color:#0F172A; border:1px solid #CBD5E1; cursor:pointer;">Editar</button>
+      <button style="padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600; font-family:inherit; background:#F8FAFC; color:#0F172A; border:1px solid #94A3B8; cursor:pointer;">Editar</button>
+      <button style="padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600; font-family:inherit; background:#F1F5F9; color:#0F172A; border:1px solid #94A3B8; cursor:pointer;">Editar</button>
+      <button style="padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600; font-family:inherit; background:#fff; color:#CBD5E1; border:1px solid #E2E8F0; cursor:not-allowed;">Editar</button>
+      <button style="padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600; font-family:inherit; background:#fff; color:#0F172A; border:1px solid #CBD5E1; display:inline-flex; align-items:center; gap:8px;"><span style="width:14px; height:14px; border:2px solid #E2E8F0; border-top-color:#16A34A; border-radius:50%; animation:spin .7s linear infinite;"></span>Editar</button>
+
+      <div style="font-size:13px; font-weight:600; color:#475569;">Destructivo</div>
+      <button style="padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600; border:none; font-family:inherit; background:#DC2626; color:#fff; cursor:pointer;">Eliminar</button>
+      <button style="padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600; border:none; font-family:inherit; background:#B91C1C; color:#fff; cursor:pointer;">Eliminar</button>
+      <button style="padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600; border:none; font-family:inherit; background:#991B1B; color:#fff; cursor:pointer; box-shadow:inset 0 2px 4px rgba(0,0,0,.2);">Eliminar</button>
+      <button style="padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600; border:none; font-family:inherit; background:#FEE2E2; color:#FCA5A5; cursor:not-allowed;">Eliminar</button>
+      <button style="padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600; border:none; font-family:inherit; background:#DC2626; color:#fff; display:inline-flex; align-items:center; gap:8px;"><span style="width:14px; height:14px; border:2px solid rgba(255,255,255,.4); border-top-color:#fff; border-radius:50%; animation:spin .7s linear infinite;"></span>Borrando</button>
+
+      <div style="font-size:13px; font-weight:600; color:#475569;">Ghost</div>
+      <button style="padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600; border:none; font-family:inherit; background:transparent; color:#15803D; cursor:pointer;">Cancelar</button>
+      <button style="padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600; border:none; font-family:inherit; background:#ECFDF3; color:#15803D; cursor:pointer;">Cancelar</button>
+      <button style="padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600; border:none; font-family:inherit; background:#D1FADF; color:#15803D; cursor:pointer;">Cancelar</button>
+      <button style="padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600; border:none; font-family:inherit; background:transparent; color:#CBD5E1; cursor:not-allowed;">Cancelar</button>
+      <button style="padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600; border:none; font-family:inherit; background:transparent; color:#15803D; display:inline-flex; align-items:center; gap:8px;"><span style="width:14px; height:14px; border:2px solid #D1FADF; border-top-color:#16A34A; border-radius:50%; animation:spin .7s linear infinite;"></span>Cancelar</button>
+    </div>
+
+    <div style="height:1px; background:#E2E8F0; margin:32px 0;"></div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:40px;">
+      <div>
+        <div style="font-size:13px; font-weight:700; color:#0F172A; margin:0 0 16px;">Badges de etapa</div>
+        <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:24px;">
+          <sc-for list="{{ stages }}" as="st" hint-placeholder-count="6">
+            <span style="display:inline-flex; align-items:center; gap:7px; padding:6px 13px; border-radius:9999px; background:{{ st.bg }}; color:{{ st.text }}; font-size:13px; font-weight:600;">
+              <span style="width:8px; height:8px; border-radius:9999px; background:{{ st.dot }};"></span>{{ st.label }}
+            </span>
+          </sc-for>
+        </div>
+        <div style="font-size:13px; font-weight:700; color:#0F172A; margin:0 0 16px;">Badges de prioridad</div>
+        <div style="display:flex; flex-wrap:wrap; gap:8px;">
+          <sc-for list="{{ priorities }}" as="p" hint-placeholder-count="3">
+            <span style="display:inline-flex; align-items:center; gap:7px; padding:6px 13px; border-radius:9999px; background:{{ p.bg }}; color:{{ p.text }}; font-size:13px; font-weight:600;">
+              <span style="width:8px; height:8px; border-radius:9999px; background:{{ p.dot }};"></span>{{ p.label }}
+            </span>
+          </sc-for>
+        </div>
+      </div>
+
+      <div>
+        <div style="font-size:13px; font-weight:700; color:#0F172A; margin:0 0 16px;">Avatar · iniciales</div>
+        <div style="display:flex; align-items:center; gap:16px; margin-bottom:24px;">
+          <div style="width:28px; height:28px; border-radius:9999px; background:#ECFDF3; color:#15803D; font-weight:600; font-size:12px; display:flex; align-items:center; justify-content:center;">AM</div>
+          <div style="width:40px; height:40px; border-radius:9999px; background:#ECFDF3; color:#15803D; font-weight:600; font-size:15px; display:flex; align-items:center; justify-content:center;">AM</div>
+          <div style="width:56px; height:56px; border-radius:9999px; background:#ECFDF3; color:#15803D; font-weight:600; font-size:20px; display:flex; align-items:center; justify-content:center;">AM</div>
+          <span style="font-family:ui-monospace,monospace; font-size:11px; color:#94A3B8;">sm · md · lg</span>
+        </div>
+        <div style="font-size:13px; font-weight:700; color:#0F172A; margin:0 0 16px;">Toggle / Switch</div>
+        <div style="display:flex; align-items:center; gap:24px;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div style="width:44px; height:26px; border-radius:9999px; background:#16A34A; position:relative;"><div style="position:absolute; top:3px; left:21px; width:20px; height:20px; border-radius:9999px; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.3);"></div></div>
+            <span style="font-size:12px; color:#64748B;">On</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div style="width:44px; height:26px; border-radius:9999px; background:#CBD5E1; position:relative;"><div style="position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:9999px; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.3);"></div></div>
+            <span style="font-size:12px; color:#64748B;">Off</span>
+          </div>
+        </div>
+        <div style="font-size:13px; font-weight:700; color:#0F172A; margin:28px 0 12px;">Divider</div>
+        <div style="height:1px; background:#E2E8F0;"></div>
+        <div style="display:flex; align-items:center; gap:12px; margin-top:14px;">
+          <div style="flex:1; height:1px; background:#E2E8F0;"></div>
+          <span style="font-size:11px; color:#94A3B8; font-weight:600;">HOY</span>
+          <div style="flex:1; height:1px; background:#E2E8F0;"></div>
+        </div>
+      </div>
+    </div>
+
+    <div style="height:1px; background:#E2E8F0; margin:32px 0;"></div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:32px;">
+      <div>
+        <div style="font-size:13px; font-weight:700; color:#0F172A; margin:0 0 16px;">Input de texto</div>
+        <div style="font-size:11px; font-weight:600; color:#64748B; margin-bottom:6px;">Default</div>
+        <div style="padding:10px 12px; border-radius:8px; border:1px solid #CBD5E1; font-size:14px; color:#94A3B8; background:#fff; margin-bottom:14px;">Nombre del prospecto</div>
+        <div style="font-size:11px; font-weight:600; color:#64748B; margin-bottom:6px;">Focus</div>
+        <div style="padding:10px 12px; border-radius:8px; border:1px solid #16A34A; box-shadow:0 0 0 3px rgba(22,163,74,.15); font-size:14px; color:#0F172A; background:#fff; margin-bottom:14px;">Ana Martínez<span style="color:#16A34A;">|</span></div>
+        <div style="font-size:11px; font-weight:600; color:#64748B; margin-bottom:6px;">Filled</div>
+        <div style="padding:10px 12px; border-radius:8px; border:1px solid #CBD5E1; font-size:14px; color:#0F172A; background:#fff; margin-bottom:14px;">Ana Martínez</div>
+        <div style="font-size:11px; font-weight:600; color:#64748B; margin-bottom:6px;">Error</div>
+        <div style="padding:10px 12px; border-radius:8px; border:1px solid #DC2626; box-shadow:0 0 0 3px rgba(220,38,38,.12); font-size:14px; color:#0F172A; background:#fff; display:flex; align-items:center; justify-content:space-between;">Ana<span style="color:#DC2626; display:inline-flex;"><i data-lucide="alert-circle" width="16" height="16"></i></span></div>
+        <div style="font-size:11px; color:#DC2626; margin:6px 0 14px;">Campo obligatorio</div>
+        <div style="font-size:11px; font-weight:600; color:#64748B; margin-bottom:6px;">Disabled</div>
+        <div style="padding:10px 12px; border-radius:8px; border:1px solid #E2E8F0; font-size:14px; color:#94A3B8; background:#F1F5F9;">No disponible</div>
+      </div>
+
+      <div>
+        <div style="font-size:13px; font-weight:700; color:#0F172A; margin:0 0 16px;">Textarea</div>
+        <div style="font-size:11px; font-weight:600; color:#64748B; margin-bottom:6px;">Default</div>
+        <div style="padding:10px 12px; border-radius:8px; border:1px solid #CBD5E1; font-size:14px; color:#94A3B8; background:#fff; height:64px; margin-bottom:14px;">Notas de la interacción…</div>
+        <div style="font-size:11px; font-weight:600; color:#64748B; margin-bottom:6px;">Focus</div>
+        <div style="padding:10px 12px; border-radius:8px; border:1px solid #16A34A; box-shadow:0 0 0 3px rgba(22,163,74,.15); font-size:14px; color:#0F172A; background:#fff; height:64px; margin-bottom:14px;">Le interesa el plan anual.<span style="color:#16A34A;">|</span></div>
+        <div style="font-size:11px; font-weight:600; color:#64748B; margin-bottom:6px;">Error</div>
+        <div style="padding:10px 12px; border-radius:8px; border:1px solid #DC2626; box-shadow:0 0 0 3px rgba(220,38,38,.12); font-size:14px; color:#94A3B8; background:#fff; height:64px;">Notas de la interacción…</div>
+        <div style="font-size:11px; color:#DC2626; margin-top:6px;">Máximo 280 caracteres</div>
+      </div>
+
+      <div>
+        <div style="font-size:13px; font-weight:700; color:#0F172A; margin:0 0 16px;">Selector / Dropdown</div>
+        <div style="font-size:11px; font-weight:600; color:#64748B; margin-bottom:6px;">Closed</div>
+        <div style="padding:10px 12px; border-radius:8px; border:1px solid #CBD5E1; font-size:14px; color:#0F172A; background:#fff; display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">Contactado<span style="color:#64748B; display:inline-flex;"><i data-lucide="chevron-right" width="16" height="16" style="transform:rotate(90deg);"></i></span></div>
+        <div style="font-size:11px; font-weight:600; color:#64748B; margin-bottom:6px;">Open</div>
+        <div style="border-radius:8px; border:1px solid #16A34A; box-shadow:0 0 0 3px rgba(22,163,74,.15); background:#fff; overflow:hidden;">
+          <div style="padding:10px 12px; font-size:14px; color:#0F172A; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid #F1F5F9;">Contactado<span style="color:#16A34A; display:inline-flex;"><i data-lucide="chevron-right" width="16" height="16" style="transform:rotate(90deg);"></i></span></div>
+          <div style="padding:10px 12px; font-size:14px; color:#64748B;">Nuevo</div>
+          <div style="padding:10px 12px; font-size:14px; color:#0F172A; background:#ECFDF3; display:flex; align-items:center; justify-content:space-between;">Contactado<span style="color:#16A34A; display:inline-flex;"><i data-lucide="check" width="16" height="16"></i></span></div>
+          <div style="padding:10px 12px; font-size:14px; color:#64748B;">Presentación</div>
+          <div style="padding:10px 12px; font-size:14px; color:#64748B;">En valoración</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<div style="position:absolute; left:0px; top:2060px; width:1380px;">
+  <div data-drags-parent="1" style="font-size:12px; font-weight:600; letter-spacing:0.05em; text-transform:uppercase; color:#64748B; margin:0 0 10px 4px;">08 · Layout & Navegación</div>
+  <div style="background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(2,6,23,.08),0 12px 32px rgba(2,6,23,.05); padding:32px;">
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:40px; align-items:start;">
+
+      <div>
+        <div style="font-size:13px; font-weight:700; color:#0F172A; margin:0 0 4px;">Breakpoints</div>
+        <div style="font-size:12px; color:#94A3B8; margin-bottom:16px;">Mobile-first · el móvil es el sistema base</div>
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <div style="display:flex; align-items:center; gap:14px; padding:14px; border:1px solid #16A34A; background:#ECFDF3; border-radius:12px;">
+            <span style="color:#15803D; display:inline-flex;"><i data-lucide="smartphone" width="22" height="22"></i></span>
+            <div style="flex:1;">
+              <div style="font-size:14px; font-weight:700; color:#0F172A;">Mobile <span style="font-weight:500; color:#15803D;">· primario</span></div>
+              <div style="font-size:12px; color:#475569;">&lt; 768px · columna única · nav inferior</div>
+            </div>
+            <span style="font-family:ui-monospace,monospace; font-size:11px; color:#15803D;">375px ref.</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:14px; padding:14px; border:1px solid #E2E8F0; background:#fff; border-radius:12px;">
+            <span style="color:#64748B; display:inline-flex;"><i data-lucide="tablet" width="22" height="22"></i></span>
+            <div style="flex:1;">
+              <div style="font-size:14px; font-weight:700; color:#0F172A;">Tablet</div>
+              <div style="font-size:12px; color:#475569;">768 – 1023px · adaptación compacta</div>
+            </div>
+            <span style="font-family:ui-monospace,monospace; font-size:11px; color:#94A3B8;">768px</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:14px; padding:14px; border:1px solid #E2E8F0; background:#fff; border-radius:12px;">
+            <span style="color:#64748B; display:inline-flex;"><i data-lucide="monitor" width="22" height="22"></i></span>
+            <div style="flex:1;">
+              <div style="font-size:14px; font-weight:700; color:#0F172A;">Desktop</div>
+              <div style="font-size:12px; color:#475569;">≥ 1024px · sidebar lateral 220px</div>
+            </div>
+            <span style="font-family:ui-monospace,monospace; font-size:11px; color:#94A3B8;">1024px</span>
+          </div>
+        </div>
+
+        <div style="font-size:13px; font-weight:700; color:#0F172A; margin:26px 0 14px;">Ancho de contenido · escritorio</div>
+        <div style="border:1px solid #E2E8F0; border-radius:12px; padding:16px; background:#F8FAFC;">
+          <div style="display:flex; gap:8px; align-items:stretch; height:120px;">
+            <div style="width:64px; background:#0F172A; border-radius:8px; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; gap:8px; padding:10px 0; color:#fff;">
+              <span style="display:inline-flex; color:#16A34A;"><i data-lucide="home" width="16" height="16"></i></span>
+              <span style="display:inline-flex; color:#64748B;"><i data-lucide="users" width="16" height="16"></i></span>
+              <span style="display:inline-flex; color:#64748B;"><i data-lucide="bar-chart-3" width="16" height="16"></i></span>
+            </div>
+            <div style="flex:1; background:#fff; border:1px dashed #CBD5E1; border-radius:8px; position:relative; display:flex; align-items:center; justify-content:center;">
+              <div style="width:78%; height:80%; background:#ECFDF3; border:1px solid #A6F4C5; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; color:#15803D;">contenido · max-width 1200px</div>
+            </div>
+          </div>
+          <div style="display:flex; justify-content:space-between; margin-top:10px; font-family:ui-monospace,monospace; font-size:11px; color:#94A3B8;">
+            <span>sidebar 220px</span>
+            <span>gutters fluidos</span>
+            <span>contenido ≤ 1200px</span>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div style="font-size:13px; font-weight:700; color:#0F172A; margin:0 0 4px;">Navegación principal · móvil</div>
+        <div style="font-size:12px; color:#94A3B8; margin-bottom:16px;">Tab bar inferior · 3 destinos (Inicio · Prospectos · Resumen) + FAB flotante · 60px + safe-area</div>
+
+        <div style="width:320px; margin:0 auto; border:1px solid #E2E8F0; border-radius:20px; overflow:hidden; box-shadow:0 12px 32px rgba(15,23,42,.1);">
+          <div style="height:150px; background:#F8FAFC; position:relative; border-bottom:1px solid #E2E8F0; display:flex; align-items:center; justify-content:center;">
+            <span style="font-size:12px; color:#CBD5E1; font-weight:600;">área de contenido</span>
+          </div>
+          <div style="position:relative; background:#fff; padding:10px 0 18px; display:flex; align-items:flex-start; justify-content:space-around;">
+            <div style="position:relative; display:flex; flex-direction:column; align-items:center; gap:4px; width:84px;">
+              <span style="position:absolute; top:-10px; width:26px; height:3px; border-radius:0 0 3px 3px; background:#16A34A;"></span>
+              <span style="display:inline-flex; color:#16A34A;"><i data-lucide="home" width="24" height="24"></i></span>
+              <span style="font-size:11px; font-weight:700; color:#16A34A;">Inicio</span>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:4px; width:84px;">
+              <span style="display:inline-flex; color:#94A3B8;"><i data-lucide="users" width="24" height="24"></i></span>
+              <span style="font-size:11px; font-weight:500; color:#94A3B8;">Prospectos</span>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:4px; width:84px;">
+              <span style="display:inline-flex; color:#94A3B8;"><i data-lucide="bar-chart-3" width="24" height="24"></i></span>
+              <span style="font-size:11px; font-weight:500; color:#94A3B8;">Resumen</span>
+            </div>
+            <div style="position:absolute; right:14px; top:-30px; width:52px; height:52px; border-radius:9999px; background:#16A34A; box-shadow:0 8px 20px rgba(22,163,74,.4); display:flex; align-items:center; justify-content:center; color:#fff; border:3px solid #fff;"><i data-lucide="plus" width="26" height="26"></i></div>
+          </div>
+        </div>
+
+        <div style="display:flex; gap:18px; margin-top:18px; font-size:12px; color:#475569; flex-wrap:wrap;">
+          <div style="display:flex; align-items:center; gap:7px;"><span style="width:10px; height:10px; border-radius:9999px; background:#16A34A;"></span>Activo · primary-500</div>
+          <div style="display:flex; align-items:center; gap:7px;"><span style="width:10px; height:10px; border-radius:9999px; background:#94A3B8;"></span>Inactivo · neutral-400</div>
+          <div style="display:flex; align-items:center; gap:7px;"><span style="display:inline-flex; color:#16A34A;"><i data-lucide="plus" width="14" height="14"></i></span>FAB flotante (56px, abajo-derecha) · añadir prospecto</div>
+        </div>
+
+        <div style="margin-top:18px; padding:14px; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:12px; font-size:12px; color:#475569; line-height:1.55;">
+          En <strong style="color:#0F172A;">escritorio</strong> esta tab bar se transforma en el <strong style="color:#0F172A;">sidebar de 224px</strong> con los mismos destinos en vertical; el FAB pasa a un botón primario "Añadir prospecto" en la cabecera.
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+<div style="position:absolute; left:0px; top:2720px; width:820px;">
+  <div data-drags-parent="1" style="font-size:12px; font-weight:600; letter-spacing:0.05em; text-transform:uppercase; color:#64748B; margin:0 0 10px 4px;">09 · Tarjeta de prospecto & Filtros</div>
+  <div style="background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(2,6,23,.08),0 12px 32px rgba(2,6,23,.05); padding:32px; display:grid; grid-template-columns:1fr 1fr; gap:36px; align-items:start;">
+
+    <div>
+      <div style="font-size:13px; font-weight:700; color:#0F172A; margin:0 0 4px;">Tarjeta de prospecto · cómoda</div>
+      <div style="font-size:12px; color:#94A3B8; margin-bottom:16px;">Avatar · etapa · prioridad · canal · acciones siempre visibles</div>
+
+      <div style="background:#fff; border:1px solid #E2E8F0; border-radius:14px; padding:14px; box-shadow:0 1px 2px rgba(15,23,42,.04);">
+        <div style="display:flex; gap:12px; align-items:flex-start;">
+          <div style="width:44px; height:44px; border-radius:9999px; background:#ECFDF3; color:#15803D; font-weight:600; font-size:16px; display:flex; align-items:center; justify-content:center; flex-shrink:0;">AM</div>
+          <div style="flex:1; min-width:0;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+              <span style="font-size:16px; font-weight:600; color:#0F172A;">Ana Martínez</span>
+              <span style="display:inline-flex; align-items:center; gap:5px;"><span style="width:8px; height:8px; border-radius:9999px; background:#EF4444;"></span><span style="color:#CBD5E1; display:inline-flex;"><i data-lucide="chevron-right" width="18" height="18"></i></span></span>
+            </div>
+            <div style="margin-top:7px;"><span style="display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:9999px; background:#EEF2FF; color:#4338CA; font-size:12px; font-weight:600;"><span style="width:7px; height:7px; border-radius:9999px; background:#4F46E5;"></span>Contactado</span></div>
+            <div style="display:flex; align-items:center; gap:6px; margin-top:9px; color:#94A3B8; font-size:12px;"><i data-lucide="message-circle" width="14" height="14"></i><span style="color:#64748B;">Le interesa el plan anual</span><span style="width:3px; height:3px; border-radius:9999px; background:#CBD5E1;"></span><i data-lucide="clock" width="13" height="13"></i><span>Hace 2 h</span></div>
+          </div>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:12px; padding-top:12px; border-top:1px solid #F1F5F9;">
+          <div style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; height:36px; border-radius:9px; background:#ECFDF3; color:#15803D; font-size:13px; font-weight:600;"><i data-lucide="phone" width="16" height="16"></i>Llamar</div>
+          <div style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; height:36px; border-radius:9px; background:#ECFDF3; color:#15803D; font-size:13px; font-weight:600;"><i data-lucide="message-circle" width="16" height="16"></i>WhatsApp</div>
+          <div style="width:42px; display:flex; align-items:center; justify-content:center; height:36px; border-radius:9px; border:1px solid #E2E8F0; color:#475569;"><i data-lucide="sticky-note" width="16" height="16"></i></div>
+        </div>
+      </div>
+
+      <div style="margin-top:14px; font-size:12px; color:#64748B; line-height:1.6;">
+        <div style="display:flex; align-items:center; gap:8px;"><span style="width:8px; height:8px; border-radius:9999px; background:#EF4444;"></span>Punto de prioridad junto al nombre</div>
+        <div style="display:flex; align-items:center; gap:8px;"><span style="display:inline-flex; color:#94A3B8;"><i data-lucide="message-circle" width="13" height="13"></i></span>Icono de canal + última interacción</div>
+      </div>
+    </div>
+
+    <div>
+      <div style="font-size:13px; font-weight:700; color:#0F172A; margin:0 0 4px;">Barra de filtros</div>
+      <div style="font-size:12px; color:#94A3B8; margin-bottom:16px;">~4 chips visibles · resto al deslizar · menú fijo con contador</div>
+
+      <div style="border:1px solid #E2E8F0; border-radius:12px; padding:14px; background:#F8FAFC;">
+        <div style="display:flex; align-items:center; gap:9px;">
+          <div style="flex:1; min-width:0; display:flex; gap:7px; overflow:hidden;">
+            <span style="white-space:nowrap; padding:7px 13px; border-radius:9999px; background:#16A34A; color:#fff; font-size:13px; font-weight:600;">Todos · 24</span>
+            <span style="white-space:nowrap; padding:7px 13px; border-radius:9999px; background:#F1F5F9; color:#475569; font-size:13px; font-weight:600;">Nuevo · 5</span>
+            <span style="white-space:nowrap; padding:7px 13px; border-radius:9999px; background:#F1F5F9; color:#475569; font-size:13px; font-weight:600;">Contactado · 8</span>
+          </div>
+          <div style="flex-shrink:0; width:38px; height:34px; border-radius:9999px; border:1px solid #E2E8F0; background:#fff; display:flex; align-items:center; justify-content:center; color:#475569; position:relative;"><i data-lucide="menu" width="18" height="18"></i><span style="position:absolute; top:-5px; right:-4px; min-width:16px; height:16px; padding:0 4px; box-sizing:border-box; border-radius:9999px; background:#16A34A; color:#fff; font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; border:1.5px solid #F8FAFC;">2</span></div>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:14px; font-size:11px; color:#94A3B8; flex-wrap:wrap;">
+          <span style="display:inline-flex; align-items:center; gap:6px;"><span style="width:9px; height:9px; border-radius:9999px; background:#16A34A;"></span>Chip activo</span>
+          <span style="display:inline-flex; align-items:center; gap:6px;"><span style="width:9px; height:9px; border-radius:9999px; background:#CBD5E1;"></span>Chip inactivo</span>
+          <span style="display:inline-flex; align-items:center; gap:6px;"><span style="display:inline-flex; color:#16A34A;"><i data-lucide="menu" width="13" height="13"></i></span>Menú · todos los filtros</span>
+        </div>
+      </div>
+
+      <div style="margin-top:18px; font-size:13px; font-weight:700; color:#0F172A; margin-bottom:10px;">Estado vacío</div>
+      <div style="border:1px dashed #CBD5E1; border-radius:12px; padding:24px; text-align:center; background:#fff;">
+        <div style="width:56px; height:56px; border-radius:9999px; background:#ECFDF3; display:inline-flex; align-items:center; justify-content:center; color:#16A34A; margin-bottom:12px;"><i data-lucide="users" width="26" height="26"></i></div>
+        <div style="font-size:14px; font-weight:700; color:#0F172A;">Aún no tienes prospectos</div>
+        <div style="font-size:12px; color:#64748B; margin-top:4px;">Añade tu primer candidato para empezar</div>
+      </div>
+    </div>
+
+  </div>
+</div></x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      primary: [
+        { token: '50', hex: '#ECFDF3' }, { token: '100', hex: '#D1FADF' },
+        { token: '200', hex: '#A6F4C5' }, { token: '300', hex: '#6CE9A6' },
+        { token: '400', hex: '#32D583' }, { token: '500', hex: '#16A34A' },
+        { token: '600', hex: '#15803D' }, { token: '700', hex: '#166534' },
+        { token: '800', hex: '#14532D' }, { token: '900', hex: '#052E16' }
+      ],
+      accent: [
+        { token: '50', hex: '#F5F3FF' }, { token: '100', hex: '#EDE9FE' },
+        { token: '500', hex: '#7C3AED' }, { token: '700', hex: '#6D28D9' }
+      ],
+      neutral: [
+        { token: 'white', hex: '#FFFFFF' }, { token: '50', hex: '#F8FAFC' },
+        { token: '100', hex: '#F1F5F9' }, { token: '200', hex: '#E2E8F0' },
+        { token: '300', hex: '#CBD5E1' }, { token: '400', hex: '#94A3B8' },
+        { token: '500', hex: '#64748B' }, { token: '600', hex: '#475569' },
+        { token: '700', hex: '#334155' }, { token: '800', hex: '#1E293B' },
+        { token: '900', hex: '#0F172A' }, { token: 'black', hex: '#020617' }
+      ],
+      semantic: [
+        { label: 'Éxito', base: '#16A34A', bg: '#ECFDF3', text: '#15803D', token: '--color-success' },
+        { label: 'Alerta', base: '#F59E0B', bg: '#FFFBEB', text: '#B45309', token: '--color-warning' },
+        { label: 'Error', base: '#EF4444', bg: '#FEF2F2', text: '#DC2626', token: '--color-error' },
+        { label: 'Info', base: '#3B82F6', bg: '#EFF6FF', text: '#2563EB', token: '--color-info' }
+      ],
+      stages: [
+        { num: '1', label: 'Nuevo', bg: '#EEF2F7', text: '#475569', dot: '#64748B', token: '--color-stage-new' },
+        { num: '2', label: 'Contactado', bg: '#EEF2FF', text: '#4338CA', dot: '#4F46E5', token: '--color-stage-contacted' },
+        { num: '3', label: 'Presentación realizada', bg: '#F5F3FF', text: '#6D28D9', dot: '#7C3AED', token: '--color-stage-presented' },
+        { num: '4', label: 'En valoración', bg: '#FFF7ED', text: '#C2410C', dot: '#EA580C', token: '--color-stage-evaluating' },
+        { num: '5', label: 'Incorporado', bg: '#ECFDF3', text: '#15803D', dot: '#16A34A', token: '--color-stage-joined' },
+        { num: '6', label: 'Descartado', bg: '#F1F5F9', text: '#64748B', dot: '#94A3B8', token: '--color-stage-discarded' }
+      ],
+      priorities: [
+        { label: 'Alta', bg: '#FEF2F2', text: '#DC2626', dot: '#EF4444', token: '--color-priority-high' },
+        { label: 'Media', bg: '#FFFBEB', text: '#B45309', dot: '#F59E0B', token: '--color-priority-medium' },
+        { label: 'Baja', bg: '#F0FDF4', text: '#15803D', dot: '#86EFAC', token: '--color-priority-low' }
+      ],
+      typeScale: [
+        { name: 'Display', size: '32px', weight: '700', lh: '1.15', ls: '-0.02em', meta: '32 / 700 / 1.15', sample: 'Haz crecer tu red' },
+        { name: 'Heading 1', size: '28px', weight: '700', lh: '1.2', ls: '-0.02em', meta: '28 / 700 / 1.2', sample: 'Pipeline de prospectos' },
+        { name: 'Heading 2', size: '22px', weight: '600', lh: '1.25', ls: '-0.01em', meta: '22 / 600 / 1.25', sample: 'Actividad de hoy' },
+        { name: 'Heading 3', size: '18px', weight: '600', lh: '1.3', ls: '-0.01em', meta: '18 / 600 / 1.3', sample: 'Ana Martínez' },
+        { name: 'Body Large', size: '17px', weight: '400', lh: '1.5', ls: '0', meta: '17 / 400 / 1.5', sample: 'Presentación realizada el martes.' },
+        { name: 'Body', size: '15px', weight: '400', lh: '1.5', ls: '0', meta: '15 / 400 / 1.5', sample: 'Seguimiento pendiente esta semana.' },
+        { name: 'Body Small', size: '13px', weight: '400', lh: '1.45', ls: '0', meta: '13 / 400 / 1.45', sample: 'Última interacción hace 3 días.' },
+        { name: 'Caption', size: '12px', weight: '400', lh: '1.4', ls: '0.01em', meta: '12 / 400 / 1.4', sample: 'Actualizado hace 2 h' },
+        { name: 'Label', size: '13px', weight: '600', lh: '1.2', ls: '0.02em', meta: '13 / 600 / 1.2', sample: 'PRIORIDAD ALTA' }
+      ],
+      spacing: [
+        { token: '--space-1', px: '4px', w: '4px' }, { token: '--space-2', px: '8px', w: '8px' },
+        { token: '--space-3', px: '12px', w: '12px' }, { token: '--space-4', px: '16px', w: '16px' },
+        { token: '--space-5', px: '20px', w: '20px' }, { token: '--space-6', px: '24px', w: '24px' },
+        { token: '--space-8', px: '32px', w: '32px' }, { token: '--space-10', px: '40px', w: '40px' },
+        { token: '--space-12', px: '48px', w: '48px' }, { token: '--space-16', px: '64px', w: '64px' },
+        { token: '--space-20', px: '80px', w: '80px' }, { token: '--space-24', px: '96px', w: '96px' }
+      ],
+      radii: [
+        { token: '--radius-none', val: '0', label: '0' }, { token: '--radius-sm', val: '4px', label: '4px' },
+        { token: '--radius-md', val: '8px', label: '8px' }, { token: '--radius-lg', val: '12px', label: '12px' },
+        { token: '--radius-xl', val: '16px', label: '16px' }, { token: '--radius-full', val: '9999px', label: 'full' }
+      ],
+      shadows: [
+        { token: 'shadow-0', label: 'Flat', css: 'none' },
+        { token: 'shadow-1', label: 'Card', css: '0 1px 2px rgba(15,23,42,.06), 0 1px 3px rgba(15,23,42,.08)' },
+        { token: 'shadow-2', label: 'Elevada', css: '0 4px 12px rgba(15,23,42,.1)' },
+        { token: 'shadow-3', label: 'Modal', css: '0 12px 32px rgba(15,23,42,.18)' }
+      ],
+      icons: [
+        { id: 'home', label: 'Inicio' }, { id: 'users', label: 'Prospectos' },
+        { id: 'bar-chart-3', label: 'Dashboard' }, { id: 'phone', label: 'Llamada' },
+        { id: 'message-circle', label: 'WhatsApp' }, { id: 'mail', label: 'Email' },
+        { id: 'instagram', label: 'Instagram' }, { id: 'plus', label: 'Añadir' },
+        { id: 'square-pen', label: 'Editar' }, { id: 'save', label: 'Guardar' },
+        { id: 'arrow-left', label: 'Volver' }, { id: 'filter', label: 'Filtrar' },
+        { id: 'calendar', label: 'Fecha' }, { id: 'clock', label: 'Tiempo' },
+        { id: 'chevron-right', label: 'Chevron' }, { id: 'check', label: 'Check' },
+        { id: 'x', label: 'Cerrar' }, { id: 'user', label: 'Avatar' },
+        { id: 'sticky-note', label: 'Nota' }, { id: 'layers', label: 'Pipeline' },
+        { id: 'alert-circle', label: 'Alerta' }, { id: 'info', label: 'Info' },
+        { id: 'star', label: 'Prioridad' }, { id: 'trash-2', label: 'Eliminar' },
+        { id: 'more-vertical', label: 'Más' }
+      ]
+    };
+  }
+  drawIcons() {
+    if (window.lucide && window.lucide.createIcons) {
+      try { window.lucide.createIcons(); } catch (e) {}
+      this.patchInstagram();
+    } else {
+      setTimeout(() => this.drawIcons(), 120);
+    }
+  }
+  patchInstagram() {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="20" x="2" y="2" rx="5" ry="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" x2="17.51" y1="6.5" y2="6.5"></line></svg>';
+    document.querySelectorAll('i[data-lucide="instagram"]').forEach(el => { if (!el.querySelector('svg')) el.innerHTML = svg; });
+  }
+  componentDidMount() { this.drawIcons(); }
+  componentDidUpdate() { this.drawIcons(); }
+}
+</script>
+</body>
+</html>

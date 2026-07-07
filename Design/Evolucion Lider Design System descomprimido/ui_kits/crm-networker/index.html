@@ -1,0 +1,79 @@
+<!-- @dsCard group="CRM Networker" viewport="480x640" name="CRM Networker — app" subtitle="Interactive mobile CRM: actividad, pipeline, resumen, ficha" -->
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Evolución Líder · CRM Networker</title>
+<link rel="stylesheet" href="../../styles.css"/>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>
+  body { margin:0; background:var(--color-neutral-200); font-family:'Inter',sans-serif; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" src="shell.jsx"></script>
+<script type="text/babel" src="screens.jsx"></script>
+<script type="text/babel">
+const { ScreenHeader, PhoneFrame, StatusBar, TabBar, Fab } = window;
+const SCREEN_TITLE = { home:'Actividad Diaria', pipe:'Prospectos', resumen:'Resumen' };
+
+function Toast({ msg }) {
+  if (!msg) return null;
+  return (
+    <div style={{ position:'absolute', left:16, right:16, bottom:84, zIndex:40, background:'var(--color-neutral-900)', color:'#fff',
+      borderRadius:'var(--radius-md)', padding:'12px 16px', fontSize:14, fontWeight:500, boxShadow:'var(--shadow-3)',
+      animation:'el-fade-in var(--duration-base) ease' }}>{msg}</div>
+  );
+}
+
+function App() {
+  const [tab, setTab] = React.useState('home');
+  const [ficha, setFicha] = React.useState(null);
+  const [sheet, setSheet] = React.useState(false);
+  const [account, setAccount] = React.useState(false);
+  const [toast, setToast] = React.useState('');
+  const fire = (m) => { setToast(m); clearTimeout(window.__t); window.__t = setTimeout(()=>setToast(''), 1800); };
+
+  const openFicha = (p) => setFicha(p);
+  const isRoot = !ficha;
+
+  return (
+    <PhoneFrame>
+      <StatusBar />
+      {ficha ? (
+        <ScreenHeader title="Ficha del prospecto" onBack={() => setFicha(null)}
+          action={<button style={{ all:'unset', cursor:'pointer', padding:6 }}><window.EvoluciNLDerDesignSystem_8c407a.Icon name="more-vertical" size={20} color="var(--color-neutral-500)" /></button>} />
+      ) : (
+        <ScreenHeader title={SCREEN_TITLE[tab]} action={<window.AccountButton onClick={() => setAccount(true)} />} />
+      )}
+
+      {ficha ? (
+        <window.Ficha prospect={ficha} onAction={fire} />
+      ) : tab === 'home' ? (
+        <window.ActividadDiaria onOpen={openFicha} onAction={fire} />
+      ) : tab === 'pipe' ? (
+        <window.Pipeline onOpen={openFicha} onAction={fire} />
+      ) : (
+        <window.Resumen />
+      )}
+
+      {isRoot && <Fab onClick={() => setSheet(true)} />}
+      {isRoot && <TabBar active={tab} onChange={setTab} />}
+
+      {sheet && <window.NuevoProspecto onClose={() => setSheet(false)} onSave={(n) => { setSheet(false); fire(n + ' añadido'); }} />}
+      {account && <window.AccountSheet onClose={() => setAccount(false)} onLogout={() => { setAccount(false); fire('Sesión cerrada'); }} />}
+      <Toast msg={toast} />
+    </PhoneFrame>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

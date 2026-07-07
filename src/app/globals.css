@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+/* Design tokens — Evolución Líder · CRM Networker design system.
+   Ported from Design/Evolucion Lider Design System descomprimido/tokens/.
+   Font (Inter) is loaded via next/font in layout.tsx instead of tokens/fonts.css,
+   so that file is intentionally not imported here. */
+@import "../styles/tokens/colors.css";
+@import "../styles/tokens/typography.css";
+@import "../styles/tokens/spacing.css";
+@import "../styles/tokens/radius.css";
+@import "../styles/tokens/shadows.css";
+@import "../styles/tokens/borders.css";
+@import "../styles/tokens/animation.css";
+
+:root {
+  /* next/font supplies --font-sans (Inter, self-hosted); reuse it for numeric contexts. */
+  --font-numeric: var(--font-sans);
+}
+
+body {
+  background: var(--surface-app);
+  color: var(--text-body);
+  font-family: var(--font-sans);
+}
+
+* {
+  box-sizing: border-box;
+}
