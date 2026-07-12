@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Material de referencia del design system: no es código del producto.
+    "Design/**",
+    // Código generado por `convex codegen`.
+    "convex/_generated/**",
   ]),
 ]);
 

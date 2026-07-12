@@ -25,6 +25,40 @@ const VARIANTS: Record<NonNullable<ButtonProps["variant"]>, React.CSSProperties>
   ghost: { background: "transparent", color: "var(--color-primary-600)", border: "1px solid transparent" },
 };
 
+/**
+ * Visual de botón como CSSProperties (base → variante), para elementos que deben
+ * verse como Button sin serlo — p. ej. un <Link> de navegación. Sin estados
+ * disabled/loading: eso es del Button interactivo.
+ */
+export function buttonStyle({
+  variant = "primary",
+  size = "md",
+  fullWidth = false,
+}: Pick<ButtonProps, "variant" | "size" | "fullWidth"> = {}): React.CSSProperties {
+  const s = SIZES[size];
+  const v = VARIANTS[variant];
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: s.gap,
+    height: s.height,
+    padding: s.padding,
+    width: fullWidth ? "100%" : "auto",
+    fontFamily: "var(--font-sans)",
+    fontSize: s.font,
+    fontWeight: 600,
+    lineHeight: 1,
+    borderRadius: "var(--radius-md)",
+    cursor: "pointer",
+    transition: "background-color .15s ease, box-shadow .15s ease, transform .05s ease",
+    whiteSpace: "nowrap",
+    userSelect: "none",
+    textDecoration: "none",
+    ...v,
+  };
+}
+
 /** Primary action button — variants: primary (green), secondary (outline), destructive, ghost. */
 export function Button({
   children,
@@ -38,28 +72,11 @@ export function Button({
   style,
   ...rest
 }: ButtonProps) {
-  const s = SIZES[size];
-  const v = VARIANTS[variant];
-
+  // Precedencia intacta: base → variante (buttonStyle) → estado → style del consumidor.
   const base: React.CSSProperties = {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: s.gap,
-    height: s.height,
-    padding: s.padding,
-    width: fullWidth ? "100%" : "auto",
-    fontFamily: "var(--font-sans)",
-    fontSize: s.font,
-    fontWeight: 600,
-    lineHeight: 1,
-    borderRadius: "var(--radius-md)",
+    ...buttonStyle({ variant, size, fullWidth }),
     cursor: disabled || loading ? "not-allowed" : "pointer",
     opacity: disabled ? 0.5 : 1,
-    transition: "background-color .15s ease, box-shadow .15s ease, transform .05s ease",
-    whiteSpace: "nowrap",
-    userSelect: "none",
-    ...v,
     ...style,
   };
 

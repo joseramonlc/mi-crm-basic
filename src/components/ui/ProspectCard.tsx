@@ -4,7 +4,7 @@ import { Icon } from "./Icon";
 import { StageBadge, type PipelineStage } from "./StageBadge";
 import { PriorityBadge, type PriorityLevel } from "./PriorityBadge";
 
-const CHANNEL_ICON = { phone: "phone", whatsapp: "message-circle", instagram: "instagram", mail: "mail" } as const;
+const CHANNEL_ICON = { phone: "phone", whatsapp: "message-circle", instagram: "instagram", mail: "mail", otro: "message-square" } as const;
 
 export interface ProspectCardProps extends React.HTMLAttributes<HTMLDivElement> {
   name: string;
@@ -89,13 +89,22 @@ export function ProspectCard({
           <Icon name="chevron-right" size={20} color="var(--color-neutral-300)" style={{ marginTop: 2 }} />
         </div>
       </button>
-      <div style={{ display: "flex", borderTop: "1px solid var(--border-default)" }}>
-        <CardAction icon="phone" label="Llamar" onClick={onCall} />
-        <span style={{ width: 1, background: "var(--border-default)" }} />
-        <CardAction icon="message-circle" label="WhatsApp" onClick={onWhatsApp} />
-        <span style={{ width: 1, background: "var(--border-default)" }} />
-        <CardAction icon="sticky-note" label="Nota" onClick={onNote} />
-      </div>
+      {(onCall || onWhatsApp || onNote) && (
+        <div style={{ display: "flex", borderTop: "1px solid var(--border-default)" }}>
+          {[
+            onCall && { icon: "phone", label: "Llamar", onClick: onCall },
+            onWhatsApp && { icon: "message-circle", label: "WhatsApp", onClick: onWhatsApp },
+            onNote && { icon: "sticky-note", label: "Nota", onClick: onNote },
+          ]
+            .filter((a): a is { icon: string; label: string; onClick: () => void } => Boolean(a))
+            .map((a, i) => (
+              <React.Fragment key={a.label}>
+                {i > 0 && <span style={{ width: 1, background: "var(--border-default)" }} />}
+                <CardAction icon={a.icon} label={a.label} onClick={a.onClick} />
+              </React.Fragment>
+            ))}
+        </div>
+      )}
     </div>
   );
 }

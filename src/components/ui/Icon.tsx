@@ -5,6 +5,7 @@ import {
   BarChart3,
   Phone,
   MessageCircle,
+  MessageSquare,
   Mail,
   Plus,
   SquarePen,
@@ -67,6 +68,9 @@ const ICONS: Record<string, React.ComponentType<IconGlyphProps>> = {
   "bar-chart-3": BarChart3,
   phone: Phone,
   "message-circle": MessageCircle,
+  // Meta-icono del canal "otro" en ProspectCard — sin él, Icon devolvería null
+  // y la tarjeta perdería el icono de canal en vez de mostrar el fallback.
+  "message-square": MessageSquare,
   mail: Mail,
   instagram: InstagramGlyph,
   plus: Plus,
