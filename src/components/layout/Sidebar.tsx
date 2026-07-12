@@ -3,18 +3,13 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { useAuthActions } from "@convex-dev/auth/react";
-import { useQuery } from "convex/react";
-import { api } from "@convex/_generated/api";
 import { Icon, Avatar, Button } from "@/components/ui";
-import { NAV_ITEMS } from "./nav";
+import { NAV_ITEMS, PLACEHOLDER_ACCOUNT } from "./nav";
 
 /** Fixed 224px sidebar — desktop nav. Replaces the mobile tab bar + FAB (see design.md §2 Layout). */
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
-  const { signOut } = useAuthActions();
-  const user = useQuery(api.users.current);
 
   return (
     <aside
@@ -60,16 +55,16 @@ export function Sidebar() {
         </nav>
 
         <div style={{ borderColor: "var(--border-default)" }} className="border-t p-3 flex items-center gap-3">
-          <Avatar name={user?.name ?? user?.email ?? ""} size="sm" />
+          <Avatar name={PLACEHOLDER_ACCOUNT.name} size="sm" />
           <div className="flex-1 min-w-0">
             <div style={{ fontSize: 13, fontWeight: 600, color: "var(--color-neutral-900)" }} className="truncate">
-              {user?.name ?? user?.email ?? "…"}
+              {PLACEHOLDER_ACCOUNT.name}
             </div>
           </div>
           <button
             type="button"
             aria-label="Cerrar sesión"
-            onClick={() => void signOut()}
+            onClick={() => router.push("/login")}
             style={{ color: "var(--color-error-text)" }}
             className="p-1"
           >

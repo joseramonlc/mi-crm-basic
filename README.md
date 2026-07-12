@@ -1,8 +1,8 @@
 # CRM Networker · Evolución Líder
 
-CRM personal para networkers: pipeline de prospectos, seguimiento automático y actividad diaria. Next.js 16 + Convex (base de datos + backend + auth), pensado para una cuenta de usuario por networker (sin visibilidad cruzada entre cuentas).
+CRM personal para networkers: pipeline de prospectos, seguimiento automático y actividad diaria. Next.js 16 + Convex (base de datos + backend), pensado para una cuenta de usuario por networker (sin visibilidad cruzada entre cuentas).
 
-Ver la decisión de stack completa en [`docs/adr/0001-stack-tecnologico.md`](docs/adr/0001-stack-tecnologico.md).
+**Estado actual:** esqueleto de la app + design system portado a TSX + conexión básica con Convex. El modelo de datos, la autenticación y las pantallas de producto todavía no están implementados — se desarrollan tarea a tarea desde Linear (proyecto CRM-MVP).
 
 ## Requisitos
 
@@ -21,36 +21,19 @@ npm run dev
 1. Te abrirá el navegador para iniciar sesión / crear tu cuenta de Convex.
 2. Te preguntará por el nombre del proyecto — crea uno nuevo.
 3. Escribe automáticamente `CONVEX_DEPLOYMENT` y `NEXT_PUBLIC_CONVEX_URL` en un `.env.local` (no lo edites a mano; ya está en `.gitignore`).
-4. Sincroniza el esquema (`convex/schema.ts`) y las funciones (`convex/*.ts`) con tu deployment de desarrollo.
+4. Sincroniza el esquema (`convex/schema.ts`, de momento vacío) con tu deployment de desarrollo.
 
-**Paso único adicional** — Convex Auth necesita sus propias claves de firma JWT. En otra terminal, con `convex dev` ya corriendo al menos una vez:
-
-```bash
-npx @convex-dev/auth
-```
-
-Esto genera y sube (`convex env set`) las claves `JWT_PRIVATE_KEY`/`JWKS` a tu deployment. Solo hace falta una vez por deployment.
-
-Abre [http://localhost:3000](http://localhost:3000) — redirige a `/login`; crea una cuenta desde el enlace a `/registro`.
+Abre [http://localhost:3000](http://localhost:3000). Las pantallas `/login` y `/registro` son maqueta visual — todavía sin autenticación real.
 
 ## Estructura del proyecto
 
 ```
-src/app/(auth)/login, /registro        Pantallas públicas (Convex Auth, proveedor Password)
-src/app/(app)/actividad                Actividad Diaria (Inicio) — seguimientos de hoy/vencidos
-src/app/(app)/prospectos               Pipeline agrupado por etapa
-src/app/(app)/prospectos/nuevo         Alta de prospecto
-src/app/(app)/prospectos/[id]          Ficha del prospecto (datos, etapa, notas, historial)
-src/app/(app)/prospectos/[id]/interaccion  Registrar interacción
-src/app/(app)/resumen                  Dashboard (embudo por etapa, conversión)
-src/components/ui                      Componentes del design system, portados a TSX
-src/components/layout                  Sidebar / TabBar / AppShell (navegación global)
-src/proxy.ts                           Proxy de Next.js 16 (antes "middleware") — protege rutas con Convex Auth
-convex/schema.ts                       Esquema: prospectos, interacciones (+ tablas de Convex Auth)
-convex/prospectos.ts, interacciones.ts Queries/mutations, todas scoped por usuario autenticado
-convex/seguimiento.ts                  Motor de seguimiento — reglas por etapa marcadas TODO(JOS-8)
-Design/                                Design system de origen (tokens, specs, prototipos HTML) — fuente de verdad visual
-legacy/                                Landing estática anterior ("NexusCRM"), archivada por referencia
+src/app/(auth)/login, /registro   Pantallas públicas — maqueta visual, sin backend todavía
+src/components/ui                 Componentes del design system, portados a TSX
+src/components/layout             Sidebar / TabBar / AppShell (navegación global), con cuenta de muestra
+convex/schema.ts                  Esquema Convex — vacío, pendiente de diseñar (ver Linear JOS-7)
+Design/                           Design system de origen (tokens, specs, prototipos HTML) — fuente de verdad visual
+legacy/                           Landing estática anterior ("NexusCRM"), archivada por referencia
 ```
 
 ## Diseño
@@ -62,7 +45,7 @@ El diseño UI/UX no vive en Linear ni en este README: está en `Design/Evolucion
 El frontend y el backend se despliegan por separado:
 
 - **Frontend (Railway)** — build `npm run build`, arranque `npm start` (ver `railway.json`). Variable de entorno necesaria: `NEXT_PUBLIC_CONVEX_URL` apuntando al deployment de **producción** de Convex (no al de desarrollo).
-- **Backend (Convex Cloud)** — `npx convex deploy` sube `convex/schema.ts` y las funciones al deployment de producción. Se ejecuta desde tu máquina o desde CI; Railway no lo hace por ti.
+- **Backend (Convex Cloud)** — `npx convex deploy` sube `convex/schema.ts` y las funciones al deployment de producción, cuando existan. Se ejecuta desde tu máquina o desde CI; Railway no lo hace por ti.
 
 ## Comandos
 

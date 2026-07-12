@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__linear__list_comments",
+      "mcp__linear__get_issue",
+      "mcp__notion__notion-fetch",
+      "mcp__linear__list_issues",
+      "mcp__claude_ai_Notion__notion-search",
+      "mcp__linear__list_projects",
+      "mcp__notion__notion-search",
+      "mcp__claude-design__list_files",
+      "mcp__linear__get_project",
+      "mcp__claude-design__read_file",
+      "mcp__claude_ai_Notion__notion-fetch",
+      "mcp__linear__list_teams",
+      "Bash(claude mcp list)",
+      "Bash(claude mcp list *)",
+      "Bash(npm run lint)",
+      "Bash(npm test)"
+    ]
+  }
+}

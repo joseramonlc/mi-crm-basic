@@ -2,13 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useAuthActions } from "@convex-dev/auth/react";
-import { useQuery } from "convex/react";
-import { api } from "@convex/_generated/api";
 import { Icon, Avatar } from "@/components/ui";
 import { Sidebar } from "./Sidebar";
 import { TabBar } from "./TabBar";
-import { isRootRoute } from "./nav";
+import { isRootRoute, PLACEHOLDER_ACCOUNT } from "./nav";
 import type { ReactNode } from "react";
 
 /** Shell for every authenticated screen: desktop sidebar, mobile header + tab bar + FAB. */
@@ -46,8 +43,6 @@ export function AppShell({ children }: { children: ReactNode }) {
 }
 
 function MobileHeader() {
-  const { signOut } = useAuthActions();
-  const user = useQuery(api.users.current);
   const pathname = usePathname();
   if (!isRootRoute(pathname)) return null;
   return (
@@ -58,9 +53,9 @@ function MobileHeader() {
       <span style={{ fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 17, color: "var(--color-neutral-900)" }}>
         CRM Networker
       </span>
-      <button type="button" onClick={() => void signOut()} aria-label="Cerrar sesión">
-        <Avatar name={user?.name ?? user?.email ?? ""} size="sm" />
-      </button>
+      <Link href="/login" aria-label="Cuenta">
+        <Avatar name={PLACEHOLDER_ACCOUNT.name} size="sm" />
+      </Link>
     </header>
   );
 }
