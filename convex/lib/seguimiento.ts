@@ -1,20 +1,9 @@
 import { addCivilDays, civilDate, zonedMidnightToMs, APP_TZ } from "./fecha";
+import { SEGUIMIENTO_DIAS, type Etapa } from "../config/seguimiento";
 
-export type Etapa = "new" | "contacted" | "presented" | "evaluating" | "joined" | "discarded";
-
-/**
- * Reglas del motor de seguimiento (JOS-8): días hasta el próximo contacto según
- * la etapa del pipeline. Configuración, no lógica — se ajusta aquí sin tocar el
- * motor. `null` = etapa terminal, sin seguimiento.
- */
-export const SEGUIMIENTO_DIAS: Record<Etapa, number | null> = {
-  new: 1,
-  contacted: 3,
-  presented: 5,
-  evaluating: 7,
-  joined: null,
-  discarded: null,
-};
+// La tabla de días por etapa (JOS-8) vive en convex/config/seguimiento.ts;
+// se reexporta para que consumidores y tests sigan importando desde el motor.
+export { SEGUIMIENTO_DIAS, type Etapa };
 
 /**
  * Fecha del próximo seguimiento: medianoche (APP_TZ) del día resultante de sumar

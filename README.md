@@ -2,7 +2,7 @@
 
 CRM personal para networkers: pipeline de prospectos, seguimiento automático y actividad diaria. Next.js 16 + Convex (base de datos + backend), pensado para una cuenta de usuario por networker (sin visibilidad cruzada entre cuentas).
 
-**Estado actual:** esqueleto de la app + design system portado a TSX + conexión básica con Convex. El modelo de datos, la autenticación y las pantallas de producto todavía no están implementados — se desarrollan tarea a tarea desde Linear (proyecto CRM-MVP).
+**Estado actual:** design system portado a TSX, pantalla de Actividad Diaria funcional (JOS-22) y backend completo de prospectos e interacciones con motor de seguimiento (M2). La autenticación y el resto de pantallas de producto se desarrollan tarea a tarea desde Linear (proyecto CRM-MVP); todo corre solo en desarrollo hasta JOS-66 (auth).
 
 ## Requisitos
 
@@ -21,7 +21,7 @@ npm run dev
 1. Te abrirá el navegador para iniciar sesión / crear tu cuenta de Convex.
 2. Te preguntará por el nombre del proyecto — crea uno nuevo.
 3. Escribe automáticamente `CONVEX_DEPLOYMENT` y `NEXT_PUBLIC_CONVEX_URL` en un `.env.local` (no lo edites a mano; ya está en `.gitignore`).
-4. Sincroniza el esquema (`convex/schema.ts`, de momento vacío) con tu deployment de desarrollo.
+4. Sincroniza el esquema (`convex/schema.ts`: tablas `prospectos` e `interacciones`) con tu deployment de desarrollo.
 
 Abre [http://localhost:3000](http://localhost:3000). Las pantallas `/login` y `/registro` son maqueta visual — todavía sin autenticación real.
 
@@ -31,7 +31,7 @@ Abre [http://localhost:3000](http://localhost:3000). Las pantallas `/login` y `/
 src/app/(auth)/login, /registro   Pantallas públicas — maqueta visual, sin backend todavía
 src/components/ui                 Componentes del design system, portados a TSX
 src/components/layout             Sidebar / TabBar / AppShell (navegación global), con cuenta de muestra
-convex/schema.ts                  Esquema Convex — vacío, pendiente de diseñar (ver Linear JOS-7)
+convex/                           Backend Convex: schema, APIs de prospectos/interacciones, motor de seguimiento (config en convex/config/)
 Design/                           Design system de origen (tokens, specs, prototipos HTML) — fuente de verdad visual
 legacy/                           Landing estática anterior ("NexusCRM"), archivada por referencia
 ```

@@ -2,20 +2,52 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 /**
- * Rebanada vertical de JOS-22 — adelanta el mínimo de JOS-7 (solo `prospectos`;
- * `usuarios` e `interacciones` llegan con JOS-5/JOS-11).
+ * Esquema del CRM (JOS-7 vía JOS-10/JOS-11). La entidad Usuario queda cubierta
+ * por Clerk según el ADR 0001 — sin tabla propia; el tenant es `usuarioId`.
  *
  * Convenciones fijadas por los componentes UI existentes:
  * - `etapaActual` usa las claves de StageBadge/PipelineStage.
  * - `canalContactoPreferido` usa las claves de ProspectCard.channel + "otro".
+ * - Los enums de interacción usan claves inglesas homólogas. Mapeo de producto:
+ *   Llamada=call, Mensaje=message, Reunión=meeting; Interesado=interested,
+ *   Necesita pensar=thinking, No interesado=not_interested, Otro=other.
  * - Nulos por AUSENCIA (v.optional), nunca `null`, para rangos de índice limpios.
  * - Fechas en ms epoch; `fechaProximoSeguimiento` siempre es una medianoche
  *   APP_TZ calculada por el motor (convex/lib/seguimiento.ts), nunca editable
- *   por el usuario. `fechaUltimoContacto` lo actualizará el sistema al registrar
+ *   por el usuario. `fechaUltimoContacto` lo actualiza el sistema al registrar
  *   interacciones (JOS-11/JOS-14).
- * - `usuarioId` es un identificador provisional (DEV_USUARIO_ID) hasta JOS-5;
- *   migración a identidad real asumida como deuda conocida.
+ * - `usuarioId` es un identificador provisional (DEV_USUARIO_ID) hasta JOS-66;
+ *   pasará a `identity.tokenIdentifier` (ADR 0001), migración de datos asumida
+ *   como deuda conocida.
  */
+
+/** Validadores compartidos entre el schema y las proyecciones/APIs (una sola fuente). */
+export const canalContacto = v.union(
+  v.literal("phone"),
+  v.literal("whatsapp"),
+  v.literal("mail"),
+  v.literal("instagram"),
+  v.literal("otro"),
+);
+
+export const etapaProspecto = v.union(
+  v.literal("new"),
+  v.literal("contacted"),
+  v.literal("presented"),
+  v.literal("evaluating"),
+  v.literal("joined"),
+  v.literal("discarded"),
+);
+
+export const tipoInteraccion = v.union(v.literal("call"), v.literal("message"), v.literal("meeting"));
+
+export const resultadoInteraccion = v.union(
+  v.literal("interested"),
+  v.literal("thinking"),
+  v.literal("not_interested"),
+  v.literal("other"),
+);
+
 export default defineSchema({
   prospectos: defineTable({
     usuarioId: v.string(),
@@ -23,21 +55,8 @@ export default defineSchema({
     telefono: v.optional(v.string()),
     email: v.optional(v.string()),
     comoSeConocio: v.string(),
-    canalContactoPreferido: v.union(
-      v.literal("phone"),
-      v.literal("whatsapp"),
-      v.literal("mail"),
-      v.literal("instagram"),
-      v.literal("otro"),
-    ),
-    etapaActual: v.union(
-      v.literal("new"),
-      v.literal("contacted"),
-      v.literal("presented"),
-      v.literal("evaluating"),
-      v.literal("joined"),
-      v.literal("discarded"),
-    ),
+    canalContactoPreferido: canalContacto,
+    etapaActual: etapaProspecto,
     notas: v.optional(v.string()),
     fechaAlta: v.number(),
     fechaUltimoContacto: v.optional(v.number()),
@@ -45,5 +64,18 @@ export default defineSchema({
   })
     .index("by_usuario", ["usuarioId"])
     .index("by_usuario_seguimiento", ["usuarioId", "fechaProximoSeguimiento"])
-    .index("by_usuario_ultimo_contacto", ["usuarioId", "fechaUltimoContacto"]),
+    .index("by_usuario_ultimo_contacto", ["usuarioId", "fechaUltimoContacto"])
+    .index("by_usuario_etapa", ["usuarioId", "etapaActual"]),
+
+  interacciones: defineTable({
+    // Denormalizado del prospecto (siempre en servidor): defensa en profundidad
+    // y limpieza por tenant vía prefijo del índice.
+    usuarioId: v.string(),
+    prospectoId: v.id("prospectos"),
+    fecha: v.number(),
+    tipo: tipoInteraccion,
+    queOcurrio: v.string(),
+    resultado: resultadoInteraccion,
+    siguientePasoAcordado: v.optional(v.string()),
+  }).index("by_usuario_prospecto_fecha", ["usuarioId", "prospectoId", "fecha"]),
 });
