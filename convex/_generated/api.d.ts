@@ -8,9 +8,16 @@
  * @module
  */
 
+import type * as config_seguimiento from "../config/seguimiento.js";
+import type * as interacciones from "../interacciones.js";
+import type * as lib_acceso from "../lib/acceso.js";
 import type * as lib_constants from "../lib/constants.js";
+import type * as lib_errores from "../lib/errores.js";
 import type * as lib_fecha from "../lib/fecha.js";
+import type * as lib_proyecciones from "../lib/proyecciones.js";
 import type * as lib_seguimiento from "../lib/seguimiento.js";
+import type * as lib_usuario from "../lib/usuario.js";
+import type * as lib_validacion from "../lib/validacion.js";
 import type * as prospectos from "../prospectos.js";
 import type * as seed from "../seed.js";
 
@@ -21,9 +28,16 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  "config/seguimiento": typeof config_seguimiento;
+  interacciones: typeof interacciones;
+  "lib/acceso": typeof lib_acceso;
   "lib/constants": typeof lib_constants;
+  "lib/errores": typeof lib_errores;
   "lib/fecha": typeof lib_fecha;
+  "lib/proyecciones": typeof lib_proyecciones;
   "lib/seguimiento": typeof lib_seguimiento;
+  "lib/usuario": typeof lib_usuario;
+  "lib/validacion": typeof lib_validacion;
   prospectos: typeof prospectos;
   seed: typeof seed;
 }>;
