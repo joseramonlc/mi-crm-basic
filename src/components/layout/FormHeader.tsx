@@ -11,10 +11,12 @@ export interface FormHeaderProps {
    * historial, que no distinguen una entrada directa de un historial externo.
    */
   hrefCancelar: string;
+  /** aria-label del botón de la flecha. @default "Cancelar y volver" */
+  etiquetaAtras?: string;
 }
 
 /** Cabecera de pantalla de formulario: flecha atrás + título (design.md §2, header de detalle/form). */
-export function FormHeader({ titulo, hrefCancelar }: FormHeaderProps) {
+export function FormHeader({ titulo, hrefCancelar, etiquetaAtras = "Cancelar y volver" }: FormHeaderProps) {
   const router = useRouter();
   return (
     <header
@@ -23,7 +25,7 @@ export function FormHeader({ titulo, hrefCancelar }: FormHeaderProps) {
     >
       <button
         type="button"
-        aria-label="Cancelar y volver"
+        aria-label={etiquetaAtras}
         onClick={() => router.replace(hrefCancelar)}
         style={{
           display: "inline-flex",

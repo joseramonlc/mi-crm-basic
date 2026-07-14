@@ -35,7 +35,11 @@ export function Toast({ mensaje, duracionMs = 4000, onClose }: ToastProps) {
   return (
     <div
       role="status"
-      className="fixed left-1/2 -translate-x-1/2 z-40 bottom-[calc(var(--layout-tabbar)+16px)] md:bottom-6"
+      // Posición inferior gobernada por --toast-bottom (M4 bocado 1, P16.c):
+      // sin la variable, los fallbacks reproducen la posición de siempre
+      // (tab bar + margen en móvil, 1.5rem en escritorio); una pantalla con
+      // barra propia (la ficha) define la variable y el toast queda encima.
+      className="fixed left-1/2 -translate-x-1/2 z-40 bottom-[var(--toast-bottom,calc(var(--layout-tabbar)+16px))] md:bottom-[var(--toast-bottom,1.5rem)]"
       style={{
         display: "flex",
         alignItems: "center",

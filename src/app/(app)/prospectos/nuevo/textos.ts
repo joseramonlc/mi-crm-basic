@@ -1,15 +1,6 @@
-import type { ProspectoPublico } from "../../../../../convex/lib/proyecciones";
-
-export type CanalContacto = ProspectoPublico["canalContactoPreferido"];
-
-/** Opciones de JOS-15 mapeadas al enum de la API (etiqueta de producto → clave). */
-export const OPCIONES_CANAL: Array<{ value: CanalContacto; label: string }> = [
-  { value: "whatsapp", label: "WhatsApp" },
-  { value: "phone", label: "Llamada" },
-  { value: "mail", label: "Email" },
-  { value: "instagram", label: "Instagram" },
-  { value: "otro", label: "Otro" },
-];
+/** Correspondencias de canal compartidas: desde M4 (bocado 1, P4) viven en src/lib/etiquetas.ts. */
+export { OPCIONES_CANAL } from "@/lib/etiquetas";
+export type { CanalContacto } from "@/lib/etiquetas";
 
 /**
  * Se almacena la etiqueta española literal de JOS-15 (P3 de la rev. 2): el

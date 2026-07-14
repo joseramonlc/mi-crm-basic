@@ -20,6 +20,13 @@ describe("FormHeader (contrato determinista de cancelar, rev. 2)", () => {
     expect(replaceMock).toHaveBeenCalledWith("/actividad");
   });
 
+  it("etiquetaAtras personaliza el aria-label sin cambiar el contrato de navegación (M4, P2)", () => {
+    render(<FormHeader titulo="Ana Pérez" hrefCancelar="/actividad" etiquetaAtras="Volver a Inicio" />);
+    fireEvent.click(screen.getByRole("button", { name: "Volver a Inicio" }));
+    expect(replaceMock).toHaveBeenCalledTimes(1);
+    expect(replaceMock).toHaveBeenCalledWith("/actividad");
+  });
+
   it("no consulta el historial: mismo destino aunque exista una entrada previa", () => {
     window.history.pushState({}, "", "/actividad");
     window.history.pushState({}, "", "/prospectos/nuevo");

@@ -5,22 +5,26 @@ import { usePathname } from "next/navigation";
 import { Icon, Avatar } from "@/components/ui";
 import { Sidebar } from "./Sidebar";
 import { TabBar } from "./TabBar";
-import { isRootRoute, PLACEHOLDER_ACCOUNT } from "./nav";
+import { esFichaProspecto, isRootRoute, PLACEHOLDER_ACCOUNT } from "./nav";
 import type { ReactNode } from "react";
 
 /** Shell for every authenticated screen: desktop sidebar, mobile header + tab bar + FAB. */
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const showFab = isRootRoute(pathname);
+  // La ficha va sin navegación inferior (JOS-59; M4 bocado 1, P16) y sin el
+  // padding que reservaba su altura: el hueco de la barra CTA fija lo reserva
+  // la propia página. El resto de pantallas no cambia.
+  const sinTabBar = esFichaProspecto(pathname);
 
   return (
     <div className="flex min-h-screen">
       <Sidebar />
       <div className="flex-1 min-w-0 flex flex-col">
         <MobileHeader />
-        <main className="flex-1 pb-20 md:pb-0">{children}</main>
+        <main className={sinTabBar ? "flex-1" : "flex-1 pb-20 md:pb-0"}>{children}</main>
       </div>
-      <TabBar />
+      {!sinTabBar && <TabBar />}
       {showFab && (
         <Link
           href="/prospectos/nuevo"

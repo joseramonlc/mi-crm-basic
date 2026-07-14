@@ -1,24 +1,8 @@
-import { APP_TZ } from "../../../../../../../convex/lib/fecha";
-import type { InteraccionPublica } from "../../../../../../../convex/lib/proyecciones";
-import type { PillOption } from "@/components/ui";
+import { formatearFechaEs } from "@/lib/etiquetas";
 
-export type TipoInteraccion = InteraccionPublica["tipo"];
-export type ResultadoInteraccion = InteraccionPublica["resultado"];
-
-/** Pills con icono para el tipo (JOS-61): un toque, sin dropdown. */
-export const OPCIONES_TIPO: Array<PillOption<TipoInteraccion>> = [
-  { value: "call", label: "Llamada", icon: "phone" },
-  { value: "message", label: "Mensaje", icon: "message-circle" },
-  { value: "meeting", label: "Reunión", icon: "calendar" },
-];
-
-/** Las 4 opciones de la API y JOS-16 (P4 de la rev. 2); tonos semánticos de JOS-61. */
-export const OPCIONES_RESULTADO: Array<PillOption<ResultadoInteraccion>> = [
-  { value: "interested", label: "Interesado", tone: "verde" },
-  { value: "thinking", label: "Necesita pensar", tone: "ambar" },
-  { value: "not_interested", label: "No interesado", tone: "slate" },
-  { value: "other", label: "Otro", tone: "slate-suave" },
-];
+/** Correspondencias de dominio compartidas: desde M4 (bocado 1, P4) viven en src/lib/etiquetas.ts. */
+export { OPCIONES_TIPO, OPCIONES_RESULTADO, formatearFechaEs } from "@/lib/etiquetas";
+export type { TipoInteraccion, ResultadoInteraccion } from "@/lib/etiquetas";
 
 export const ERROR_TIPO_OBLIGATORIO = "Elige el tipo de contacto";
 export const ERROR_FECHA_OBLIGATORIA = "La fecha es obligatoria";
@@ -32,11 +16,6 @@ export const PLACEHOLDER_SIGUIENTE_PASO = "Ej: Enviarle el vídeo de presentaci�
 
 /** Límite SOLO de cliente (P11): la API de M2, cerrada, no lo impone. */
 export const MAX_QUE_OCURRIO = 500;
-
-/** "lunes, 20 de julio" — fecha civil en Madrid, formato es-ES (design.md §1). */
-export function formatearFechaEs(ms: number): string {
-  return new Intl.DateTimeFormat("es-ES", { weekday: "long", day: "numeric", month: "long", timeZone: APP_TZ }).format(ms);
-}
 
 /**
  * Texto del toast (P8): el "cierre de bucle" de JOS-61 incluye el próximo
