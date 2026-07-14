@@ -10,7 +10,8 @@ export const PAGINA_MAX_ITEMS = 100;
 export const PAGINA_MAX_FILAS = 100;
 export const PAGINA_MAX_BYTES = 4 * 1024 * 1024;
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/** Compartido con el cliente (validación inline de JOS-15) — una sola fuente. */
+export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** Trim de un campo obligatorio; vacío tras el trim → VALIDATION_ERROR. */
 export function textoObligatorio(valor: string, field: string): string {
