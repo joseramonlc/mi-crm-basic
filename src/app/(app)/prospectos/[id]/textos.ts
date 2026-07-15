@@ -109,3 +109,13 @@ export const INDICADOR_TERMINAL: Partial<Record<Etapa, { texto: string; color: s
   joined: { texto: "Incorporado — fuera del pipeline activo", color: "var(--color-success-text)" },
   discarded: { texto: "Descartado — fuera del pipeline activo", color: "var(--color-neutral-500)" },
 };
+
+/* ── Edición de datos (M4 bocado 3, JOS-18) ───────────────────────────────── */
+
+export const ETIQUETA_EDITAR = "Editar";
+export const TITULO_EDICION = "Editar datos del prospecto";
+export const GUARDAR_CAMBIOS = "Guardar cambios";
+export const GUARDANDO_CAMBIOS = "Guardando…";
+export const CANCELAR_EDICION = "Cancelar";
+/** Copy literal del toast de JOS-18. */
+export const TOAST_DATOS_GUARDADOS = "Datos guardados";

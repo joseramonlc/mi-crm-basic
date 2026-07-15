@@ -12,12 +12,14 @@ import { FormHeader } from "@/components/layout/FormHeader";
 import { consumirFlash } from "@/lib/flash";
 import { formatearFechaEs } from "@/lib/etiquetas";
 import { SelectorEtapa } from "./SelectorEtapa";
+import { EdicionDatos, type PatchDatos } from "./EdicionDatos";
 import {
   CARGANDO_HISTORIAL,
   CARGANDO_PROSPECTO,
   CTA_REGISTRAR,
   ERROR_CAMBIO_ETAPA,
   ETIQUETA_ATRAS,
+  ETIQUETA_EDITAR,
   ICONO_CANAL,
   INDICADOR_TERMINAL,
   PREFIJO_SIGUIENTE_PASO,
@@ -27,6 +29,7 @@ import {
   SIN_SEGUIMIENTO,
   TITULO_ETAPA,
   TITULO_FALLBACK,
+  TOAST_DATOS_GUARDADOS,
   VACIO_DESCRIPCION,
   VACIO_TITULO,
   etiquetaCanal,
@@ -60,6 +63,7 @@ export default function FichaProspectoPage() {
   const prospecto = useQuery(api.prospectos.obtener, { id: prospectoId });
   const historial = usePaginatedQuery(api.interacciones.listarPorProspecto, { prospectoId }, { initialNumItems: 50 });
   const cambiarEtapa = useMutation(api.prospectos.cambiarEtapa);
+  const actualizar = useMutation(api.prospectos.actualizar);
 
   // Drenaje automático (P11): la API de M2 pagina por contrato, pero JOS-20 no
   // admite paginación visible — se piden bloques de 50 hasta agotar el cursor.
@@ -104,6 +108,18 @@ export default function FichaProspectoPage() {
     }
   }
 
+  // Edición de datos (JOS-18): el formulario co-localizado calcula el diff y
+  // gestiona sus errores; aquí solo la llamada, el toast literal y la salida
+  // del modo edición. Si la mutation rechaza, el rechazo se propaga al
+  // formulario y la edición se conserva (P7).
+  const [editando, setEditando] = React.useState(false);
+
+  async function guardarDatos(patch: PatchDatos) {
+    await actualizar({ id: prospectoId, ...patch });
+    setAviso(TOAST_DATOS_GUARDADOS);
+    setEditando(false);
+  }
+
   React.useEffect(() => {
     // Lectura única de un sistema externo (sessionStorage) tras el commit (en
     // un initializer divergiría del HTML del servidor en la hidratación). La
@@ -139,7 +155,14 @@ export default function FichaProspectoPage() {
             </p>
           ) : (
             <>
-              <SeccionDatos prospecto={prospecto} />
+              {editando ? (
+                // P2: el formulario sustituye a la vista de datos; seguimiento
+                // y etapa siguen operativos; las notas de lectura se ocultan
+                // (su campo está en el formulario).
+                <EdicionDatos prospecto={prospecto} onGuardar={guardarDatos} onCerrar={() => setEditando(false)} />
+              ) : (
+                <SeccionDatos prospecto={prospecto} onEditar={() => setEditando(true)} />
+              )}
               <TarjetaSeguimiento prospecto={prospecto} />
               <SeccionEtapa
                 etapaActual={prospecto.etapaActual}
@@ -147,7 +170,7 @@ export default function FichaProspectoPage() {
                 error={errorEtapa}
                 onCambiar={manejarCambioEtapa}
               />
-              <SeccionNotas notas={prospecto.notas} />
+              {!editando && <SeccionNotas notas={prospecto.notas} />}
             </>
           )}
         </div>
@@ -177,7 +200,7 @@ export default function FichaProspectoPage() {
   );
 }
 
-function SeccionDatos({ prospecto }: { prospecto: ProspectoPublico }) {
+function SeccionDatos({ prospecto, onEditar }: { prospecto: ProspectoPublico; onEditar: () => void }) {
   return (
     <section aria-label="Datos del prospecto" className="flex flex-col gap-4">
       <div className="flex items-center gap-4">
@@ -188,6 +211,10 @@ function SeccionDatos({ prospecto }: { prospecto: ProspectoPublico }) {
           </h2>
           <StageBadge stage={prospecto.etapaActual} style={{ alignSelf: "flex-start" }} />
         </div>
+        {/* Entrada al modo edición (JOS-18, D1: junto a lo que edita). */}
+        <button type="button" onClick={onEditar} style={{ ...buttonStyle({ variant: "secondary", size: "sm" }), marginLeft: "auto", flex: "none" }}>
+          {ETIQUETA_EDITAR}
+        </button>
       </div>
 
       <div className="flex flex-col gap-2">

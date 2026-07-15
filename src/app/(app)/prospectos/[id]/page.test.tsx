@@ -5,10 +5,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { getFunctionName } from "convex/server";
 import { escribirFlash, consumirFlash } from "@/lib/flash";
 import { formatearFechaEs } from "@/lib/etiquetas";
+import { BANNER_ERROR_RED } from "../nuevo/textos";
 import {
   CARGANDO_HISTORIAL,
   CARGANDO_PROSPECTO,
   ERROR_CAMBIO_ETAPA,
+  ETIQUETA_EDITAR,
+  TITULO_EDICION,
+  TOAST_DATOS_GUARDADOS,
   SIN_CONTACTO,
   SIN_NOTAS,
   SIN_SEGUIMIENTO,
@@ -18,12 +22,13 @@ import {
 import FichaProspectoPage from "./page";
 
 // Sin proveedor Convex real (estrategia de JOS-22/M3): se mockean las dos
-// suscripciones, la mutation de etapa y la navegación.
-const { useQueryMock, usePaginatedQueryMock, useMutationMock, cambiarEtapaMock, loadMoreMock, replaceMock } = vi.hoisted(() => ({
+// suscripciones, las mutations (etapa y actualización) y la navegación.
+const { useQueryMock, usePaginatedQueryMock, useMutationMock, cambiarEtapaMock, actualizarMock, loadMoreMock, replaceMock } = vi.hoisted(() => ({
   useQueryMock: vi.fn(),
   usePaginatedQueryMock: vi.fn(),
   useMutationMock: vi.fn(),
   cambiarEtapaMock: vi.fn(),
+  actualizarMock: vi.fn(),
   loadMoreMock: vi.fn(),
   replaceMock: vi.fn(),
 }));
@@ -111,7 +116,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   window.sessionStorage.clear();
   useQueryMock.mockReturnValue(PROSPECTO);
-  useMutationMock.mockReturnValue(cambiarEtapaMock);
+  // Cada mutation recibe su mock por nombre canónico (bocado 3: hay dos).
+  useMutationMock.mockImplementation((referencia) =>
+    getFunctionName(referencia) === "prospectos:actualizar" ? actualizarMock : cambiarEtapaMock,
+  );
   prepararHistorial();
 });
 
@@ -409,11 +417,25 @@ describe("cambio de etapa (JOS-19, bocado 2)", () => {
     expect(screen.getByRole("radio", { name: "Contactado" }).getAttribute("aria-checked")).toBe("true");
   });
 
-  it("cambiar de etapa NO registra interacción: solo se instancia la mutation de etapa (P7)", () => {
+  it("cambiar de etapa NO registra interacción: la ficha solo instancia etapa y actualización, nunca interacciones.crear (P7)", () => {
     render(<FichaProspectoPage />);
     // getFunctionName: el proxy del api genera referencias nuevas por acceso;
-    // el nombre canónico es la identidad estable de la función Convex.
-    expect(useMutationMock.mock.calls.map((llamada) => getFunctionName(llamada[0]))).toEqual(["prospectos:cambiarEtapa"]);
+    // el nombre canónico es la identidad estable de la función Convex. Desde
+    // el bocado 3 conviven DOS mutations — sigue sin estar interacciones.crear.
+    expect(useMutationMock.mock.calls.map((llamada) => getFunctionName(llamada[0]))).toEqual([
+      "prospectos:cambiarEtapa",
+      "prospectos:actualizar",
+    ]);
+  });
+
+  it("el selector de etapa sigue operativo durante la edición, con el formulario abierto (P2 bocado 3)", async () => {
+    cambiarEtapaMock.mockResolvedValue({ ...PROSPECTO, etapaActual: "presented", fechaProximoSeguimiento: FECHA_RECALCULADA });
+    render(<FichaProspectoPage />);
+    fireEvent.click(screen.getByRole("button", { name: ETIQUETA_EDITAR }));
+    fireEvent.click(screen.getByRole("radio", { name: "Presentación realizada" }));
+
+    await waitFor(() => expect(cambiarEtapaMock).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("form", { name: TITULO_EDICION })).toBeDefined();
   });
 
   it("indicador terminal en la tarjeta (D1): presente en joined/discarded, ausente en etapas activas", () => {
@@ -430,5 +452,64 @@ describe("cambio de etapa (JOS-19, bocado 2)", () => {
     useQueryMock.mockReturnValue(PROSPECTO);
     render(<FichaProspectoPage />);
     expect(screen.queryByText(/fuera del pipeline activo/)).toBeNull();
+  });
+});
+
+describe("edición de datos (JOS-18, bocado 3)", () => {
+  it("«Editar» sustituye la vista de datos por el formulario y oculta las notas de lectura (P2)", () => {
+    render(<FichaProspectoPage />);
+    // En lectura: la sección de datos y las notas de lectura están; el formulario no.
+    expect(screen.getByRole("region", { name: "Datos del prospecto" })).toBeDefined();
+    expect(screen.getByRole("region", { name: "Notas" })).toBeDefined();
+    expect(screen.queryByRole("form", { name: TITULO_EDICION })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: ETIQUETA_EDITAR }));
+
+    expect(screen.getByRole("form", { name: TITULO_EDICION })).toBeDefined();
+    expect(screen.queryByRole("region", { name: "Datos del prospecto" })).toBeNull();
+    // Las notas de lectura desaparecen (su campo está en el formulario)…
+    expect(screen.queryByRole("region", { name: "Notas" })).toBeNull();
+    // …pero seguimiento y etapa siguen presentes y operativos.
+    expect(screen.getByRole("region", { name: "Seguimiento" })).toBeDefined();
+    expect(screen.getByRole("radiogroup", { name: "Etapa del pipeline" })).toBeDefined();
+  });
+
+  it("guardar con cambios: llama a actualizar con el diff + id de la ruta, toast literal y vuelta a lectura (P5/P6)", async () => {
+    actualizarMock.mockResolvedValue({ ...PROSPECTO, nombre: "Ana López" });
+    render(<FichaProspectoPage />);
+    fireEvent.click(screen.getByRole("button", { name: ETIQUETA_EDITAR }));
+    fireEvent.change(screen.getByLabelText("Nombre"), { target: { value: "Ana López" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+    await waitFor(() => expect(textosDeStatus()).toContain(TOAST_DATOS_GUARDADOS));
+    expect(actualizarMock).toHaveBeenCalledTimes(1);
+    expect(actualizarMock).toHaveBeenCalledWith({ id: "p7", nombre: "Ana López" });
+    // Vuelta a lectura: el formulario desaparece.
+    expect(screen.queryByRole("form", { name: TITULO_EDICION })).toBeNull();
+    expect(screen.getByRole("region", { name: "Datos del prospecto" })).toBeDefined();
+  });
+
+  it("error de actualizar: mantiene el modo edición con lo tecleado y sin toast (P7)", async () => {
+    actualizarMock.mockRejectedValue(new Error("fetch failed"));
+    render(<FichaProspectoPage />);
+    fireEvent.click(screen.getByRole("button", { name: ETIQUETA_EDITAR }));
+    fireEvent.change(screen.getByLabelText("Nombre"), { target: { value: "Ana López" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(BANNER_ERROR_RED));
+    expect(screen.getByRole("form", { name: TITULO_EDICION })).toBeDefined();
+    expect((screen.getByLabelText("Nombre") as HTMLInputElement).value).toBe("Ana López");
+    expect(textosDeStatus()).not.toContain(TOAST_DATOS_GUARDADOS);
+  });
+
+  it("cancelar vuelve a lectura sin llamar a actualizar (P8)", () => {
+    render(<FichaProspectoPage />);
+    fireEvent.click(screen.getByRole("button", { name: ETIQUETA_EDITAR }));
+    fireEvent.change(screen.getByLabelText("Nombre"), { target: { value: "Descartar" } });
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+
+    expect(actualizarMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("form", { name: TITULO_EDICION })).toBeNull();
+    expect(screen.getByRole("region", { name: "Datos del prospecto" })).toBeDefined();
   });
 });
