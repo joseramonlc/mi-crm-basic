@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { getFunctionName } from "convex/server";
 import { escribirFlash, consumirFlash } from "@/lib/flash";
 import { formatearFechaEs } from "@/lib/etiquetas";
 import {
   CARGANDO_HISTORIAL,
   CARGANDO_PROSPECTO,
+  ERROR_CAMBIO_ETAPA,
   SIN_CONTACTO,
   SIN_NOTAS,
   SIN_SEGUIMIENTO,
@@ -16,15 +18,21 @@ import {
 import FichaProspectoPage from "./page";
 
 // Sin proveedor Convex real (estrategia de JOS-22/M3): se mockean las dos
-// suscripciones y la navegación, y se inspeccionan argumentos y render.
-const { useQueryMock, usePaginatedQueryMock, loadMoreMock, replaceMock } = vi.hoisted(() => ({
+// suscripciones, la mutation de etapa y la navegación.
+const { useQueryMock, usePaginatedQueryMock, useMutationMock, cambiarEtapaMock, loadMoreMock, replaceMock } = vi.hoisted(() => ({
   useQueryMock: vi.fn(),
   usePaginatedQueryMock: vi.fn(),
+  useMutationMock: vi.fn(),
+  cambiarEtapaMock: vi.fn(),
   loadMoreMock: vi.fn(),
   replaceMock: vi.fn(),
 }));
 
-vi.mock("convex/react", () => ({ useQuery: useQueryMock, usePaginatedQuery: usePaginatedQueryMock }));
+vi.mock("convex/react", () => ({
+  useQuery: useQueryMock,
+  usePaginatedQuery: usePaginatedQueryMock,
+  useMutation: useMutationMock,
+}));
 vi.mock("next/navigation", () => ({
   useParams: () => ({ id: "p7" }),
   useRouter: () => ({ replace: replaceMock }),
@@ -103,6 +111,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   window.sessionStorage.clear();
   useQueryMock.mockReturnValue(PROSPECTO);
+  useMutationMock.mockReturnValue(cambiarEtapaMock);
   prepararHistorial();
 });
 
@@ -138,7 +147,8 @@ describe("contrato de ruta y header (bloqueo 4 de la rev. 2)", () => {
 describe("sección de datos (P3) y notas (P8)", () => {
   it("muestra etapa, canal con etiqueta de producto, contacto, cómo se conoció y fecha de alta", () => {
     render(<FichaProspectoPage />);
-    expect(screen.getByText("Contactado")).toBeDefined();
+    // "Contactado" aparece en el StageBadge de cabecera Y en el selector de etapa (bocado 2).
+    expect(screen.getAllByText("Contactado").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("WhatsApp")).toBeDefined();
     expect(screen.getByText("+34 600 111 222")).toBeDefined();
     expect(screen.getByText("ana@ejemplo.com")).toBeDefined();
@@ -282,5 +292,143 @@ describe("toast del flash conservado (P13)", () => {
     );
     expect(textosDeStatus().some((t) => t.includes("Interacción registrada"))).toBe(true);
     expect(consumirFlash()).toBeNull();
+  });
+});
+
+describe("cambio de etapa (JOS-19, bocado 2)", () => {
+  const FECHA_RECALCULADA = Date.UTC(2026, 6, 17, 10);
+
+  it("la sección va entre la tarjeta de seguimiento y las notas (orden JOS-59)", () => {
+    const { container } = render(<FichaProspectoPage />);
+    const secciones = Array.from(container.querySelectorAll("section[aria-label]")).map((s) => s.getAttribute("aria-label"));
+    expect(secciones).toEqual(["Datos del prospecto", "Seguimiento", "Etapa del pipeline", "Notas", "Historial"]);
+  });
+
+  it("activar otra etapa llama UNA vez a cambiarEtapa con el id de la ruta y muestra el toast con la fecha recalculada", async () => {
+    cambiarEtapaMock.mockResolvedValue({ ...PROSPECTO, etapaActual: "presented", fechaProximoSeguimiento: FECHA_RECALCULADA });
+    render(<FichaProspectoPage />);
+
+    fireEvent.click(screen.getByRole("radio", { name: "Presentación realizada" }));
+
+    await waitFor(() =>
+      expect(textosDeStatus()).toContain(
+        `Etapa actualizada: Presentación realizada. Próximo contacto: ${formatearFechaEs(FECHA_RECALCULADA)}`,
+      ),
+    );
+    expect(cambiarEtapaMock).toHaveBeenCalledTimes(1);
+    expect(cambiarEtapaMock).toHaveBeenCalledWith({ id: "p7", etapa: "presented" });
+  });
+
+  it("dos etapas DISTINTAS activadas antes de resolver la primera mutation: UNA sola llamada (guarda useRef, condición de auditoría)", async () => {
+    let resolver: (v: unknown) => void = () => {};
+    cambiarEtapaMock.mockImplementation(() => new Promise((r) => (resolver = r)));
+    render(<FichaProspectoPage />);
+
+    const presentacion = screen.getByRole("radio", { name: "Presentación realizada" });
+    const valoracion = screen.getByRole("radio", { name: "En valoración" });
+    act(() => {
+      // Misma tarea síncrona: el estado `guardandoEtapa` aún no se ha aplicado
+      // al segundo click — solo el ref puede cortarlo.
+      presentacion.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      valoracion.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(cambiarEtapaMock).toHaveBeenCalledTimes(1);
+    expect(cambiarEtapaMock).toHaveBeenCalledWith({ id: "p7", etapa: "presented" });
+
+    await act(async () => {
+      resolver({ ...PROSPECTO, etapaActual: "presented", fechaProximoSeguimiento: FECHA_RECALCULADA });
+    });
+    expect(textosDeStatus().some((t) => t.startsWith("Etapa actualizada: Presentación realizada."))).toBe(true);
+  });
+
+  it("ventana entre el éxito de la mutation y la suscripción: re-activar NO relanza; el nuevo valor re-habilita (hallazgo 1 del NO-GO)", async () => {
+    cambiarEtapaMock.mockResolvedValue({ ...PROSPECTO, etapaActual: "presented", fechaProximoSeguimiento: FECHA_RECALCULADA });
+    const { rerender } = render(<FichaProspectoPage />);
+    const objetivo = screen.getByRole("radio", { name: "Presentación realizada" });
+    fireEvent.click(objetivo);
+    await waitFor(() => expect(textosDeStatus().some((t) => t.startsWith("Etapa actualizada"))).toBe(true));
+
+    // La suscripción aún devuelve la etapa ANTIGUA: las pills siguen
+    // deshabilitadas y re-activar la etapa pedida no produce segunda llamada.
+    expect(objetivo.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(objetivo);
+    fireEvent.keyDown(objetivo, { key: "Enter" });
+    expect(cambiarEtapaMock).toHaveBeenCalledTimes(1);
+
+    // La suscripción entrega la nueva etapa: pills re-habilitadas y actual marcada.
+    useQueryMock.mockReturnValue({ ...PROSPECTO, etapaActual: "presented" as const, fechaProximoSeguimiento: FECHA_RECALCULADA });
+    rerender(<FichaProspectoPage />);
+    expect(objetivo.getAttribute("aria-disabled")).toBeNull();
+    expect(objetivo.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("teclado contra el servidor: la flecha NO llama a la mutation; Enter llama UNA vez (condición de auditoría)", async () => {
+    cambiarEtapaMock.mockResolvedValue({ ...PROSPECTO, etapaActual: "presented", fechaProximoSeguimiento: FECHA_RECALCULADA });
+    render(<FichaProspectoPage />);
+    const radios = screen.getAllByRole("radio");
+
+    act(() => radios[1].focus()); // etapa actual: Contactado
+    fireEvent.keyDown(radios[1], { key: "ArrowRight" });
+    expect(document.activeElement).toBe(radios[2]);
+    expect(cambiarEtapaMock).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(radios[2], { key: "Enter" });
+    await waitFor(() => expect(cambiarEtapaMock).toHaveBeenCalledTimes(1));
+    expect(cambiarEtapaMock).toHaveBeenCalledWith({ id: "p7", etapa: "presented" });
+  });
+
+  it("tocar la etapa ACTUAL no llama al servidor", () => {
+    render(<FichaProspectoPage />);
+    fireEvent.click(screen.getByRole("radio", { name: "Contactado" }));
+    expect(cambiarEtapaMock).not.toHaveBeenCalled();
+  });
+
+  it("toast de etapa terminal: Incorporado y Descartado con sus textos exactos", async () => {
+    cambiarEtapaMock.mockResolvedValue({ ...sin(PROSPECTO, "fechaProximoSeguimiento"), etapaActual: "joined" });
+    const { unmount } = render(<FichaProspectoPage />);
+    fireEvent.click(screen.getByRole("radio", { name: "Incorporado" }));
+    await waitFor(() => expect(textosDeStatus()).toContain("¡Incorporado al equipo! Sale de la actividad diaria."));
+
+    unmount();
+    cambiarEtapaMock.mockResolvedValue({ ...sin(PROSPECTO, "fechaProximoSeguimiento"), etapaActual: "discarded" });
+    render(<FichaProspectoPage />);
+    fireEvent.click(screen.getByRole("radio", { name: "Descartado" }));
+    await waitFor(() => expect(textosDeStatus()).toContain("Prospecto descartado. Sale de la actividad diaria."));
+  });
+
+  it("error de la mutation: alert con el texto exacto, sin toast, pills re-habilitadas y etapa del servidor intacta", async () => {
+    cambiarEtapaMock.mockRejectedValue(new Error("fetch failed"));
+    render(<FichaProspectoPage />);
+    fireEvent.click(screen.getByRole("radio", { name: "Descartado" }));
+
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(ERROR_CAMBIO_ETAPA));
+    expect(textosDeStatus().some((t) => t.startsWith("Etapa actualizada") || t.includes("descartado"))).toBe(false);
+    const descartado = screen.getByRole("radio", { name: "Descartado" });
+    expect(descartado.getAttribute("aria-disabled")).toBeNull();
+    // Sin estado optimista: la etapa marcada sigue siendo la de la suscripción.
+    expect(screen.getByRole("radio", { name: "Contactado" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("cambiar de etapa NO registra interacción: solo se instancia la mutation de etapa (P7)", () => {
+    render(<FichaProspectoPage />);
+    // getFunctionName: el proxy del api genera referencias nuevas por acceso;
+    // el nombre canónico es la identidad estable de la función Convex.
+    expect(useMutationMock.mock.calls.map((llamada) => getFunctionName(llamada[0]))).toEqual(["prospectos:cambiarEtapa"]);
+  });
+
+  it("indicador terminal en la tarjeta (D1): presente en joined/discarded, ausente en etapas activas", () => {
+    useQueryMock.mockReturnValue({ ...sin(PROSPECTO, "fechaProximoSeguimiento"), etapaActual: "joined" as const });
+    const { unmount } = render(<FichaProspectoPage />);
+    expect(screen.getByText("Incorporado — fuera del pipeline activo")).toBeDefined();
+
+    unmount();
+    useQueryMock.mockReturnValue({ ...sin(PROSPECTO, "fechaProximoSeguimiento"), etapaActual: "discarded" as const });
+    const segunda = render(<FichaProspectoPage />);
+    expect(screen.getByText("Descartado — fuera del pipeline activo")).toBeDefined();
+
+    segunda.unmount();
+    useQueryMock.mockReturnValue(PROSPECTO);
+    render(<FichaProspectoPage />);
+    expect(screen.queryByText(/fuera del pipeline activo/)).toBeNull();
   });
 });

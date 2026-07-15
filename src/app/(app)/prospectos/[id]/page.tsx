@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { usePaginatedQuery, useQuery } from "convex/react";
+import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { api } from "../../../../../convex/_generated/api";
 import type { Id } from "../../../../../convex/_generated/dataModel";
 import type { InteraccionPublica, ProspectoPublico } from "../../../../../convex/lib/proyecciones";
@@ -11,17 +11,21 @@ import { Avatar, Badge, buttonStyle, Card, EmptyState, Icon, StageBadge, Toast }
 import { FormHeader } from "@/components/layout/FormHeader";
 import { consumirFlash } from "@/lib/flash";
 import { formatearFechaEs } from "@/lib/etiquetas";
+import { SelectorEtapa } from "./SelectorEtapa";
 import {
   CARGANDO_HISTORIAL,
   CARGANDO_PROSPECTO,
   CTA_REGISTRAR,
+  ERROR_CAMBIO_ETAPA,
   ETIQUETA_ATRAS,
   ICONO_CANAL,
+  INDICADOR_TERMINAL,
   PREFIJO_SIGUIENTE_PASO,
   RESULTADO_BADGE,
   SIN_CONTACTO,
   SIN_NOTAS,
   SIN_SEGUIMIENTO,
+  TITULO_ETAPA,
   TITULO_FALLBACK,
   VACIO_DESCRIPCION,
   VACIO_TITULO,
@@ -29,7 +33,9 @@ import {
   etiquetaResultado,
   metaTipo,
   textoFechaAlta,
+  textoToastEtapa,
   tituloHistorial,
+  type Etapa,
 } from "./textos";
 
 const estiloCargando: React.CSSProperties = { padding: "12px 0", color: "var(--color-neutral-500)", fontSize: 15 };
@@ -53,6 +59,7 @@ export default function FichaProspectoPage() {
 
   const prospecto = useQuery(api.prospectos.obtener, { id: prospectoId });
   const historial = usePaginatedQuery(api.interacciones.listarPorProspecto, { prospectoId }, { initialNumItems: 50 });
+  const cambiarEtapa = useMutation(api.prospectos.cambiarEtapa);
 
   // Drenaje automático (P11): la API de M2 pagina por contrato, pero JOS-20 no
   // admite paginación visible — se piden bloques de 50 hasta agotar el cursor.
@@ -63,6 +70,39 @@ export default function FichaProspectoPage() {
 
   const [aviso, setAviso] = React.useState<string | null>(null);
   const flashConsumido = React.useRef(false);
+
+  // Cambio de etapa (JOS-19): guarda SÍNCRONA contra la doble activación
+  // (lección del NO-GO de M3 — el estado no cambia hasta el re-render) +
+  // etapa pedida al servidor. Las pills quedan deshabilitadas desde la
+  // activación hasta que la SUSCRIPCIÓN refleja la etapa pedida (hallazgo 1
+  // del NO-GO M4B2): liberar en el finally abría una ventana en la que el
+  // selector aún mostraba la etapa antigua y un segundo toque sobre la etapa
+  // recién pedida relanzaba la mutation. Derivado, sin efecto: cuando llega
+  // el nuevo valor, la condición se deshace sola.
+  const [errorEtapa, setErrorEtapa] = React.useState<string | null>(null);
+  const [etapaPendiente, setEtapaPendiente] = React.useState<Etapa | null>(null);
+  const cambiandoEtapa = React.useRef(false);
+  const guardandoEtapa = etapaPendiente !== null && prospecto !== undefined && prospecto.etapaActual !== etapaPendiente;
+
+  async function manejarCambioEtapa(etapa: Etapa) {
+    if (cambiandoEtapa.current) return;
+    cambiandoEtapa.current = true;
+    setEtapaPendiente(etapa);
+    setErrorEtapa(null);
+    try {
+      // El toast usa el prospecto DEVUELTO (fecha recalculada por el motor);
+      // pills, StageBadge y tarjeta se refrescan solos por la suscripción.
+      const actualizado = await cambiarEtapa({ id: prospectoId, etapa });
+      setAviso(textoToastEtapa(actualizado.etapaActual, actualizado.fechaProximoSeguimiento));
+    } catch {
+      // Sin estado optimista: la etapa mostrada sigue siendo la del servidor
+      // y la pendiente se anula (si no, las pills quedarían bloqueadas).
+      setErrorEtapa(ERROR_CAMBIO_ETAPA);
+      setEtapaPendiente(null);
+    } finally {
+      cambiandoEtapa.current = false;
+    }
+  }
 
   React.useEffect(() => {
     // Lectura única de un sistema externo (sessionStorage) tras el commit (en
@@ -101,6 +141,12 @@ export default function FichaProspectoPage() {
             <>
               <SeccionDatos prospecto={prospecto} />
               <TarjetaSeguimiento prospecto={prospecto} />
+              <SeccionEtapa
+                etapaActual={prospecto.etapaActual}
+                guardando={guardandoEtapa}
+                error={errorEtapa}
+                onCambiar={manejarCambioEtapa}
+              />
               <SeccionNotas notas={prospecto.notas} />
             </>
           )}
@@ -167,6 +213,7 @@ function FilaDato({ icono, texto }: { icono: string; texto: string }) {
 
 /** Fechas del motor (JOS-8/JOS-12), SOLO lectura en la ficha (letra de JOS-17). */
 function TarjetaSeguimiento({ prospecto }: { prospecto: ProspectoPublico }) {
+  const terminal = INDICADOR_TERMINAL[prospecto.etapaActual];
   return (
     <Card>
       <section aria-label="Seguimiento" className="flex flex-col gap-3">
@@ -180,8 +227,47 @@ function TarjetaSeguimiento({ prospecto }: { prospecto: ProspectoPublico }) {
           valor={prospecto.fechaUltimoContacto !== undefined ? formatearFechaEs(prospecto.fechaUltimoContacto) : SIN_CONTACTO}
           conValor={prospecto.fechaUltimoContacto !== undefined}
         />
+        {/* Indicador ligero de estado terminal (estados 4/5 de JOS-59, D1). */}
+        {terminal !== undefined && (
+          <p style={{ fontSize: 13, fontWeight: 600, color: terminal.color }}>{terminal.texto}</p>
+        )}
       </section>
     </Card>
+  );
+}
+
+/** Selector de etapa (JOS-19): sección propia entre seguimiento y notas. */
+function SeccionEtapa({
+  etapaActual,
+  guardando,
+  error,
+  onCambiar,
+}: {
+  etapaActual: Etapa;
+  guardando: boolean;
+  error: string | null;
+  onCambiar: (etapa: Etapa) => void;
+}) {
+  return (
+    <section aria-label={TITULO_ETAPA} className="flex flex-col gap-2">
+      <h2 style={estiloH2Seccion}>{TITULO_ETAPA}</h2>
+      <SelectorEtapa etapaActual={etapaActual} deshabilitado={guardando} onCambiar={onCambiar} />
+      {error !== null && (
+        <p
+          role="alert"
+          style={{
+            padding: "10px 12px",
+            borderRadius: "var(--radius-md)",
+            background: "var(--color-error-bg)",
+            color: "var(--color-error-text)",
+            fontSize: 13,
+            fontWeight: 500,
+          }}
+        >
+          {error}
+        </p>
+      )}
+    </section>
   );
 }
 
