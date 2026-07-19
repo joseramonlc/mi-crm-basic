@@ -16,7 +16,14 @@
       "Bash(claude mcp list)",
       "Bash(claude mcp list *)",
       "Bash(npm run lint)",
-      "Bash(npm test)"
+      "Bash(npm test)",
+      "Bash(npx vitest run)",
+      "Bash(npx vitest run *)",
+      "Bash(npx convex data *)",
+      "Bash(npx eslint *)",
+      "Bash(npx tsc --noEmit)",
+      "mcp__railway__list_services",
+      "mcp__railway__list_projects"
     ]
   }
 }
