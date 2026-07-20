@@ -22,6 +22,13 @@
       "Bash(npx convex data *)",
       "Bash(npx eslint *)",
       "Bash(npx tsc --noEmit)",
+      "Bash(npx tsc --noEmit *)",
+      "Bash(npx convex env list *)",
+      "Bash(npm view *)",
+      "Bash(ldd *)",
+      "Bash(railway status *)",
+      "Bash(railway logs *)",
+      "Bash(railway deployment list *)",
       "mcp__railway__list_services",
       "mcp__railway__list_projects"
     ]
