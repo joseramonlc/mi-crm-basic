@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 
-// Sin protección de rutas todavía: la raíz manda siempre a la pantalla de
-// inicio, pública de forma temporal en desarrollo. Cuando JOS-5 aporte auth,
-// aquí se decidirá entre /actividad y /login según la sesión.
+// La raíz manda siempre a la pantalla de inicio; no comprueba la sesión porque
+// /actividad ya está protegida en src/proxy.ts, que redirige a /login cuando no
+// hay identidad (JOS-66).
 export default function RootPage() {
   redirect("/actividad");
 }
