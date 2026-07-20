@@ -13,6 +13,13 @@ vi.mock("next/navigation", () => ({
 vi.mock("next/image", () => ({
   default: (props: Record<string, unknown>) => React.createElement("img", { ...props, alt: (props.alt as string) ?? "" }),
 }));
+// Sidebar y MobileHeader leen la sesión de Clerk (JOS-66). Al shell solo le
+// importa el layout, así que basta un usuario fijo y un signOut espía.
+const { signOutMock } = vi.hoisted(() => ({ signOutMock: vi.fn() }));
+vi.mock("@clerk/nextjs", () => ({
+  useUser: () => ({ user: { fullName: "Laura Giménez" } }),
+  useClerk: () => ({ signOut: signOutMock }),
+}));
 
 afterEach(cleanup);
 

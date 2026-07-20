@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useClerk, useUser } from "@clerk/nextjs";
 import { Icon, Avatar } from "@/components/ui";
 import { Sidebar } from "./Sidebar";
 import { TabBar } from "./TabBar";
-import { esFichaProspecto, isRootRoute, PLACEHOLDER_ACCOUNT } from "./nav";
+import { esFichaProspecto, isRootRoute } from "./nav";
+import { nombreDeUsuario } from "./usuario";
 import type { ReactNode } from "react";
 
 /** Shell for every authenticated screen: desktop sidebar, mobile header + tab bar + FAB. */
@@ -48,6 +50,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 
 function MobileHeader() {
   const pathname = usePathname();
+  const { user } = useUser();
+  const { signOut } = useClerk();
+  const nombre = nombreDeUsuario(user);
   if (!isRootRoute(pathname)) return null;
   return (
     <header
@@ -57,9 +62,9 @@ function MobileHeader() {
       <span style={{ fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 17, color: "var(--color-neutral-900)" }}>
         CRM Networker
       </span>
-      <Link href="/login" aria-label="Cuenta">
-        <Avatar name={PLACEHOLDER_ACCOUNT.name} size="sm" />
-      </Link>
+      <button type="button" aria-label="Cerrar sesión" onClick={() => signOut({ redirectUrl: "/login" })}>
+        <Avatar name={nombre} size="sm" />
+      </button>
     </header>
   );
 }

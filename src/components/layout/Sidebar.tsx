@@ -3,13 +3,18 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
+import { useClerk, useUser } from "@clerk/nextjs";
 import { Icon, Avatar, Button } from "@/components/ui";
-import { NAV_ITEMS, PLACEHOLDER_ACCOUNT } from "./nav";
+import { NAV_ITEMS } from "./nav";
+import { nombreDeUsuario } from "./usuario";
 
 /** Fixed 224px sidebar — desktop nav. Replaces the mobile tab bar + FAB (see design.md §2 Layout). */
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
+  const { user } = useUser();
+  const { signOut } = useClerk();
+  const nombre = nombreDeUsuario(user);
 
   return (
     <aside
@@ -55,16 +60,16 @@ export function Sidebar() {
         </nav>
 
         <div style={{ borderColor: "var(--border-default)" }} className="border-t p-3 flex items-center gap-3">
-          <Avatar name={PLACEHOLDER_ACCOUNT.name} size="sm" />
+          <Avatar name={nombre} size="sm" />
           <div className="flex-1 min-w-0">
             <div style={{ fontSize: 13, fontWeight: 600, color: "var(--color-neutral-900)" }} className="truncate">
-              {PLACEHOLDER_ACCOUNT.name}
+              {nombre}
             </div>
           </div>
           <button
             type="button"
             aria-label="Cerrar sesión"
-            onClick={() => router.push("/login")}
+            onClick={() => signOut({ redirectUrl: "/login" })}
             style={{ color: "var(--color-error-text)" }}
             className="p-1"
           >
