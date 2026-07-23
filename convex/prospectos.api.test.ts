@@ -3,7 +3,6 @@ import { convexTest, type TestConvex } from "convex-test";
 import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "./_generated/api";
-import { DEV_USUARIO_ID } from "./lib/constants";
 import { APP_TZ, ventanaDia } from "./lib/fecha";
 import { calcularFechaProximoSeguimiento } from "./lib/seguimiento";
 import schema from "./schema";
@@ -14,8 +13,25 @@ const DAY_KEY = "2026-07-12";
 const { hoyInicio } = ventanaDia(DAY_KEY, APP_TZ);
 const AHORA = hoyInicio + 12 * 3_600_000; // mediodía civil del 2026-07-12
 
-function nuevoTest(): TestConvex<typeof schema> {
-  return convexTest(schema, modules);
+// Identidades de prueba: `tokenIdentifier` explícito (no se deja deducir a
+// convex-test) porque es literalmente el `usuarioId` que persisten las filas.
+const TENANT_A = "https://test.clerk|user_a";
+const TENANT_B = "https://test.clerk|user_b";
+const IDENT_A = { subject: "user_a", issuer: "https://test.clerk", tokenIdentifier: TENANT_A };
+const IDENT_B = { subject: "user_b", issuer: "https://test.clerk", tokenIdentifier: TENANT_B };
+
+/** Instancia con sesión: es lo que devuelve `withIdentity` (ya no expone `withIdentity`). */
+type TestSesion = ReturnType<TestConvex<typeof schema>["withIdentity"]>;
+
+/** El caso normal: toda la API exige sesión, así que `t` ya viene autenticado. */
+function nuevoTest(): TestSesion {
+  return convexTest(schema, modules).withIdentity(IDENT_A);
+}
+
+/** Dos sesiones sobre la MISMA base de datos, para los tests de aislamiento. */
+function dosTenants(): { a: TestSesion; b: TestSesion; base: TestConvex<typeof schema> } {
+  const base = convexTest(schema, modules);
+  return { a: base.withIdentity(IDENT_A), b: base.withIdentity(IDENT_B), base };
 }
 
 /** data del ConvexError lanzado, o falla si no lanza / no es ConvexError. */
@@ -35,14 +51,13 @@ const ARGS_MINIMOS = {
   canalContactoPreferido: "phone",
 } as const;
 
-function crear(t: TestConvex<typeof schema>, extra: Record<string, unknown> = {}) {
+function crear(t: TestSesion, extra: Record<string, unknown> = {}) {
   return t.mutation(api.prospectos.crear, { ...ARGS_MINIMOS, ...extra } as never);
 }
 
 const PAGINA = { numItems: 100, cursor: null };
 
 beforeEach(() => {
-  process.env.APP_ENV = "development";
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(AHORA);
 });
@@ -52,9 +67,12 @@ afterEach(() => {
 });
 
 describe("prospectos.crear", () => {
-  it("aborta fuera de desarrollo", async () => {
-    process.env.APP_ENV = "production";
-    await expect(crear(nuevoTest())).rejects.toThrow(/solo está disponible en desarrollo/);
+  it("aborta sin identidad", async () => {
+    const sinSesion = convexTest(schema, modules);
+    const data = await dataDeError(sinSesion.mutation(api.prospectos.crear, ARGS_MINIMOS as never));
+    expect(data).toEqual({ code: "UNAUTHENTICATED", message: "Se requiere sesión" });
+    // Aborta antes de tocar la base: no queda nada escrito.
+    expect(await sinSesion.run((ctx) => ctx.db.query("prospectos").collect())).toEqual([]);
   });
 
   it("defaults: etapa new forzada, fechaAlta=now, seguimiento del motor, sin último contacto", async () => {
@@ -133,7 +151,7 @@ describe("prospectos.listar", () => {
     await crear(t, { nombre: "Mío" });
     await t.run(async (ctx) => {
       await ctx.db.insert("prospectos", {
-        usuarioId: "otro-usuario",
+        usuarioId: TENANT_B,
         nombre: "Ajeno",
         comoSeConocio: "Test",
         canalContactoPreferido: "phone",
@@ -177,7 +195,7 @@ describe("prospectos.obtener", () => {
     await t.run(async (ctx) => {
       await ctx.db.delete(borradoId);
       await ctx.db.insert("prospectos", {
-        usuarioId: "otro-usuario",
+        usuarioId: TENANT_B,
         nombre: "Ajeno",
         comoSeConocio: "Test",
         canalContactoPreferido: "phone",
@@ -277,7 +295,7 @@ describe("prospectos.cambiarEtapa", () => {
     const t = nuevoTest();
     const ajenoId = await t.run((ctx) =>
       ctx.db.insert("prospectos", {
-        usuarioId: "otro-usuario",
+        usuarioId: TENANT_B,
         nombre: "Ajeno",
         comoSeConocio: "Test",
         canalContactoPreferido: "phone",
@@ -295,6 +313,56 @@ describe("aislamiento del tenant en escrituras", () => {
     const t = nuevoTest();
     await crear(t);
     const docs = await t.run((ctx) => ctx.db.query("prospectos").collect());
-    expect(docs.map((d) => d.usuarioId)).toEqual([DEV_USUARIO_ID]);
+    expect(docs.map((d) => d.usuarioId)).toEqual([TENANT_A]);
+  });
+
+  it("el usuarioId no se acepta del cliente ni siquiera como argumento extra", async () => {
+    const t = nuevoTest();
+    // Capa 1: args extra los rechaza el validador de Convex antes del handler.
+    await expect(crear(t, { usuarioId: TENANT_B })).rejects.toSatisfy((e) => !(e instanceof ConvexError));
+  });
+});
+
+/**
+ * Aislamiento entre dos sesiones reales sobre la MISMA base (JOS-66, tarea 8).
+ * Ambas identidades pasan por `ctx.auth`, como en producción: aquí no se
+ * insertan filas "a mano" para simular al otro usuario.
+ */
+describe("aislamiento multi-tenant · dos sesiones", () => {
+  it("lecturas: cada sesión solo ve lo suyo", async () => {
+    const { a, b } = dosTenants();
+    await crear(a, { nombre: "De A" });
+    await crear(b, { nombre: "De B" });
+
+    const listaA = await a.query(api.prospectos.listar, { paginationOpts: PAGINA });
+    const listaB = await b.query(api.prospectos.listar, { paginationOpts: PAGINA });
+    expect(listaA.page.map((p) => p.nombre)).toEqual(["De A"]);
+    expect(listaB.page.map((p) => p.nombre)).toEqual(["De B"]);
+
+    const actividadB = await b.query(api.prospectos.actividadDiaria, { dayKey: DAY_KEY });
+    expect(actividadB.tieneProspectos).toBe(true);
+    expect(actividadB.hoy.map((p) => p.nombre)).toEqual([]);
+  });
+
+  it.each([
+    ["obtener", (t: TestSesion, id: never) => t.query(api.prospectos.obtener, { id })],
+    ["actualizar", (t: TestSesion, id: never) => t.mutation(api.prospectos.actualizar, { id, nombre: "Secuestrado" })],
+    ["cambiarEtapa", (t: TestSesion, id: never) => t.mutation(api.prospectos.cambiarEtapa, { id, etapa: "joined" })],
+  ])("%s con el id de otro tenant → NOT_FOUND opaco", async (_nombre, llamar) => {
+    const { a, b } = dosTenants();
+    const deA = await crear(a, { nombre: "De A" });
+    const data = await dataDeError(llamar(b, deA.id as never));
+    expect(data).toEqual({ code: "NOT_FOUND", message: "Prospecto no encontrado" });
+  });
+
+  it("una escritura rechazada no altera el documento del otro tenant", async () => {
+    const { a, b, base } = dosTenants();
+    const deA = await crear(a, { nombre: "De A", notas: "intacta" });
+
+    await expect(b.mutation(api.prospectos.actualizar, { id: deA.id, nombre: "Secuestrado" })).rejects.toThrow();
+    await expect(b.mutation(api.prospectos.cambiarEtapa, { id: deA.id, etapa: "joined" })).rejects.toThrow();
+
+    const doc = await base.run((ctx) => ctx.db.get(deA.id));
+    expect(doc).toMatchObject({ usuarioId: TENANT_A, nombre: "De A", notas: "intacta", etapaActual: "new" });
   });
 });

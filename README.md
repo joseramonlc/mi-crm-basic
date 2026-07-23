@@ -2,7 +2,7 @@
 
 CRM personal para networkers: pipeline de prospectos, seguimiento automático y actividad diaria. Next.js 16 + Convex (base de datos + backend), pensado para una cuenta de usuario por networker (sin visibilidad cruzada entre cuentas).
 
-**Estado actual:** design system portado a TSX, pantalla de Actividad Diaria funcional (JOS-22), backend completo de prospectos e interacciones con motor de seguimiento (M2) y autenticación con Clerk (JOS-66). El resto de pantallas de producto se desarrolla tarea a tarea desde Linear (proyecto CRM-MVP). El aislamiento real de datos entre cuentas llega en el segundo bocado de JOS-66: hasta entonces el backend sigue resolviendo a un usuario de desarrollo.
+**Estado actual:** design system portado a TSX, pantalla de Actividad Diaria funcional (JOS-22), backend completo de prospectos e interacciones con motor de seguimiento (M2) y autenticación con Clerk con aislamiento real entre cuentas (JOS-66). El resto de pantallas de producto se desarrolla tarea a tarea desde Linear (proyecto CRM-MVP). Cada query y mutation deriva su `usuarioId` de la sesión (`ctx.auth.getUserIdentity()`); sin sesión, abortan.
 
 ## Requisitos
 
@@ -64,3 +64,14 @@ El frontend y el backend se despliegan por separado:
 | `npm run build` / `npm start` | Build y arranque de producción del frontend |
 | `npm run lint` | ESLint |
 | `npx convex dashboard` | Abre el panel de datos/funciones de Convex |
+| `npx convex data prospectos` | Vuelca la tabla; la columna `usuarioId` es el identificador de tu cuenta |
+
+### Datos de prueba (solo desarrollo)
+
+`convex/seed.ts` deja la Actividad Diaria en un estado concreto — `populated` (con vencidos y contactos de hoy), `alDia` o `empty` — reproduciendo escenarios que a mano son imposibles, porque las fechas de seguimiento las calcula el motor. Es interna, exige `APP_ENV=development` y `ALLOW_SEED=true` en el deployment, y siembra sobre la cuenta que se le indique:
+
+```bash
+npx convex run seed:seed '{"scenario":"populated","usuarioId":"https://<slug>.clerk.accounts.dev|user_xxx"}'
+```
+
+El `usuarioId` es el `tokenIdentifier` de tu sesión: créate un prospecto desde la app y cópialo de `npx convex data prospectos`. Ojo, el escenario **borra antes** los prospectos e interacciones de esa cuenta (solo de esa).

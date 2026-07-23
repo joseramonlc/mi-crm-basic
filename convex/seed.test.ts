@@ -9,12 +9,20 @@ const modules = import.meta.glob(["./**/*.{js,ts}", "!./**/*.test.ts", "!./**/*.
 
 const DAY_KEY = "2026-07-12";
 
+/** Tenant sembrado por defecto: forma real de un tokenIdentifier (emisor|sujeto). */
+const TENANT_A = "https://test.clerk|user_a";
+const TENANT_B = "https://test.clerk|user_b";
+
 function nuevoTest(): TestConvex<typeof schema> {
   return convexTest(schema, modules);
 }
 
-function sembrar(t: TestConvex<typeof schema>, scenario: "populated" | "empty" | "alDia") {
-  return t.mutation(internal.seed.seed, { scenario, dayKey: DAY_KEY });
+function sembrar(
+  t: TestConvex<typeof schema>,
+  scenario: "populated" | "empty" | "alDia",
+  usuarioId = TENANT_A,
+) {
+  return t.mutation(internal.seed.seed, { scenario, usuarioId, dayKey: DAY_KEY });
 }
 
 beforeEach(() => {
@@ -31,6 +39,10 @@ describe("seed · guardas", () => {
   it("aborta sin ALLOW_SEED", async () => {
     delete process.env.ALLOW_SEED;
     await expect(sembrar(nuevoTest(), "empty")).rejects.toThrow(/falta ALLOW_SEED/);
+  });
+
+  it("exige usuarioId con contenido", async () => {
+    await expect(sembrar(nuevoTest(), "populated", "   ")).rejects.toThrow(/usuarioId es obligatorio/);
   });
 });
 
@@ -106,5 +118,21 @@ describe("seed · limpieza con cascada", () => {
     await sembrar(t, "empty");
     expect(await t.run((ctx) => ctx.db.query("prospectos").collect())).toEqual([]);
     expect(await t.run((ctx) => ctx.db.query("interacciones").collect())).toEqual([]);
+  });
+
+  it("la limpieza es del tenant sembrado: no toca los datos de otro usuario", async () => {
+    const t = nuevoTest();
+    await sembrar(t, "populated", TENANT_B);
+    const ajenos = await t.run((ctx) => ctx.db.query("prospectos").collect());
+
+    // Sembrar y vaciar A no puede alterar nada de B.
+    await sembrar(t, "populated", TENANT_A);
+    await sembrar(t, "empty", TENANT_A);
+
+    const finales = await t.run((ctx) => ctx.db.query("prospectos").collect());
+    expect(finales.map((p) => p._id).sort()).toEqual(ajenos.map((p) => p._id).sort());
+    expect(finales.every((p) => p.usuarioId === TENANT_B)).toBe(true);
+    const interacciones = await t.run((ctx) => ctx.db.query("interacciones").collect());
+    expect(interacciones.every((i) => i.usuarioId === TENANT_B)).toBe(true);
   });
 });

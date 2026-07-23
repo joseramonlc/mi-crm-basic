@@ -1,8 +1,8 @@
 import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
-import { DEV_USUARIO_ID } from "./lib/constants";
 import { APP_TZ, addCivilDays, dayKeyToday, parseDayKey, zonedMidnightToMs } from "./lib/fecha";
 import { calcularFechaProximoSeguimiento, type Etapa } from "./lib/seguimiento";
+import { textoObligatorio } from "./lib/validacion";
 
 type Canal = "phone" | "whatsapp" | "mail" | "instagram" | "otro";
 type Tipo = "call" | "message" | "meeting";
@@ -43,10 +43,16 @@ interface Fixture {
  * con doble guarda (APP_ENV + ALLOW_SEED — ninguna debe existir en producción)
  * y además `internalMutation`: no invocable desde clientes públicos.
  *
- * Atómica: borra prospectos E interacciones de DEV_USUARIO_ID (cascada de
- * JOS-7 aplicada donde hay borrado) e inserta el escenario en la misma
- * mutation. `dayKey` se deriva UNA vez y los fixtures se calculan relativos a
- * él — reproducible incluso cerca de medianoche.
+ * Siembra sobre el tenant que se le indique (`usuarioId` = `tokenIdentifier` de
+ * la cuenta de desarrollo, visible en `npx convex data prospectos` tras crear un
+ * prospecto desde la app). Es la única función que recibe el tenant por
+ * argumento en lugar de derivarlo de la sesión: no es invocable desde la app y
+ * las dos guardas la mantienen fuera de producción.
+ *
+ * Atómica: borra prospectos E interacciones de ese tenant (cascada de JOS-7
+ * aplicada donde hay borrado) e inserta el escenario en la misma mutation.
+ * `dayKey` se deriva UNA vez y los fixtures se calculan relativos a él —
+ * reproducible incluso cerca de medianoche.
  *
  * Escenarios:
  * - populated: hoy + vencidos + un contacto hecho hoy (pantalla completa)
@@ -56,6 +62,7 @@ interface Fixture {
 export const seed = internalMutation({
   args: {
     scenario: v.union(v.literal("populated"), v.literal("empty"), v.literal("alDia")),
+    usuarioId: v.string(),
     dayKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -65,6 +72,7 @@ export const seed = internalMutation({
     if (process.env.ALLOW_SEED !== "true") {
       throw new Error("seed: bloqueado — falta ALLOW_SEED=true en este deployment");
     }
+    const usuarioId = textoObligatorio(args.usuarioId, "usuarioId");
 
     const dayKey = args.dayKey !== undefined ? (parseDayKey(args.dayKey), args.dayKey) : dayKeyToday(Date.now(), APP_TZ);
     const civilHoy = parseDayKey(dayKey);
@@ -77,14 +85,14 @@ export const seed = internalMutation({
     // índice), después sus prospectos.
     const interaccionesAntiguas = await ctx.db
       .query("interacciones")
-      .withIndex("by_usuario_prospecto_fecha", (q) => q.eq("usuarioId", DEV_USUARIO_ID))
+      .withIndex("by_usuario_prospecto_fecha", (q) => q.eq("usuarioId", usuarioId))
       .collect();
     for (const doc of interaccionesAntiguas) {
       await ctx.db.delete(doc._id);
     }
     const antiguos = await ctx.db
       .query("prospectos")
-      .withIndex("by_usuario", (q) => q.eq("usuarioId", DEV_USUARIO_ID))
+      .withIndex("by_usuario", (q) => q.eq("usuarioId", usuarioId))
       .collect();
     for (const doc of antiguos) {
       await ctx.db.delete(doc._id);
@@ -185,7 +193,7 @@ export const seed = internalMutation({
       const prox = calcularFechaProximoSeguimiento(f.etapa, fechaUltimoContacto ?? fechaAlta);
 
       const prospectoId = await ctx.db.insert("prospectos", {
-        usuarioId: DEV_USUARIO_ID,
+        usuarioId,
         nombre: f.nombre,
         comoSeConocio: f.comoSeConocio,
         canalContactoPreferido: f.canal,
@@ -198,7 +206,7 @@ export const seed = internalMutation({
 
       for (let i = 0; i < historial.length; i++) {
         await ctx.db.insert("interacciones", {
-          usuarioId: DEV_USUARIO_ID,
+          usuarioId,
           prospectoId,
           fecha: fechas[i],
           tipo: historial[i].tipo,

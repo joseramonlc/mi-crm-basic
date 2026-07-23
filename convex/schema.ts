@@ -16,9 +16,9 @@ import { v } from "convex/values";
  *   APP_TZ calculada por el motor (convex/lib/seguimiento.ts), nunca editable
  *   por el usuario. `fechaUltimoContacto` lo actualiza el sistema al registrar
  *   interacciones (JOS-11/JOS-14).
- * - `usuarioId` es un identificador provisional (DEV_USUARIO_ID) hasta JOS-66;
- *   pasará a `identity.tokenIdentifier` (ADR 0001), migración de datos asumida
- *   como deuda conocida.
+ * - `usuarioId` es el `identity.tokenIdentifier` de la sesión (ADR 0001, JOS-66);
+ *   lo deriva en servidor `convex/lib/usuario.ts` y ninguna función lo acepta
+ *   del cliente. Es la clave de aislamiento: prefijo de todos los índices.
  */
 
 /** Validadores compartidos entre el schema y las proyecciones/APIs (una sola fuente). */
