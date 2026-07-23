@@ -46,7 +46,7 @@ La rebanada vertical JOS-22 (GO de auditoría 2026-07-12) ya validó en la prác
 
 `tokenIdentifier` combina sujeto y emisor, lo que garantiza unicidad entre proveedores (docs.convex.dev/auth/functions-auth) y es el campo usado en el ejemplo oficial de almacenamiento de usuarios de Convex (docs.convex.dev/auth/database-auth). Cada query/mutation de `prospectos`/`interacciones` filtrará por ese `usuarioId` vía índice (`by_usuario*`).
 
-**Excepción temporal documentada**: hasta que se implemente la autenticación, el código usa el `usuarioId` provisional `dev-user` con guardas `APP_ENV=development`; esa excepción se elimina en la incidencia de implementación de auth (ver Consecuencias).
+~~**Excepción temporal documentada**: hasta que se implemente la autenticación, el código usa el `usuarioId` provisional `dev-user` con guardas `APP_ENV=development`; esa excepción se elimina en la incidencia de implementación de auth (ver Consecuencias).~~ **Resuelta en JOS-66 (bocado B, 2026-07-21)**: `convex/lib/usuario.ts` deriva el tenant de `ctx.auth.getUserIdentity()`, no queda ningún `dev-user` ni guarda `APP_ENV` en las funciones de producto, y el aislamiento entre dos sesiones está cubierto por tests. La única guarda `APP_ENV` que sobrevive es la del seed de desarrollo, que no forma parte del producto.
 
 ## Regiones y despliegues
 
@@ -60,9 +60,10 @@ Posible migración futura Convex→Supabase si el producto se abre a más usuari
 
 ## Consecuencias / acciones derivadas del ADR
 
-1. **Crear la incidencia de implementación de auth** ("Implementar autenticación y cuentas de usuario" — registro, login, sesión, sustitución de `dev-user` por `identity.tokenIdentifier`, retirada de las guardas dev de la query): hoy solo existen su diseño (JOS-64/65) y su elección (este ADR). Es la puerta de producción. Milestone a decidir.
+1. ~~**Crear la incidencia de implementación de auth**~~ — **hecho**: JOS-66, milestone "Autenticación y Cuentas", implementada en dos bocados (A: Clerk sobre la UI propia; B: `identity.tokenIdentifier` y retirada de las guardas dev). Queda pendiente de esa cadena solo el reset de contraseña, en incidencia propia previa a JOS-32.
 2. **Reconciliar M1 con lo ya construido**, incidencia a incidencia: JOS-6 (repo/entorno: hecho de facto), JOS-7 (schema: `prospectos` hecho, falta `interacciones`), JOS-8 (reglas de seguimiento: config por defecto marcada TODO(JOS-8), decisión de producto pendiente), JOS-9 (BD: deployment dev operativo; producción pendiente en JOS-32). Anotar en cada una, no rehacer.
-3. En la incidencia de implementación de autenticación, después de confirmar que ya no se utilizan, borrar las variables huérfanas de Convex Auth del deployment dev (JWKS, JWT_PRIVATE_KEY, SITE_URL).
+3. ~~Borrar las variables huérfanas de Convex Auth del deployment dev (JWKS, JWT_PRIVATE_KEY, SITE_URL)~~ — **hecho** en JOS-66; `npx convex env list` (2026-07-21) solo devuelve `ALLOW_SEED`, `APP_ENV` y `CLERK_JWT_ISSUER_DOMAIN`.
+4. **Migración de identidades al pasar a producción (JOS-32)**: el `tokenIdentifier` combina emisor y sujeto, así que la instancia de producción de Clerk emitirá identificadores distintos de los de la instancia dev. Los datos creados en desarrollo no serán visibles desde producción — irrelevante para los datos de prueba actuales, pero debe decidirse antes de abrir el CRM a usuarios reales.
 
 ## No decidido todavía
 

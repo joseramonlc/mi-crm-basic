@@ -1,23 +1,18 @@
 import type { QueryCtx } from "../_generated/server";
-import { DEV_USUARIO_ID } from "./constants";
+import { unauthenticated } from "./errores";
 
 /**
  * Único punto de obtención del tenant (`usuarioId`). Contrato del ADR 0001:
  * se deriva SIEMPRE en servidor; ninguna función lo acepta del cliente.
  *
- * Hoy (sin auth): aborta fuera de APP_ENV=development y resuelve al usuario
- * provisional DEV_USUARIO_ID; `_ctx` no se usa todavía.
- *
- * Con JOS-66: `ctx.auth.getUserIdentity()` → `identity.tokenIdentifier`,
- * abortando sin identidad. Cambiará solo el cuerpo de esta función — la firma
- * (async, `Pick<QueryCtx, "auth">`) ya es la definitiva y MutationCtx es
- * estructuralmente compatible.
+ * `tokenIdentifier` combina emisor y sujeto, así que es único entre proveedores
+ * e instancias de Clerk (dev y producción emiten identificadores distintos para
+ * la misma persona: migración prevista en JOS-32).
  */
-// `_ctx` queda sin uso hasta JOS-66 (la firma es la definitiva, fijada en auditoría).
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export async function requireUsuario(_ctx: Pick<QueryCtx, "auth">): Promise<string> {
-  if (process.env.APP_ENV !== "development") {
-    throw new Error("solo está disponible en desarrollo (APP_ENV=development) hasta que exista auth (JOS-66)");
+export async function requireUsuario(ctx: Pick<QueryCtx, "auth">): Promise<string> {
+  const identidad = await ctx.auth.getUserIdentity();
+  if (identidad === null) {
+    throw unauthenticated();
   }
-  return DEV_USUARIO_ID;
+  return identidad.tokenIdentifier;
 }

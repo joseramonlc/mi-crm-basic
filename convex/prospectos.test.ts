@@ -3,7 +3,7 @@ import { convexTest, type TestConvex } from "convex-test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { api, internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
-import { DEV_USUARIO_ID, MAX_ACTIVIDAD } from "./lib/constants";
+import { MAX_ACTIVIDAD } from "./lib/constants";
 import { APP_TZ, ventanaDia } from "./lib/fecha";
 import schema from "./schema";
 
@@ -11,6 +11,12 @@ import schema from "./schema";
 // del directorio convex/ (excluyendo tests y declaraciones, que no son módulos
 // ejecutables del deployment).
 const modules = import.meta.glob(["./**/*.{js,ts}", "!./**/*.test.ts", "!./**/*.d.ts"]);
+
+// Identidades de prueba: `tokenIdentifier` explícito (no se deja deducir a
+// convex-test) porque es literalmente el `usuarioId` que persisten las filas.
+const TENANT_A = "https://test.clerk|user_a";
+const TENANT_B = "https://test.clerk|user_b";
+const IDENT_A = { subject: "user_a", issuer: "https://test.clerk", tokenIdentifier: TENANT_A };
 
 const DAY_KEY = "2026-07-12";
 const { hoyInicio, mananaInicio } = ventanaDia(DAY_KEY, APP_TZ);
@@ -34,7 +40,7 @@ async function insertar(t: TestConvex<typeof schema>, docs: Nuevo[]) {
   await t.run(async (ctx) => {
     for (const d of docs) {
       await ctx.db.insert("prospectos", {
-        usuarioId: d.usuarioId ?? DEV_USUARIO_ID,
+        usuarioId: d.usuarioId ?? TENANT_A,
         nombre: d.nombre,
         comoSeConocio: "Test",
         canalContactoPreferido: "phone",
@@ -48,18 +54,21 @@ async function insertar(t: TestConvex<typeof schema>, docs: Nuevo[]) {
 }
 
 function actividad(t: TestConvex<typeof schema>, dayKey = DAY_KEY) {
-  return t.query(api.prospectos.actividadDiaria, { dayKey });
+  return t.withIdentity(IDENT_A).query(api.prospectos.actividadDiaria, { dayKey });
 }
 
 beforeEach(() => {
+  // Las guardas de entorno solo sobreviven en el seed (bloque final): la query
+  // de producto ya no las tiene, se protege exigiendo identidad.
   process.env.APP_ENV = "development";
   delete process.env.ALLOW_SEED;
 });
 
 describe("actividadDiaria · guardas", () => {
-  it("aborta fuera de APP_ENV=development", async () => {
-    process.env.APP_ENV = "production";
-    await expect(actividad(nuevoTest())).rejects.toThrow(/solo está disponible en desarrollo/);
+  it("aborta sin identidad", async () => {
+    await expect(nuevoTest().query(api.prospectos.actividadDiaria, { dayKey: DAY_KEY })).rejects.toThrow(
+      /Se requiere sesión/,
+    );
   });
 
   it("dayKey inválido lanza", async () => {
@@ -129,8 +138,8 @@ describe("actividadDiaria · partición, orden y proyección", () => {
       // Fuera de ambas ventanas
       { nombre: "Futuro", fechaProximoSeguimiento: mananaInicio },
       { nombre: "Nunca" },
-      // Otro tenant con seguimiento hoy: el filtrado provisional lo excluye
-      { nombre: "Otro", usuarioId: "otro-usuario", fechaProximoSeguimiento: hoyInicio + HORA },
+      // Otro tenant con seguimiento hoy: el prefijo del índice lo excluye
+      { nombre: "Otro", usuarioId: TENANT_B, fechaProximoSeguimiento: hoyInicio + HORA },
     ]);
 
     const r = await actividad(t);
@@ -244,14 +253,14 @@ describe("seed", () => {
   it("dayKey inválido lanza también en seed", async () => {
     process.env.ALLOW_SEED = "true";
     await expect(
-      nuevoTest().mutation(internal.seed.seed, { scenario: "empty", dayKey: "2026-02-31" }),
+      nuevoTest().mutation(internal.seed.seed, { scenario: "empty", usuarioId: TENANT_A, dayKey: "2026-02-31" }),
     ).rejects.toThrow(/dayKey inválido/);
   });
 
   it("populated es determinista respecto al dayKey y cuadra con la query", async () => {
     process.env.ALLOW_SEED = "true";
     const t = nuevoTest();
-    const res = await t.mutation(internal.seed.seed, { scenario: "populated", dayKey: DAY_KEY });
+    const res = await t.mutation(internal.seed.seed, { scenario: "populated", usuarioId: TENANT_A, dayKey: DAY_KEY });
     expect(res).toEqual({ dayKey: DAY_KEY, scenario: "populated", insertados: 7 });
 
     const r = await actividad(t);
