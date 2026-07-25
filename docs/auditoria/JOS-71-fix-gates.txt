@@ -1,0 +1,79 @@
+EVIDENCIA DE GATES — Fix enumeración JOS-71 (rev.3)
+Fecha: 2026-07-25 (re-ejecutado tras la auditoría de código)
+Rama: joseramonlc/jos-71-recuperar-contrasena-olvide-mi-contrasena (desde master dde5fe0)
+Entorno: WSL2 Ubuntu 24.04 sobre /mnt/c, Dropbox pausado, dev server detenido.
+
+OBSERVACIÓN MENOR DE LA AUDITORÍA DE CÓDIGO — RESUELTA:
+  mensajeDeError usaba acceso directo MENSAJES[code]; un código como "toString"
+  o "constructor" habría devuelto un método heredado de Object.prototype. Corregido
+  con `Object.prototype.hasOwnProperty.call(MENSAJES, code)` (solo claves propias)
+  + test dedicado (toString/constructor/hasOwnProperty → genérico). Total tests: 286.
+
+Resultados observados en esta sesión (comandos de package.json salvo tsc/grep):
+
+────────────────────────────────────────────────────────────────────────
+1) TESTS  ·  comando: npm test  (= vitest run)
+────────────────────────────────────────────────────────────────────────
+ Test Files  30 passed (30)
+      Tests  286 passed (286)
+   Duration  ~160s
+
+ (Ejecución fiable en paralelo esta vez; si aparece el flake del pool de
+  workers sobre /mnt/c, repetir con: npx vitest run --no-file-parallelism)
+
+ Ficheros de test tocados por el fix, verificados también en aislado:
+   - src/lib/authErrores.test.ts
+   - src/app/(auth)/recuperar/page.test.tsx
+   → 24 passed (24)
+
+────────────────────────────────────────────────────────────────────────
+2) TIPOS  ·  comando: npx tsc --noEmit
+────────────────────────────────────────────────────────────────────────
+ exit: 2   ·   total errores: 4   ·   errores NUEVOS del fix: 0
+
+ Los 4 son PREEXISTENTES y conocidos (uso de import.meta.glob en los
+ tests de Convex), no introducidos por este cambio:
+   convex/interacciones.test.ts(11,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+   convex/prospectos.api.test.ts(10,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+   convex/prospectos.test.ts(13,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+   convex/seed.test.ts(8,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+
+ (Nota: una ejecución previa mostró errores en .next/dev/types/*; eran
+  ficheros GENERADOS corruptos que dejó el dev server al detenerlo a media
+  generación. Tras limpiar .next desaparecen; no son del código fuente.)
+
+────────────────────────────────────────────────────────────────────────
+3) LINT  ·  comando: npm run lint  (= eslint)
+────────────────────────────────────────────────────────────────────────
+ exit: 0   ·   sin avisos ni errores.
+
+────────────────────────────────────────────────────────────────────────
+4) BUILD  ·  comando: npm run build  (= next build)
+────────────────────────────────────────────────────────────────────────
+ exit: 0
+ ✓ Compiled successfully
+ Running TypeScript ... Finished TypeScript   (type-check del build OK)
+ ✓ Generating static pages (8/8)
+
+ Rutas relevantes:
+   ○ /login       (Static)
+   ○ /recuperar   (Static)
+   ○ /registro    (Static)
+
+────────────────────────────────────────────────────────────────────────
+5) CONTROL DE RETIRADA DEL DEBUG TEMPORAL
+────────────────────────────────────────────────────────────────────────
+ comando: grep -rn "dbg\|reset debug\|\[debug status" src/
+ → 0 resultados.  (Debug de diagnóstico eliminado por completo.)
+
+────────────────────────────────────────────────────────────────────────
+6) RECORRIDO E2E MANUAL — COMPLETADO
+────────────────────────────────────────────────────────────────────────
+ Ejecutado contra el BUILD DE PRODUCCIÓN (.next limpio → next build →
+ next start), 4/4 escenarios correctos:
+   (a) email inexistente → avance neutro;
+   (b) código incorrecto en cuenta inexistente y en cuenta real → MISMO
+       mensaje ("El código no es correcto…"), indistinguible;
+   (c) cuenta real → recuperación completa, finalize y /actividad;
+   (d) login con contraseña incorrecta → "Email o contraseña incorrectos.".
+ Evidencia detallada: JOS-71-fix-e2e.md.

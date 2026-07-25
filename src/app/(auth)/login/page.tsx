@@ -81,6 +81,11 @@ export default function LoginPage() {
         <Button type="submit" fullWidth loading={enviando} disabled={!signIn}>
           Entrar
         </Button>
+        <p style={{ fontSize: 13, textAlign: "center" }}>
+          <Link href="/recuperar" style={{ color: "var(--color-primary-600)", fontWeight: 600 }}>
+            ¿Olvidaste tu contraseña?
+          </Link>
+        </p>
         <p style={{ fontSize: 13, color: "var(--color-neutral-500)", textAlign: "center" }}>
           ¿No tienes cuenta?{" "}
           <Link href="/registro" style={{ color: "var(--color-primary-600)", fontWeight: 600 }}>

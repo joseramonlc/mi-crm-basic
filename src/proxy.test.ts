@@ -13,7 +13,7 @@ function casaElMatcher(pathname: string) {
 }
 
 describe("proxy: alcance del matcher", () => {
-  it.each(["/login", "/registro", "/actividad", "/prospectos/p7", "/api/convex", "/__clerk/handshake"])(
+  it.each(["/login", "/registro", "/recuperar", "/actividad", "/prospectos/p7", "/api/convex", "/__clerk/handshake"])(
     "%s entra en el middleware",
     (ruta) => {
       expect(casaElMatcher(ruta)).toBe(true);

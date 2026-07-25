@@ -1,0 +1,771 @@
+diff --git a/src/app/(auth)/login/page.tsx b/src/app/(auth)/login/page.tsx
+index 5cd5de2..bd762e6 100644
+--- a/src/app/(auth)/login/page.tsx
++++ b/src/app/(auth)/login/page.tsx
+@@ -81,6 +81,11 @@ export default function LoginPage() {
+         <Button type="submit" fullWidth loading={enviando} disabled={!signIn}>
+           Entrar
+         </Button>
++        <p style={{ fontSize: 13, textAlign: "center" }}>
++          <Link href="/recuperar" style={{ color: "var(--color-primary-600)", fontWeight: 600 }}>
++            ¿Olvidaste tu contraseña?
++          </Link>
++        </p>
+         <p style={{ fontSize: 13, color: "var(--color-neutral-500)", textAlign: "center" }}>
+           ¿No tienes cuenta?{" "}
+           <Link href="/registro" style={{ color: "var(--color-primary-600)", fontWeight: 600 }}>
+diff --git a/src/app/(auth)/recuperar/page.test.tsx b/src/app/(auth)/recuperar/page.test.tsx
+new file mode 100644
+index 0000000..ca148b8
+--- /dev/null
++++ b/src/app/(auth)/recuperar/page.test.tsx
+@@ -0,0 +1,237 @@
++// @vitest-environment jsdom
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
++import RecuperarPage from "./page";
++import { MSG_CODIGO_INCORRECTO } from "@/lib/authErrores";
++
++// La página lee la sesión y el flujo de reset de Clerk; en el test los métodos
++// Future son spies y `status` es mutable (lo van moviendo verifyCode/submitPassword,
++// igual que hace Clerk en real). El router expone `replace` como espía.
++const { signInMock, useSignInMock, useAuthMock, replaceMock } = vi.hoisted(() => {
++  const signInMock = {
++    status: "needs_first_factor" as string,
++    create: vi.fn(),
++    resetPasswordEmailCode: {
++      sendCode: vi.fn(),
++      verifyCode: vi.fn(),
++      submitPassword: vi.fn(),
++    },
++    finalize: vi.fn(),
++  };
++  return {
++    signInMock,
++    replaceMock: vi.fn(),
++    useSignInMock: vi.fn(),
++    useAuthMock: vi.fn(),
++  };
++});
++
++vi.mock("next/navigation", () => ({
++  useRouter: () => ({ replace: replaceMock, push: vi.fn() }),
++}));
++vi.mock("@clerk/nextjs", () => ({
++  useSignIn: () => useSignInMock(),
++  useAuth: () => useAuthMock(),
++}));
++
++const NEUTRO = "Si existe una cuenta con ese email, te habremos enviado un código nuevo.";
++const SIN_RED = "No hay conexión con el servidor. Revisa tu conexión e inténtalo de nuevo.";
++
++/** Error con la forma REAL de runtime (ClerkAPIResponseError): el code específico
++ *  viaja anidado en errors[], y el superior es el genérico api_response_error. */
++function apiError(code: string) {
++  return { code: "api_response_error", errors: [{ code }] };
++}
++
++/** Envía el formulario visible (solo hay uno en pantalla en cada paso). */
++function enviar(container: HTMLElement) {
++  fireEvent.submit(container.querySelector("form")!);
++}
++
++/** Rellena el email y envía → deja la vista en el paso "codigo". */
++async function irAPasoCodigo(container: HTMLElement, email = "ana@mail.com") {
++  fireEvent.change(screen.getByLabelText("Email"), { target: { value: email } });
++  enviar(container);
++  await screen.findByText("Crea una contraseña nueva");
++}
++
++beforeEach(() => {
++  signInMock.status = "needs_first_factor";
++  signInMock.create.mockReset().mockResolvedValue({ error: null });
++  signInMock.resetPasswordEmailCode.sendCode.mockReset().mockResolvedValue({ error: null });
++  signInMock.resetPasswordEmailCode.verifyCode.mockReset().mockResolvedValue({ error: null });
++  signInMock.resetPasswordEmailCode.submitPassword.mockReset().mockResolvedValue({ error: null });
++  signInMock.finalize.mockReset().mockResolvedValue({ error: null });
++  replaceMock.mockReset();
++  useSignInMock.mockReturnValue({ signIn: signInMock, fetchStatus: "idle" });
++  useAuthMock.mockReturnValue({ isLoaded: true, isSignedIn: false });
++});
++afterEach(cleanup);
++
++describe("RecuperarPage — envío del código", () => {
++  it("email válido: llama create + sendCode y avanza al paso de código", async () => {
++    const { container } = render(<RecuperarPage />);
++    await irAPasoCodigo(container, "ana@mail.com");
++    expect(signInMock.create).toHaveBeenCalledWith({ identifier: "ana@mail.com" });
++    expect(signInMock.resetPasswordEmailCode.sendCode).toHaveBeenCalled();
++  });
++
++  it("guarda síncrona: dos submits en la misma tarea solo llaman create una vez", async () => {
++    // create queda colgado para que el ref siga en true durante el segundo submit.
++    let resolver!: () => void;
++    signInMock.create.mockReturnValue(
++      new Promise((r) => {
++        resolver = () => r({ error: null });
++      }),
++    );
++    const { container } = render(<RecuperarPage />);
++    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "ana@mail.com" } });
++    const form = container.querySelector("form")!;
++    fireEvent.submit(form);
++    fireEvent.submit(form);
++    expect(signInMock.create).toHaveBeenCalledTimes(1);
++    resolver();
++    await screen.findByText("Crea una contraseña nueva");
++  });
++
++  it("no enumeración (forma anidada real): si create devuelve form_identifier_not_found en errors[], avanza a código SIN alert", async () => {
++    signInMock.create.mockResolvedValue({ error: apiError("form_identifier_not_found") });
++    const { container } = render(<RecuperarPage />);
++    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "noexiste@mail.com" } });
++    enviar(container);
++    await screen.findByText("Crea una contraseña nueva");
++    expect(signInMock.resetPasswordEmailCode.sendCode).not.toHaveBeenCalled();
++    expect(screen.queryByRole("alert")).toBeNull();
++  });
++
++  it("no enumeración (forma plana): si sendCode devuelve form_identifier_not_found en el nivel superior, avanza a código SIN alert", async () => {
++    signInMock.resetPasswordEmailCode.sendCode.mockResolvedValue({ error: { code: "form_identifier_not_found" } });
++    const { container } = render(<RecuperarPage />);
++    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "x@mail.com" } });
++    enviar(container);
++    await screen.findByText("Crea una contraseña nueva");
++    expect(screen.queryByRole("alert")).toBeNull();
++  });
++});
++
++describe("RecuperarPage — reenviar", () => {
++  it("tras flujo neutral NO llama a Clerk y muestra el mismo aviso neutro", async () => {
++    signInMock.create.mockResolvedValue({ error: { code: "form_identifier_not_found" } });
++    const { container } = render(<RecuperarPage />);
++    await irAPasoCodigo(container, "noexiste@mail.com");
++    signInMock.resetPasswordEmailCode.sendCode.mockClear();
++
++    fireEvent.click(screen.getByText("Reenviar código"));
++    await screen.findByText(NEUTRO);
++    expect(signInMock.resetPasswordEmailCode.sendCode).not.toHaveBeenCalled();
++  });
++
++  it("en flujo normal reenvía llamando a sendCode", async () => {
++    const { container } = render(<RecuperarPage />);
++    await irAPasoCodigo(container);
++    signInMock.resetPasswordEmailCode.sendCode.mockClear();
++
++    fireEvent.click(screen.getByText("Reenviar código"));
++    await screen.findByText(NEUTRO);
++    expect(signInMock.resetPasswordEmailCode.sendCode).toHaveBeenCalled();
++  });
++});
++
++describe("RecuperarPage — cambio de contraseña", () => {
++  it("verifica, cambia con signOutOfOtherSessions y finaliza, en ese orden", async () => {
++    const orden: string[] = [];
++    signInMock.resetPasswordEmailCode.verifyCode.mockImplementation(async () => {
++      orden.push("verify");
++      signInMock.status = "needs_new_password";
++      return { error: null };
++    });
++    signInMock.resetPasswordEmailCode.submitPassword.mockImplementation(async () => {
++      orden.push("submit");
++      signInMock.status = "complete";
++      return { error: null };
++    });
++    signInMock.finalize.mockImplementation(async () => {
++      orden.push("finalize");
++      return { error: null };
++    });
++
++    const { container } = render(<RecuperarPage />);
++    await irAPasoCodigo(container);
++    fireEvent.change(screen.getByLabelText("Código de verificación"), { target: { value: "123456" } });
++    fireEvent.change(screen.getByLabelText("Contraseña nueva"), { target: { value: "nuevaClave8" } });
++    enviar(container);
++
++    await waitFor(() => expect(signInMock.finalize).toHaveBeenCalled());
++    expect(orden).toEqual(["verify", "submit", "finalize"]);
++    expect(signInMock.resetPasswordEmailCode.submitPassword).toHaveBeenCalledWith({
++      password: "nuevaClave8",
++      signOutOfOtherSessions: true,
++    });
++  });
++
++  it("cuenta real + código incorrecto (forma anidada): muestra MSG_CODIGO_INCORRECTO y no llama a submitPassword ni finalize", async () => {
++    signInMock.resetPasswordEmailCode.verifyCode.mockResolvedValue({ error: apiError("form_code_incorrect") });
++    const { container } = render(<RecuperarPage />);
++    await irAPasoCodigo(container);
++    fireEvent.change(screen.getByLabelText("Código de verificación"), { target: { value: "000000" } });
++    fireEvent.change(screen.getByLabelText("Contraseña nueva"), { target: { value: "nuevaClave8" } });
++    enviar(container);
++
++    const alerta = await screen.findByRole("alert");
++    expect(alerta.textContent).toBe(MSG_CODIGO_INCORRECTO);
++    expect(signInMock.resetPasswordEmailCode.submitPassword).not.toHaveBeenCalled();
++    expect(signInMock.finalize).not.toHaveBeenCalled();
++  });
++
++  it("anti-oracle: en flujo neutro NO se llama a Clerk y sale el MISMO mensaje que un código incorrecto real", async () => {
++    // La cuenta no existe (create anidado form_identifier_not_found) → flujo neutro.
++    // Al enviar el código, la página NO debe tocar Clerk y debe mostrar exactamente
++    // MSG_CODIGO_INCORRECTO, idéntico al caso "cuenta real + código incorrecto", para
++    // que un atacante no pueda distinguir por el mensaje si la cuenta existe.
++    signInMock.create.mockResolvedValue({ error: apiError("form_identifier_not_found") });
++    const { container } = render(<RecuperarPage />);
++    await irAPasoCodigo(container, "noexiste@mail.com");
++    fireEvent.change(screen.getByLabelText("Código de verificación"), { target: { value: "123456" } });
++    fireEvent.change(screen.getByLabelText("Contraseña nueva"), { target: { value: "nuevaClave8" } });
++    enviar(container);
++
++    const alerta = await screen.findByRole("alert");
++    expect(alerta.textContent).toBe(MSG_CODIGO_INCORRECTO);
++    expect(signInMock.resetPasswordEmailCode.verifyCode).not.toHaveBeenCalled();
++    expect(signInMock.resetPasswordEmailCode.submitPassword).not.toHaveBeenCalled();
++  });
++});
++
++describe("RecuperarPage — robustez de red", () => {
++  it("si el método rechaza (TypeError), muestra sin conexión", async () => {
++    signInMock.create.mockRejectedValue(new TypeError("Failed to fetch"));
++    const { container } = render(<RecuperarPage />);
++    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "ana@mail.com" } });
++    enviar(container);
++    expect((await screen.findByRole("alert")).textContent).toBe(SIN_RED);
++  });
++
++  it("si el método devuelve { error: TypeError }, muestra sin conexión", async () => {
++    signInMock.create.mockResolvedValue({ error: new TypeError("Failed to fetch") });
++    const { container } = render(<RecuperarPage />);
++    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "ana@mail.com" } });
++    enviar(container);
++    expect((await screen.findByRole("alert")).textContent).toBe(SIN_RED);
++  });
++});
++
++describe("RecuperarPage — guard de sesión", () => {
++  it("con sesión activa no renderiza el formulario y redirige a /actividad", async () => {
++    useAuthMock.mockReturnValue({ isLoaded: true, isSignedIn: true });
++    render(<RecuperarPage />);
++    expect(screen.queryByLabelText("Email")).toBeNull();
++    await waitFor(() => expect(replaceMock).toHaveBeenCalledWith("/actividad"));
++  });
++
++  it("mientras Clerk carga (isLoaded false) no renderiza el formulario ni redirige", () => {
++    useAuthMock.mockReturnValue({ isLoaded: false, isSignedIn: undefined });
++    render(<RecuperarPage />);
++    expect(screen.queryByLabelText("Email")).toBeNull();
++    expect(replaceMock).not.toHaveBeenCalled();
++  });
++});
+diff --git a/src/app/(auth)/recuperar/page.tsx b/src/app/(auth)/recuperar/page.tsx
+new file mode 100644
+index 0000000..d35db99
+--- /dev/null
++++ b/src/app/(auth)/recuperar/page.tsx
+@@ -0,0 +1,262 @@
++"use client";
++
++import * as React from "react";
++import Link from "next/link";
++import { useRouter } from "next/navigation";
++import { useAuth, useSignIn } from "@clerk/nextjs";
++import { Card, Input, Button, Icon } from "@/components/ui";
++import { mensajeDeError, esEmailNoEncontrado, MSG_CODIGO_INCORRECTO } from "@/lib/authErrores";
++
++const TITULO_STYLE: React.CSSProperties = {
++  fontFamily: "var(--font-sans)",
++  fontSize: "var(--text-h2-size)",
++  fontWeight: 600,
++  color: "var(--color-neutral-900)",
++};
++
++// Copy deliberadamente neutro: nunca confirma ni desmiente que el email exista
++// (criterio de aceptación de JOS-71 — no enumeración de cuentas).
++const AVISO_CODIGO_ENVIADO = "Si existe una cuenta con ese email, te habremos enviado un código nuevo.";
++
++export default function RecuperarPage() {
++  const router = useRouter();
++  const { signIn, fetchStatus } = useSignIn();
++  const { isLoaded, isSignedIn } = useAuth();
++  const [paso, setPaso] = React.useState<"email" | "codigo">("email");
++  const [email, setEmail] = React.useState("");
++  const [codigo, setCodigo] = React.useState("");
++  const [password, setPassword] = React.useState("");
++  const [showPassword, setShowPassword] = React.useState(false);
++  const [error, setError] = React.useState<string | null>(null);
++  const [aviso, setAviso] = React.useState<string | null>(null);
++  // `flujoNeutro` marca que el envío se neutralizó por email inexistente. Con él,
++  // reenviar NO vuelve a llamar a Clerk: así el comportamiento es idéntico para
++  // un email que existe y uno que no.
++  const [flujoNeutro, setFlujoNeutro] = React.useState(false);
++  const cargando = fetchStatus === "fetching";
++  // Guarda SÍNCRONA contra el doble envío: `cargando` (derivado de fetchStatus) y
++  // el `disabled` del botón no cambian hasta el re-render, así que dos submits en
++  // la misma tarea los verían sin actualizar. El ref corta también en ese caso.
++  const enviando = React.useRef(false);
++
++  // /recuperar es pública en el proxy: con sesión abierta no hay nada que
++  // recuperar. Se espera a `isLoaded` para no renderizar el formulario ni un
++  // instante a un usuario que ya tiene sesión (mientras carga, isSignedIn es
++  // undefined). Además de devolver null, se redirige a /actividad.
++  React.useEffect(() => {
++    if (isLoaded && isSignedIn) router.replace("/actividad");
++  }, [isLoaded, isSignedIn, router]);
++  if (!isLoaded || isSignedIn) return null;
++
++  async function enviarCodigo(e: React.FormEvent) {
++    e.preventDefault();
++    // `signIn` es null hasta que Clerk carga; el ref corta el doble envío.
++    if (!signIn || enviando.current) return;
++    setError(null);
++    setAviso(null);
++    enviando.current = true;
++    try {
++      const creado = await signIn.create({ identifier: email });
++      if (creado.error) {
++        // No enumeración: si el email no existe, avanzamos igual con copy neutro.
++        if (esEmailNoEncontrado(creado.error)) {
++          setFlujoNeutro(true);
++          setPaso("codigo");
++          return;
++        }
++        setError(mensajeDeError(creado.error));
++        return;
++      }
++      const envio = await signIn.resetPasswordEmailCode.sendCode();
++      if (envio.error) {
++        if (esEmailNoEncontrado(envio.error)) {
++          setFlujoNeutro(true);
++          setPaso("codigo");
++          return;
++        }
++        setError(mensajeDeError(envio.error));
++        return;
++      }
++      setFlujoNeutro(false);
++      setPaso("codigo");
++    } catch (err) {
++      // Los métodos Future devuelven `{ error }`, pero envolvemos por si un fallo
++      // de red rechaza la promesa: el TypeError de fetch se traduce a "sin conexión".
++      setError(mensajeDeError(err));
++    } finally {
++      enviando.current = false;
++    }
++  }
++
++  async function cambiarContrasena(e: React.FormEvent) {
++    e.preventDefault();
++    if (!signIn || enviando.current) return;
++    setError(null);
++    setAviso(null);
++    // No enumeración: en el flujo neutro (email inexistente) NO se llama a Clerk.
++    // Se devuelve el MISMO mensaje que un código incorrecto en una cuenta real, de
++    // modo que ambos casos son indistinguibles y la cuenta inexistente nunca
++    // progresa a cambiar contraseña. (El residuo de red/timing se cierra en JOS-73.)
++    if (flujoNeutro) {
++      setError(MSG_CODIGO_INCORRECTO);
++      return;
++    }
++    enviando.current = true;
++    try {
++      const verificado = await signIn.resetPasswordEmailCode.verifyCode({ code: codigo });
++      // El error se muestra SIEMPRE traducido (nunca el texto crudo de Clerk).
++      if (verificado.error) {
++        setError(mensajeDeError(verificado.error));
++        return;
++      }
++      // `status` lo mutan verifyCode/submitPassword por efecto de red; se lee en
++      // locales tipados `string` para que el control-flow de TS no estreche la
++      // propiedad al literal del guard anterior y marque el segundo como imposible.
++      const estadoTrasVerificar: string = signIn.status;
++      if (estadoTrasVerificar !== "needs_new_password") {
++        setError("No hemos podido verificar el código. Pide uno nuevo.");
++        return;
++      }
++      const cambio = await signIn.resetPasswordEmailCode.submitPassword({
++        password,
++        signOutOfOtherSessions: true,
++      });
++      if (cambio.error) {
++        setError(mensajeDeError(cambio.error));
++        return;
++      }
++      const estadoTrasCambiar: string = signIn.status;
++      if (estadoTrasCambiar !== "complete") {
++        setError("No hemos podido cambiar la contraseña. Inténtalo de nuevo.");
++        return;
++      }
++      // finalize() redirige al fallback configurado (/actividad).
++      const cierre = await signIn.finalize();
++      if (cierre.error) setError(mensajeDeError(cierre.error));
++    } catch (err) {
++      setError(mensajeDeError(err));
++    } finally {
++      enviando.current = false;
++    }
++  }
++
++  async function reenviar() {
++    if (!signIn || enviando.current) return;
++    setError(null);
++    setAviso(null);
++
++    // Si el envío original se neutralizó (email inexistente), no llamamos a Clerk:
++    // mostramos el mismo aviso neutro para no revelar nada por comportamiento.
++    if (flujoNeutro) {
++      setAviso(AVISO_CODIGO_ENVIADO);
++      return;
++    }
++    enviando.current = true;
++    try {
++      const envio = await signIn.resetPasswordEmailCode.sendCode();
++      if (envio.error && !esEmailNoEncontrado(envio.error)) {
++        setError(mensajeDeError(envio.error));
++        return;
++      }
++      setAviso(AVISO_CODIGO_ENVIADO);
++    } catch (err) {
++      setError(mensajeDeError(err));
++    } finally {
++      enviando.current = false;
++    }
++  }
++
++  if (paso === "codigo") {
++    return (
++      <Card>
++        <form onSubmit={cambiarContrasena} className="flex flex-col gap-4">
++          <h1 style={TITULO_STYLE}>Crea una contraseña nueva</h1>
++          <p style={{ fontFamily: "var(--font-sans)", fontSize: 14, color: "var(--color-neutral-700)" }}>
++            Si existe una cuenta con <strong>{email}</strong>, te habremos enviado un código. Introdúcelo y elige una
++            contraseña nueva.
++          </p>
++          {error && (
++            <p role="alert" style={{ fontFamily: "var(--font-sans)", fontSize: 13, color: "var(--color-error-text)" }}>
++              {error}
++            </p>
++          )}
++          {aviso && (
++            <p role="status" style={{ fontFamily: "var(--font-sans)", fontSize: 13, color: "var(--color-neutral-700)" }}>
++              {aviso}
++            </p>
++          )}
++          <Input
++            label="Código de verificación"
++            inputMode="numeric"
++            autoComplete="one-time-code"
++            required
++            value={codigo}
++            onChange={(e) => setCodigo(e.target.value)}
++          />
++          <Input
++            label="Contraseña nueva"
++            type={showPassword ? "text" : "password"}
++            autoComplete="new-password"
++            required
++            helper="Mínimo 8 caracteres."
++            value={password}
++            onChange={(e) => setPassword(e.target.value)}
++          />
++          <button
++            type="button"
++            onClick={() => setShowPassword((v) => !v)}
++            style={{ alignSelf: "flex-end", color: "var(--color-neutral-500)", fontSize: 13, display: "inline-flex", gap: 4, alignItems: "center" }}
++          >
++            <Icon name={showPassword ? "eye-off" : "eye"} size={15} />
++            {showPassword ? "Ocultar" : "Mostrar"} contraseña
++          </button>
++          <Button type="submit" fullWidth loading={cargando} disabled={!signIn}>
++            Cambiar contraseña y entrar
++          </Button>
++          <p style={{ fontSize: 13, color: "var(--color-neutral-500)", textAlign: "center" }}>
++            ¿No te ha llegado?{" "}
++            <button type="button" onClick={reenviar} style={{ color: "var(--color-primary-600)", fontWeight: 600 }}>
++              Reenviar código
++            </button>
++          </p>
++        </form>
++      </Card>
++    );
++  }
++
++  return (
++    <Card>
++      <form onSubmit={enviarCodigo} className="flex flex-col gap-4">
++        <h1 style={TITULO_STYLE}>Recupera tu contraseña</h1>
++        <p style={{ fontFamily: "var(--font-sans)", fontSize: 14, color: "var(--color-neutral-700)" }}>
++          Introduce tu email y te enviaremos un código para crear una contraseña nueva.
++        </p>
++        {error && (
++          <p role="alert" style={{ fontFamily: "var(--font-sans)", fontSize: 13, color: "var(--color-error-text)" }}>
++            {error}
++          </p>
++        )}
++        <Input
++          label="Email"
++          type="email"
++          autoComplete="email"
++          required
++          value={email}
++          onChange={(e) => setEmail(e.target.value)}
++        />
++        {/* Anclaje del smart CAPTCHA de Clerk: si la bot protection de la instancia
++            lo exige en este flujo, sin este nodo fallaría (igual que en registro). */}
++        <div id="clerk-captcha" />
++        <Button type="submit" fullWidth loading={cargando} disabled={!signIn}>
++          Enviar código
++        </Button>
++        <p style={{ fontSize: 13, color: "var(--color-neutral-500)", textAlign: "center" }}>
++          ¿Ya la recuerdas?{" "}
++          <Link href="/login" style={{ color: "var(--color-primary-600)", fontWeight: 600 }}>
++            Volver a entrar
++          </Link>
++        </p>
++      </form>
++    </Card>
++  );
++}
+diff --git a/src/lib/authErrores.test.ts b/src/lib/authErrores.test.ts
+index 1c0dedc..b46aa4c 100644
+--- a/src/lib/authErrores.test.ts
++++ b/src/lib/authErrores.test.ts
+@@ -1,40 +1,96 @@
+ import { describe, expect, it } from "vitest";
+-import { mensajeDeError } from "./authErrores";
++import { mensajeDeError, esEmailNoEncontrado, MSG_CODIGO_INCORRECTO } from "./authErrores";
+ 
+-/** Los métodos Future devuelven `{ error }`, no lanzan: basta el código. */
++const PASS_INCORRECTA = "Email o contraseña incorrectos.";
++const GENERICO = "No hemos podido completar la operación. Inténtalo de nuevo.";
++const SIN_RED = "No hay conexión con el servidor. Revisa tu conexión e inténtalo de nuevo.";
++
++/** Forma PLANA: `ClerkError` con `code` en el nivel superior (el tipo declarado
++ *  por los métodos Future). El helper debe cubrirla vía el fallback. */
+ function errorDeClerk(code: string) {
+   return { code, message: "in English", longMessage: "in English, longer" };
+ }
+ 
++/** Forma REAL en runtime: `ClerkAPIResponseError`. El `code` superior es el
++ *  genérico `api_response_error` y el/los específicos viajan anidados en `errors[]`. */
++function errorApiClerk(...codes: string[]) {
++  return {
++    code: "api_response_error",
++    status: 422,
++    errors: codes.map((code) => ({ code, message: "in English", longMessage: "in English, longer" })),
++  };
++}
++
+ describe("mensajeDeError", () => {
+-  it("traduce los códigos conocidos de Clerk al castellano del producto", () => {
+-    expect(mensajeDeError(errorDeClerk("form_password_incorrect"))).toBe("Email o contraseña incorrectos.");
++  it("traduce los códigos conocidos — forma plana (code superior)", () => {
++    expect(mensajeDeError(errorDeClerk("form_password_incorrect"))).toBe(PASS_INCORRECTA);
+     expect(mensajeDeError(errorDeClerk("form_identifier_exists"))).toBe("Ya existe una cuenta con ese email.");
+-    expect(mensajeDeError(errorDeClerk("form_code_incorrect"))).toBe(
+-      "El código no es correcto. Revísalo e inténtalo de nuevo.",
+-    );
++    expect(mensajeDeError(errorDeClerk("form_code_incorrect"))).toBe(MSG_CODIGO_INCORRECTO);
++  });
++
++  it("traduce los códigos conocidos — forma anidada real (errors[])", () => {
++    expect(mensajeDeError(errorApiClerk("form_password_incorrect"))).toBe(PASS_INCORRECTA);
++    expect(mensajeDeError(errorApiClerk("form_code_incorrect"))).toBe(MSG_CODIGO_INCORRECTO);
+   });
+ 
+-  it("no distingue email inexistente de contraseña incorrecta", () => {
+-    expect(mensajeDeError(errorDeClerk("form_identifier_not_found"))).toBe(
+-      mensajeDeError(errorDeClerk("form_password_incorrect")),
+-    );
++  it("no distingue email inexistente de contraseña incorrecta (ambas formas)", () => {
++    expect(mensajeDeError(errorDeClerk("form_identifier_not_found"))).toBe(PASS_INCORRECTA);
++    expect(mensajeDeError(errorApiClerk("form_identifier_not_found"))).toBe(PASS_INCORRECTA);
+   });
+ 
+-  it("cae al texto genérico ante un código desconocido, sin filtrar el mensaje de la API", () => {
+-    const mensaje = mensajeDeError(errorDeClerk("codigo_que_no_mapeamos"));
+-    expect(mensaje).toBe("No hemos podido completar la operación. Inténtalo de nuevo.");
+-    expect(mensaje).not.toContain("English");
++  it("prioridad: con varios errores, gana el primer código con traducción conocida", () => {
++    // El específico no está el primero: igualmente se traduce.
++    expect(mensajeDeError(errorApiClerk("codigo_desconocido", "form_password_incorrect"))).toBe(PASS_INCORRECTA);
++    // Si el primero ya mapea, ese gana.
++    expect(mensajeDeError(errorApiClerk("form_code_incorrect", "form_password_incorrect"))).toBe(MSG_CODIGO_INCORRECTO);
++  });
++
++  it("cae al texto genérico ante un código desconocido, sin filtrar el mensaje de la API (ambas formas)", () => {
++    for (const err of [errorDeClerk("codigo_que_no_mapeamos"), errorApiClerk("codigo_que_no_mapeamos")]) {
++      const mensaje = mensajeDeError(err);
++      expect(mensaje).toBe(GENERICO);
++      expect(mensaje).not.toContain("English");
++    }
+   });
+ 
+   it("distingue el fallo de red del error genérico", () => {
+-    expect(mensajeDeError(new TypeError("Failed to fetch"))).toBe(
+-      "No hay conexión con el servidor. Revisa tu conexión e inténtalo de nuevo.",
+-    );
++    expect(mensajeDeError(new TypeError("Failed to fetch"))).toBe(SIN_RED);
++  });
++
++  it("no rompe con null, formas inesperadas o errors vacío", () => {
++    expect(mensajeDeError(null)).toBe(GENERICO);
++    expect(mensajeDeError({ sinCodigo: true })).toBe(GENERICO);
++    expect(mensajeDeError({ errors: [] })).toBe(GENERICO);
++  });
++
++  it("un código que colisiona con Object.prototype (toString/constructor) cae al genérico", () => {
++    // No debe devolver el método heredado del mapa: solo cuentan claves propias.
++    expect(mensajeDeError(errorDeClerk("toString"))).toBe(GENERICO);
++    expect(mensajeDeError(errorApiClerk("constructor"))).toBe(GENERICO);
++    expect(mensajeDeError(errorDeClerk("hasOwnProperty"))).toBe(GENERICO);
++  });
++});
++
++describe("esEmailNoEncontrado", () => {
++  it("es true para form_identifier_not_found — forma plana y anidada", () => {
++    expect(esEmailNoEncontrado(errorDeClerk("form_identifier_not_found"))).toBe(true);
++    expect(esEmailNoEncontrado(errorApiClerk("form_identifier_not_found"))).toBe(true);
++  });
++
++  it("es true aunque form_identifier_not_found NO sea el primer elemento del array (seguridad)", () => {
++    expect(esEmailNoEncontrado(errorApiClerk("form_param_format_invalid", "form_identifier_not_found"))).toBe(true);
++  });
++
++  it("es false para otros códigos (ambas formas)", () => {
++    expect(esEmailNoEncontrado(errorDeClerk("form_code_incorrect"))).toBe(false);
++    expect(esEmailNoEncontrado(errorApiClerk("form_password_incorrect"))).toBe(false);
++    // El code superior genérico por sí solo no debe activarlo.
++    expect(esEmailNoEncontrado({ code: "api_response_error", errors: [] })).toBe(false);
+   });
+ 
+-  it("no rompe con null o formas inesperadas", () => {
+-    expect(mensajeDeError(null)).toBe("No hemos podido completar la operación. Inténtalo de nuevo.");
+-    expect(mensajeDeError({ sinCodigo: true })).toBe("No hemos podido completar la operación. Inténtalo de nuevo.");
++  it("es false ante formas sin código, null o errores de red", () => {
++    expect(esEmailNoEncontrado(null)).toBe(false);
++    expect(esEmailNoEncontrado({ sinCodigo: true })).toBe(false);
++    expect(esEmailNoEncontrado(new TypeError("Failed to fetch"))).toBe(false);
+   });
+ });
+diff --git a/src/lib/authErrores.ts b/src/lib/authErrores.ts
+index 5d75a0c..096dc2f 100644
+--- a/src/lib/authErrores.ts
++++ b/src/lib/authErrores.ts
+@@ -5,10 +5,16 @@
+  * que mapeamos por `code` —estable, a diferencia de `message`— y nunca
+  * mostramos el mensaje crudo de la API.
+  *
+- * El tipo va declarado aquí en vez de importado: `ClerkError` no se exporta
+- * desde `@clerk/nextjs`, y solo necesitamos el código.
++ * El `code` estable puede llegar en el nivel superior (tipo declarado `ClerkError`)
++ * o dentro del array `errors[]` (forma real en runtime, `ClerkAPIResponseError`);
++ * `codigosDeError` cubre ambas. Ver docs/auditoria/JOS-71-fix-enumeracion.md.
+  */
+-type ErrorConCodigo = { code: string };
++
++/** Mensaje de código de verificación incorrecto. Fuente única: lo referencian el
++ *  mapa `MENSAJES` y la página de recuperación, para que el flujo neutro (email
++ *  inexistente) y el de código incorrecto real muestren un texto idéntico y sean
++ *  indistinguibles (no-enumeración de cuentas). */
++export const MSG_CODIGO_INCORRECTO = "El código no es correcto. Revísalo e inténtalo de nuevo.";
+ 
+ const MENSAJES: Record<string, string> = {
+   // Login: no distinguimos email inexistente de contraseña incorrecta (no
+@@ -25,7 +31,7 @@ const MENSAJES: Record<string, string> = {
+   form_param_format_invalid: "Revisa el formato de los datos introducidos.",
+   form_param_nil: "Rellena todos los campos obligatorios.",
+   // Verificación por código
+-  form_code_incorrect: "El código no es correcto. Revísalo e inténtalo de nuevo.",
++  form_code_incorrect: MSG_CODIGO_INCORRECTO,
+   verification_expired: "El código ha caducado. Pide uno nuevo.",
+   verification_failed: "No hemos podido verificar el código. Pide uno nuevo.",
+   verification_already_verified: "Este email ya estaba verificado. Entra con tu contraseña.",
+@@ -34,14 +40,52 @@ const MENSAJES: Record<string, string> = {
+ const GENERICO = "No hemos podido completar la operación. Inténtalo de nuevo.";
+ const SIN_RED = "No hay conexión con el servidor. Revisa tu conexión e inténtalo de nuevo.";
+ 
+-function tieneCodigo(error: unknown): error is ErrorConCodigo {
+-  return typeof error === "object" && error !== null && typeof (error as ErrorConCodigo).code === "string";
++/**
++ * Códigos ESTABLES de un error de Clerk, en orden de prioridad. El tipo declarado
++ * por los métodos Future es `ClerkError` (con `code` en el nivel superior); en
++ * runtime el objeto suele ser un `ClerkAPIResponseError` que además trae el array
++ * `errors: ClerkAPIError[]`, cada uno con su `code` específico (el superior es
++ * genérico). Se devuelven primero los códigos anidados —en su orden, sin asumir
++ * uno solo ni una posición fija— y por último el `code` superior como fallback,
++ * de modo que la traducción es correcta bajo ambas formas.
++ */
++function codigosDeError(error: unknown): string[] {
++  if (typeof error !== "object" || error === null) return [];
++  const e = error as { code?: unknown; errors?: unknown };
++  const codes: string[] = [];
++  if (Array.isArray(e.errors)) {
++    for (const item of e.errors) {
++      const c = (item as { code?: unknown } | null)?.code;
++      if (typeof c === "string") codes.push(c);
++    }
++  }
++  if (typeof e.code === "string") codes.push(e.code);
++  return codes;
+ }
+ 
+ export function mensajeDeError(error: unknown): string {
+-  if (tieneCodigo(error)) return MENSAJES[error.code] ?? GENERICO;
++  const codes = codigosDeError(error);
++  // Prioridad: el primer código con traducción conocida gana. Nunca se muestra el
++  // mensaje crudo (inglés) de la API. Se comprueba propiedad PROPIA (no acceso
++  // directo ni `in`): un código como "toString"/"constructor" heredaría un método
++  // de Object.prototype y devolvería algo que no es un mensaje.
++  for (const code of codes) {
++    if (Object.prototype.hasOwnProperty.call(MENSAJES, code)) return MENSAJES[code];
++  }
++  if (codes.length > 0) return GENERICO;
+   // Rama defensiva: si la petición no llega a salir, lo que aparece es el
+   // TypeError de fetch, sin `code` que traducir.
+   if (error instanceof TypeError) return SIN_RED;
+   return GENERICO;
+ }
++
++/**
++ * ¿El error de Clerk indica que el identificador (email) no existe? Se usa SOLO
++ * en el flujo de recuperación de contraseña para no revelar qué cuentas existen:
++ * cuando aparece, el flujo avanza igual al paso de código con copy neutro, de
++ * modo que el comportamiento es idéntico para un email existente y uno que no.
++ */
++export function esEmailNoEncontrado(error: unknown): boolean {
++  // Seguridad: se detecta en CUALQUIER posición del array, no solo en errors[0].
++  return codigosDeError(error).includes("form_identifier_not_found");
++}
+diff --git a/src/proxy.test.ts b/src/proxy.test.ts
+index 1220e10..42354bc 100644
+--- a/src/proxy.test.ts
++++ b/src/proxy.test.ts
+@@ -13,7 +13,7 @@ function casaElMatcher(pathname: string) {
+ }
+ 
+ describe("proxy: alcance del matcher", () => {
+-  it.each(["/login", "/registro", "/actividad", "/prospectos/p7", "/api/convex", "/__clerk/handshake"])(
++  it.each(["/login", "/registro", "/recuperar", "/actividad", "/prospectos/p7", "/api/convex", "/__clerk/handshake"])(
+     "%s entra en el middleware",
+     (ruta) => {
+       expect(casaElMatcher(ruta)).toBe(true);
+diff --git a/src/proxy.ts b/src/proxy.ts
+index 7484228..781e86c 100644
+--- a/src/proxy.ts
++++ b/src/proxy.ts
+@@ -1,11 +1,11 @@
+ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+ 
+ /**
+- * Login y registro son las únicas rutas accesibles sin sesión. El resto del CRM
+- * queda tras `auth.protect()`, que redirige a NEXT_PUBLIC_CLERK_SIGN_IN_URL
+- * (= /login) cuando no hay identidad.
++ * Login, registro y recuperación de contraseña son las únicas rutas accesibles
++ * sin sesión. El resto del CRM queda tras `auth.protect()`, que redirige a
++ * NEXT_PUBLIC_CLERK_SIGN_IN_URL (= /login) cuando no hay identidad.
+  */
+-const esRutaPublica = createRouteMatcher(["/login(.*)", "/registro(.*)"]);
++const esRutaPublica = createRouteMatcher(["/login(.*)", "/registro(.*)", "/recuperar(.*)"]);
+ 
+ export default clerkMiddleware(async (auth, request) => {
+   if (!esRutaPublica(request)) {

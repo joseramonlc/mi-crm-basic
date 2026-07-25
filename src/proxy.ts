@@ -1,11 +1,11 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
 /**
- * Login y registro son las únicas rutas accesibles sin sesión. El resto del CRM
- * queda tras `auth.protect()`, que redirige a NEXT_PUBLIC_CLERK_SIGN_IN_URL
- * (= /login) cuando no hay identidad.
+ * Login, registro y recuperación de contraseña son las únicas rutas accesibles
+ * sin sesión. El resto del CRM queda tras `auth.protect()`, que redirige a
+ * NEXT_PUBLIC_CLERK_SIGN_IN_URL (= /login) cuando no hay identidad.
  */
-const esRutaPublica = createRouteMatcher(["/login(.*)", "/registro(.*)"]);
+const esRutaPublica = createRouteMatcher(["/login(.*)", "/registro(.*)", "/recuperar(.*)"]);
 
 export default clerkMiddleware(async (auth, request) => {
   if (!esRutaPublica(request)) {
