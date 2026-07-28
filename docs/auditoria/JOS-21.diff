@@ -1,0 +1,1580 @@
+diff --git a/convex/lib/constants.ts b/convex/lib/constants.ts
+index 0dae962..a67fbfb 100644
+--- a/convex/lib/constants.ts
++++ b/convex/lib/constants.ts
+@@ -7,3 +7,22 @@ export const MAX_ACTIVIDAD = 500;
+ 
+ /** Vencidos visibles antes de expandir con "Ver todos". */
+ export const VENCIDOS_VISIBLES = 25;
++
++/**
++ * Cota de lectura POR ETAPA del Pipeline (JOS-21), con el mismo centinela +1.
++ *
++ * 200 en una sola etapa queda fuera del alcance realista de un networker
++ * individual, así que en la práctica el contador por etapa es EXACTO; el "200+"
++ * es comportamiento defensivo, no el caso esperado.
++ *
++ * El valor está ACOPLADO a LONGITUD_MAX_NOTAS (JOS-74): la query lee documentos
++ * completos contra el límite de 16 MiB de Convex, así que la cota por etapa y el
++ * tope del campo libre no se pueden decidir por separado. Con 200 y notas de
++ * 2.000 caracteres el peor caso —6 × 201 = 1.206 documentos, y es reactiva— se
++ * queda en ~19 % del límite. Subir cualquiera de los dos exige volver a medir;
++ * lo vigila el test "presupuesto de lectura".
++ */
++export const MAX_PIPELINE = 200;
++
++/** Tarjetas visibles por grupo del Pipeline antes de expandir con "Ver todos". */
++export const PIPELINE_VISIBLES = 25;
+diff --git a/convex/lib/validacion.ts b/convex/lib/validacion.ts
+index cea497d..e366be0 100644
+--- a/convex/lib/validacion.ts
++++ b/convex/lib/validacion.ts
+@@ -31,6 +31,27 @@ export function textoOpcional(valor: string | undefined): string | undefined {
+   return limpio === "" ? undefined : limpio;
+ }
+ 
++/**
++ * Tope de `notas` (JOS-74). No es cosmético ni de producto: las pantallas
++ * agregadas (`actividadDiaria`, `pipeline`) leen documentos COMPLETOS —Convex no
++ * proyecta a nivel de base de datos— contra un límite de 16 MiB por query. Un
++ * campo de texto libre sin acotar deja que el propio tenant degrade su pantalla
++ * hasta romperla, sin forma de arreglarlo desde la app.
++ *
++ * 2.000 caracteres ≈ 300 palabras. Con MAX_PIPELINE = 200 el peor caso de
++ * lectura queda en ~19 % del límite (medición en la auditoría de JOS-21).
++ */
++export const LONGITUD_MAX_NOTAS = 2000;
++
++/** `notas` normalizado y acotado. La longitud se mide DESPUÉS del trim. */
++export function notasOpcional(valor: string | undefined): string | undefined {
++  const limpio = textoOpcional(valor);
++  if (limpio !== undefined && limpio.length > LONGITUD_MAX_NOTAS) {
++    throw validationError(`notas no puede superar ${LONGITUD_MAX_NOTAS} caracteres`, "notas");
++  }
++  return limpio;
++}
++
+ /** Email opcional normalizado; si queda contenido, exige formato algo@algo.algo. */
+ export function emailOpcional(valor: string | undefined): string | undefined {
+   const limpio = textoOpcional(valor);
+diff --git a/convex/prospectos.test.ts b/convex/prospectos.test.ts
+index f36d987..122662a 100644
+--- a/convex/prospectos.test.ts
++++ b/convex/prospectos.test.ts
+@@ -3,7 +3,8 @@ import { convexTest, type TestConvex } from "convex-test";
+ import { beforeEach, describe, expect, it } from "vitest";
+ import { api, internal } from "./_generated/api";
+ import type { Doc } from "./_generated/dataModel";
+-import { MAX_ACTIVIDAD } from "./lib/constants";
++import { MAX_ACTIVIDAD, MAX_PIPELINE } from "./lib/constants";
++import { LONGITUD_MAX_NOTAS } from "./lib/validacion";
+ import { APP_TZ, ventanaDia } from "./lib/fecha";
+ import schema from "./schema";
+ 
+@@ -57,6 +58,12 @@ function actividad(t: TestConvex<typeof schema>, dayKey = DAY_KEY) {
+   return t.withIdentity(IDENT_A).query(api.prospectos.actividadDiaria, { dayKey });
+ }
+ 
++function pipeline(t: TestConvex<typeof schema>, dayKey = DAY_KEY) {
++  return t.withIdentity(IDENT_A).query(api.prospectos.pipeline, { dayKey });
++}
++
++const nombres = (g: { prospectos: Array<{ nombre: string }> }) => g.prospectos.map((p) => p.nombre);
++
+ beforeEach(() => {
+   // Las guardas de entorno solo sobreviven en el seed (bloque final): la query
+   // de producto ya no las tiene, se protege exigiendo identidad.
+@@ -249,6 +256,264 @@ describe("actividadDiaria · truncamiento (MAX_ACTIVIDAD+1 leídos, centinela de
+   });
+ });
+ 
++describe("pipeline · guardas y aislamiento (JOS-21)", () => {
++  it("aborta sin identidad", async () => {
++    await expect(nuevoTest().query(api.prospectos.pipeline, { dayKey: DAY_KEY })).rejects.toThrow(/Se requiere sesión/);
++  });
++
++  it("base vacía: tieneProspectos false y los 6 grupos a cero", async () => {
++    const r = await pipeline(nuevoTest());
++    expect(r.tieneProspectos).toBe(false);
++    expect(Object.values(r.grupos).every((g) => g.total === 0 && g.prospectos.length === 0 && !g.truncado)).toBe(true);
++  });
++
++  it("no cruza tenants: el prefijo usuarioId del índice excluye al otro usuario", async () => {
++    const t = nuevoTest();
++    await insertar(t, [
++      { nombre: "Mío", etapaActual: "new", fechaProximoSeguimiento: hoyInicio },
++      { nombre: "Ajeno nuevo", usuarioId: TENANT_B, etapaActual: "new", fechaProximoSeguimiento: hoyInicio },
++      { nombre: "Ajeno incorporado", usuarioId: TENANT_B, etapaActual: "joined" },
++    ]);
++
++    const r = await pipeline(t);
++    expect(nombres(r.grupos.new)).toEqual(["Mío"]);
++    expect(r.grupos.joined.total).toBe(0);
++  });
++});
++
++describe("pipeline · agrupación, orden y proyección (JOS-21)", () => {
++  it("reparte por las 6 etapas con su contador", async () => {
++    const t = nuevoTest();
++    await insertar(t, [
++      { nombre: "N1", etapaActual: "new", fechaProximoSeguimiento: hoyInicio },
++      { nombre: "N2", etapaActual: "new", fechaProximoSeguimiento: hoyInicio + HORA },
++      { nombre: "C1", etapaActual: "contacted", fechaProximoSeguimiento: hoyInicio },
++      { nombre: "P1", etapaActual: "presented", fechaProximoSeguimiento: hoyInicio },
++      { nombre: "E1", etapaActual: "evaluating", fechaProximoSeguimiento: hoyInicio },
++      { nombre: "J1", etapaActual: "joined" },
++      { nombre: "D1", etapaActual: "discarded" },
++      { nombre: "D2", etapaActual: "discarded" },
++    ]);
++
++    const r = await pipeline(t);
++    expect(r.tieneProspectos).toBe(true);
++    expect(Object.fromEntries(Object.entries(r.grupos).map(([k, g]) => [k, g.total]))).toEqual({
++      new: 2,
++      contacted: 1,
++      presented: 1,
++      evaluating: 1,
++      joined: 1,
++      discarded: 2,
++    });
++  });
++
++  it("etapa no terminal: ordena por fechaProximoSeguimiento ascendente, no por creación", async () => {
++    const t = nuevoTest();
++    // Se insertan del menos al más urgente a propósito: si el orden viniera del
++    // _creationTime saldría justo al revés.
++    await insertar(t, [
++      { nombre: "Futuro", etapaActual: "contacted", fechaProximoSeguimiento: mananaInicio + 5 * DIA },
++      { nombre: "Hoy", etapaActual: "contacted", fechaProximoSeguimiento: hoyInicio + HORA },
++      { nombre: "Vencido", etapaActual: "contacted", fechaProximoSeguimiento: hoyInicio - 3 * DIA },
++    ]);
++
++    expect(nombres((await pipeline(t)).grupos.contacted)).toEqual(["Vencido", "Hoy", "Futuro"]);
++  });
++
++  it("etapa terminal: sin fecha, ordena por creación descendente (lo más reciente arriba)", async () => {
++    const t = nuevoTest();
++    await insertar(t, [
++      { nombre: "Antiguo", etapaActual: "joined" },
++      { nombre: "Medio", etapaActual: "joined" },
++      { nombre: "Reciente", etapaActual: "joined" },
++    ]);
++
++    const g = (await pipeline(t)).grupos.joined;
++    expect(nombres(g)).toEqual(["Reciente", "Medio", "Antiguo"]);
++    expect(g.prospectos.every((p) => p.fechaProximoSeguimiento === undefined)).toBe(true);
++  });
++
++  it("no terminal SIN fechaProximoSeguimiento encabeza el grupo (anomalía visible, no oculta)", async () => {
++    // El esquema permite la ausencia aunque las mutaciones de producción siempre
++    // la calculen en etapas no terminales. La Actividad Diaria excluye esos docs
++    // (gte(1)), así que el Pipeline es la ÚNICA pantalla donde se ven: van
++    // primeros para que el truncamiento no pueda borrarlos. Observación menor de
++    // la auditoría del plan.
++    const t = nuevoTest();
++    await insertar(t, [
++      { nombre: "Vencido", etapaActual: "presented", fechaProximoSeguimiento: hoyInicio - DIA },
++      { nombre: "Sin fecha", etapaActual: "presented" },
++      { nombre: "Futuro", etapaActual: "presented", fechaProximoSeguimiento: mananaInicio + DIA },
++    ]);
++
++    const g = (await pipeline(t)).grupos.presented;
++    expect(nombres(g)).toEqual(["Sin fecha", "Vencido", "Futuro"]);
++    expect(g.prospectos[0].fechaProximoSeguimiento).toBeUndefined();
++    expect(g.prospectos[0].diasVencido).toBeUndefined();
++  });
++
++  it("proyecta diasVencido solo en los anteriores a hoyInicio y no filtra usuarioId", async () => {
++    const t = nuevoTest();
++    await insertar(t, [
++      { nombre: "Vencido", etapaActual: "new", fechaProximoSeguimiento: hoyInicio - 2 * DIA, fechaUltimoContacto: hoyInicio - 6 * DIA },
++      { nombre: "Justo hoy", etapaActual: "new", fechaProximoSeguimiento: hoyInicio },
++      { nombre: "Mañana", etapaActual: "new", fechaProximoSeguimiento: mananaInicio },
++    ]);
++
++    const [vencido, hoy, manana] = (await pipeline(t)).grupos.new.prospectos;
++    expect(vencido).toMatchObject({
++      nombre: "Vencido",
++      diasVencido: 2,
++      etapaActual: "new",
++      canalContactoPreferido: "phone",
++      fechaUltimoContacto: hoyInicio - 6 * DIA,
++    });
++    expect(hoy.diasVencido).toBeUndefined();
++    expect(manana.diasVencido).toBeUndefined();
++    // La proyección no expone el tenant ni los campos de sistema.
++    expect(Object.keys(vencido).sort()).toEqual(
++      ["canalContactoPreferido", "diasVencido", "etapaActual", "fechaProximoSeguimiento", "fechaUltimoContacto", "id", "nombre"],
++    );
++  });
++
++  it("desempata de forma determinista y estable cuando la fecha coincide", async () => {
++    const t = nuevoTest();
++    await insertar(
++      t,
++      ["A", "B", "C", "D"].map((n) => ({ nombre: n, etapaActual: "contacted" as const, fechaProximoSeguimiento: hoyInicio })),
++    );
++
++    // Convex añade _creationTime al final de todo índice como desempate, así que
++    // el orden es total y se repite entre ejecuciones.
++    const primera = nombres((await pipeline(t)).grupos.contacted);
++    const segunda = nombres((await pipeline(t)).grupos.contacted);
++    expect(primera).toEqual(["A", "B", "C", "D"]);
++    expect(segunda).toEqual(primera);
++  });
++});
++
++describe("pipeline · truncamiento (MAX_PIPELINE+1 leídos, centinela descartado)", () => {
++  it("corta en MAX_PIPELINE y lo declara", async () => {
++    const t = nuevoTest();
++    await insertar(
++      t,
++      Array.from({ length: MAX_PIPELINE + 1 }, (_, i) => ({
++        nombre: `C ${i}`,
++        etapaActual: "contacted" as const,
++        fechaProximoSeguimiento: hoyInicio + i * 60_000,
++      })),
++    );
++
++    const r = await pipeline(t);
++    expect(r.grupos.contacted.prospectos).toHaveLength(MAX_PIPELINE);
++    expect(r.grupos.contacted.total).toBe(MAX_PIPELINE);
++    expect(r.grupos.contacted.truncado).toBe(true);
++    // El truncamiento de una etapa no contamina a las demás.
++    expect(r.grupos.new.truncado).toBe(false);
++  });
++
++  it("⭐ NO oculta vencidos al truncar, aunque se hayan creado los últimos", async () => {
++    // REGRESIÓN del bloqueante de la 1ª auditoría del plan. La implementación
++    // anterior leía por by_usuario_etapa (orden de creación) y ordenaba DESPUÉS
++    // del .take(): estos 50 vencidos, creados al final, quedaban fuera del corte
++    // y desaparecían de la pantalla. Si alguien vuelve a ese índice o reintroduce
++    // un .sort() posterior, este test falla.
++    const t = nuevoTest();
++    const futuros = Array.from({ length: MAX_PIPELINE }, (_, i) => ({
++      nombre: `Futuro ${i}`,
++      etapaActual: "contacted" as const,
++      fechaProximoSeguimiento: mananaInicio + (i + 1) * 60_000,
++    }));
++    const vencidos = Array.from({ length: 50 }, (_, i) => ({
++      nombre: `Vencido ${i}`,
++      etapaActual: "contacted" as const,
++      fechaProximoSeguimiento: hoyInicio - DIA - (50 - i) * 60_000,
++    }));
++    await insertar(t, futuros);
++    await insertar(t, vencidos); // creados los ÚLTIMOS, a propósito
++
++    const g = (await pipeline(t)).grupos.contacted;
++    expect(g.truncado).toBe(true);
++    expect(g.prospectos).toHaveLength(MAX_PIPELINE);
++
++    const devueltos = new Set(nombres(g));
++    const faltan = vencidos.map((v) => v.nombre).filter((n) => !devueltos.has(n));
++    expect(faltan).toEqual([]);
++    // Y además encabezan el grupo: lo urgente arriba.
++    expect(nombres(g).slice(0, 50)).toEqual(vencidos.map((v) => v.nombre));
++    expect(g.prospectos.slice(0, 50).every((p) => (p.diasVencido ?? 0) >= 1)).toBe(true);
++  });
++});
++
++describe("pipeline · presupuesto de lectura (condición 2 del GO de auditoría)", () => {
++  it("en el PEOR caso admisible (notas al tope) se mantiene lejos de los límites de Convex", async () => {
++    // Límites documentados por query: 32.000 documentos escaneados y 16 MiB
++    // leídos (docs.convex.dev/production/state/limits). El peor caso de esta
++    // query es determinista: 6 etapas × (MAX_PIPELINE+1) + 1 de tieneProspectos.
++    //
++    // Se usa LONGITUD_MAX_NOTAS, no un tamaño "típico": desde JOS-74 ese es el
++    // documento MÁS GRANDE que las mutaciones permiten crear, así que este test
++    // acota el peor caso real y no una estimación optimista. Es la razón por la
++    // que MAX_PIPELINE y LONGITUD_MAX_NOTAS no se pueden tocar por separado.
++    const t = nuevoTest();
++    const NOTAS = "x".repeat(LONGITUD_MAX_NOTAS);
++    await t.run(async (ctx) => {
++      for (let i = 0; i < 600; i++) {
++        await ctx.db.insert("prospectos", {
++          usuarioId: TENANT_A,
++          nombre: `Prospecto ${i}`,
++          comoSeConocio: "Evento de networking",
++          canalContactoPreferido: "whatsapp",
++          etapaActual: "contacted",
++          telefono: "+34 600 000 000",
++          email: `prospecto${i}@ejemplo.com`,
++          notas: NOTAS,
++          fechaAlta: hoyInicio - 30 * DIA,
++          fechaProximoSeguimiento: hoyInicio + i * 60_000,
++        });
++      }
++    });
++
++    const r = await pipeline(t);
++    expect(r.grupos.contacted.prospectos).toHaveLength(MAX_PIPELINE);
++    expect(r.grupos.contacted.truncado).toBe(true);
++
++    const docsPeorCaso = 6 * (MAX_PIPELINE + 1) + 1;
++    // Guardas sobre las constantes: subir MAX_PIPELINE o LONGITUD_MAX_NOTAS sin
++    // volver a medir rompe aquí, que es justo el punto.
++    expect(docsPeorCaso).toBeLessThan(32_000 / 4);
++
++    const bytesDoc = await t.run(async (ctx) => JSON.stringify(await ctx.db.query("prospectos").first()).length);
++    expect(docsPeorCaso * bytesDoc).toBeLessThan((16 * 1024 * 1024) / 4);
++  });
++
++  it("las mutaciones no dejan crear el documento gigante que rompería el presupuesto", async () => {
++    // Cierra el círculo: el test anterior acota el peor caso ADMISIBLE; este
++    // comprueba que "admisible" lo impone el servidor y no la buena voluntad del
++    // cliente (JOS-74).
++    const t = nuevoTest().withIdentity(IDENT_A);
++    const base = { nombre: "Ana", comoSeConocio: "Evento", canalContactoPreferido: "phone" as const };
++
++    await expect(
++      t.mutation(api.prospectos.crear, { ...base, notas: "x".repeat(LONGITUD_MAX_NOTAS + 1) }),
++    ).rejects.toThrow(/notas no puede superar/);
++
++    // Justo en el tope sí entra, y el trim se aplica ANTES de medir.
++    const creado = await t.mutation(api.prospectos.crear, { ...base, notas: "x".repeat(LONGITUD_MAX_NOTAS) });
++    expect(creado.notas).toHaveLength(LONGITUD_MAX_NOTAS);
++    const conEspacios = await t.mutation(api.prospectos.crear, {
++      ...base,
++      notas: `  ${"y".repeat(LONGITUD_MAX_NOTAS)}  `,
++    });
++    expect(conEspacios.notas).toHaveLength(LONGITUD_MAX_NOTAS);
++
++    // Y tampoco por la puerta de atrás de la edición.
++    await expect(
++      t.mutation(api.prospectos.actualizar, { id: creado.id, notas: "z".repeat(LONGITUD_MAX_NOTAS + 1) }),
++    ).rejects.toThrow(/notas no puede superar/);
++  });
++});
++
+ describe("seed", () => {
+   it("dayKey inválido lanza también en seed", async () => {
+     process.env.ALLOW_SEED = "true";
+@@ -270,4 +535,28 @@ describe("seed", () => {
+     expect(r.vencidos.map((p) => p.diasVencido)).toEqual([7, 2]);
+     expect(r.ritmo).toMatchObject({ completados: 1, pendientes: 3, total: 4 });
+   });
++
++  it("pipeline puebla las 6 etapas (escenario del recorrido manual de JOS-21)", async () => {
++    process.env.ALLOW_SEED = "true";
++    const t = nuevoTest();
++    await t.mutation(internal.seed.seed, { scenario: "pipeline", usuarioId: TENANT_A, dayKey: DAY_KEY });
++
++    const r = await pipeline(t);
++    expect(Object.values(r.grupos).every((g) => g.total > 0)).toBe(true);
++    // Dentro de Contactado hay vencido, hoy y futuro, y el vencido va primero.
++    expect(r.grupos.contacted.prospectos[0].diasVencido).toBeGreaterThanOrEqual(1);
++  });
++
++  it("volumen supera el tope y el truncamiento sigue dejando ver los vencidos", async () => {
++    process.env.ALLOW_SEED = "true";
++    const t = nuevoTest();
++    const res = await t.mutation(internal.seed.seed, { scenario: "volumen", usuarioId: TENANT_A, dayKey: DAY_KEY });
++    expect(res.insertados).toBe(600);
++
++    const g = (await pipeline(t)).grupos.contacted;
++    expect(g.truncado).toBe(true);
++    expect(g.prospectos).toHaveLength(MAX_PIPELINE);
++    // Los 50 vencidos son los ÚLTIMOS que inserta el seed: deben salir arriba.
++    expect(g.prospectos.slice(0, 50).every((p) => p.nombre.includes("(vencido)"))).toBe(true);
++  });
+ });
+diff --git a/convex/prospectos.ts b/convex/prospectos.ts
+index d1d29b4..030c014 100644
+--- a/convex/prospectos.ts
++++ b/convex/prospectos.ts
+@@ -2,13 +2,13 @@ import { mutation, query } from "./_generated/server";
+ import { v } from "convex/values";
+ import { paginationOptsValidator, paginationResultValidator } from "convex/server";
+ import type { Doc, Id } from "./_generated/dataModel";
+-import { MAX_ACTIVIDAD } from "./lib/constants";
++import { MAX_ACTIVIDAD, MAX_PIPELINE } from "./lib/constants";
+ import { APP_TZ, diffCalendarDays, ventanaDia } from "./lib/fecha";
+-import { calcularFechaProximoSeguimiento } from "./lib/seguimiento";
++import { SEGUIMIENTO_DIAS, calcularFechaProximoSeguimiento } from "./lib/seguimiento";
+ import { requireUsuario } from "./lib/usuario";
+ import { prospectoDelUsuario } from "./lib/acceso";
+ import { prospectoPublicoValidator, toProspectoPublico } from "./lib/proyecciones";
+-import { conLimites, emailOpcional, textoObligatorio, textoOpcional, validarNumItems } from "./lib/validacion";
++import { conLimites, emailOpcional, notasOpcional, textoObligatorio, textoOpcional, validarNumItems } from "./lib/validacion";
+ import { canalContacto, etapaProspecto } from "./schema";
+ 
+ export interface ProspectoActividad {
+@@ -117,6 +117,114 @@ export const actividadDiaria = query({
+   },
+ });
+ 
++/* ── Pipeline de Prospectos (JOS-21) ──────────────────────────────────────── */
++
++const prospectoPipelineValidator = v.object({
++  id: v.id("prospectos"),
++  nombre: v.string(),
++  etapaActual: etapaProspecto,
++  canalContactoPreferido: canalContacto,
++  fechaUltimoContacto: v.optional(v.number()),
++  fechaProximoSeguimiento: v.optional(v.number()),
++  diasVencido: v.optional(v.number()),
++});
++
++const grupoPipelineValidator = v.object({
++  prospectos: v.array(prospectoPipelineValidator),
++  /** Exacto por debajo de MAX_PIPELINE; con `truncado` la UI muestra "500+". */
++  total: v.number(),
++  truncado: v.boolean(),
++});
++
++/** Terminal = el motor no programa seguimiento (JOS-8): sin fechaProximoSeguimiento. */
++function esTerminal(etapa: Doc<"prospectos">["etapaActual"]): boolean {
++  return SEGUIMIENTO_DIAS[etapa] === null;
++}
++
++/**
++ * Datos de la pantalla Pipeline (JOS-21): los 6 grupos por etapa ya formados.
++ *
++ * `dayKey` está aquí por el mismo motivo que en actividadDiaria —reactividad, no
++ * tenancy— y sirve para marcar los vencidos. El handler es puro sobre
++ * (dayKey, datos), sin Date.now().
++ *
++ * ⚠️ INVARIANTE DEL ORDEN — no introducir un `.sort()` posterior al `.take()`.
++ * El orden lo da el índice by_usuario_etapa_seguimiento ANTES del corte, de modo
++ * que al truncar se descartan los MENOS urgentes. Ordenar después del corte solo
++ * reordena lo que el corte ya decidió y puede ocultar vencidos (bloqueante de la
++ * 1ª auditoría del plan; lo cubre el test "no oculta vencidos al truncar").
++ */
++export const pipeline = query({
++  args: { dayKey: v.string() },
++  returns: v.object({
++    dayKey: v.string(),
++    tieneProspectos: v.boolean(),
++    grupos: v.object({
++      new: grupoPipelineValidator,
++      contacted: grupoPipelineValidator,
++      presented: grupoPipelineValidator,
++      evaluating: grupoPipelineValidator,
++      joined: grupoPipelineValidator,
++      discarded: grupoPipelineValidator,
++    }),
++  }),
++  handler: async (ctx, { dayKey }) => {
++    const usuarioId = await requireUsuario(ctx);
++    const { hoyInicio } = ventanaDia(dayKey, APP_TZ);
++
++    const tieneProspectos =
++      (await ctx.db
++        .query("prospectos")
++        .withIndex("by_usuario", (q) => q.eq("usuarioId", usuarioId))
++        .first()) !== null;
++
++    const proyectar = (p: Doc<"prospectos">) => {
++      const proxima = p.fechaProximoSeguimiento;
++      return {
++        id: p._id,
++        nombre: p.nombre,
++        etapaActual: p.etapaActual,
++        canalContactoPreferido: p.canalContactoPreferido,
++        ...(p.fechaUltimoContacto !== undefined ? { fechaUltimoContacto: p.fechaUltimoContacto } : {}),
++        ...(proxima !== undefined ? { fechaProximoSeguimiento: proxima } : {}),
++        ...(proxima !== undefined && proxima < hoyInicio
++          ? { diasVencido: diffCalendarDays(proxima, hoyInicio, APP_TZ) }
++          : {}),
++      };
++    };
++
++    const grupoDe = async (etapa: Doc<"prospectos">["etapaActual"]) => {
++      // Con usuarioId y etapaActual fijados por igualdad, el índice ordena por
++      // fechaProximoSeguimiento. Ascendente en no terminales = lo más vencido
++      // primero, así el centinela se lleva a los menos urgentes. En terminales
++      // nadie tiene fecha: todas empatan y decide el desempate implícito de
++      // Convex (_creationTime), que en "desc" deja arriba lo más reciente.
++      const leidos = await ctx.db
++        .query("prospectos")
++        .withIndex("by_usuario_etapa_seguimiento", (q) => q.eq("usuarioId", usuarioId).eq("etapaActual", etapa))
++        .order(esTerminal(etapa) ? "desc" : "asc")
++        .take(MAX_PIPELINE + 1);
++
++      const truncado = leidos.length > MAX_PIPELINE;
++      const filas = truncado ? leidos.slice(0, MAX_PIPELINE) : leidos;
++      return { prospectos: filas.map(proyectar), total: filas.length, truncado };
++    };
++
++    return {
++      dayKey,
++      tieneProspectos,
++      grupos: {
++        new: await grupoDe("new"),
++        contacted: await grupoDe("contacted"),
++        presented: await grupoDe("presented"),
++        evaluating: await grupoDe("evaluating"),
++        joined: await grupoDe("joined"),
++        discarded: await grupoDe("discarded"),
++      },
++    };
++  },
++});
++
+ /**
+  * POST /prospectos (JOS-13/JOS-10). Etapa forzada "new" — el cliente no la
+  * envía; fechaAlta automática; el motor calcula el primer seguimiento
+@@ -138,7 +246,7 @@ export const crear = mutation({
+     const comoSeConocio = textoObligatorio(args.comoSeConocio, "comoSeConocio");
+     const telefono = textoOpcional(args.telefono);
+     const email = emailOpcional(args.email);
+-    const notas = textoOpcional(args.notas);
++    const notas = notasOpcional(args.notas);
+ 
+     const fechaAlta = Date.now();
+     const fechaProximoSeguimiento = calcularFechaProximoSeguimiento("new", fechaAlta);
+@@ -216,7 +324,7 @@ export const actualizar = mutation({
+     if (args.canalContactoPreferido !== undefined) patch.canalContactoPreferido = args.canalContactoPreferido;
+     if (args.telefono !== undefined) patch.telefono = textoOpcional(args.telefono);
+     if (args.email !== undefined) patch.email = emailOpcional(args.email);
+-    if (args.notas !== undefined) patch.notas = textoOpcional(args.notas);
++    if (args.notas !== undefined) patch.notas = notasOpcional(args.notas);
+ 
+     await ctx.db.patch(doc._id, patch);
+     return toProspectoPublico((await ctx.db.get(doc._id))!);
+diff --git a/convex/schema.ts b/convex/schema.ts
+index 513e548..3032019 100644
+--- a/convex/schema.ts
++++ b/convex/schema.ts
+@@ -65,7 +65,14 @@ export default defineSchema({
+     .index("by_usuario", ["usuarioId"])
+     .index("by_usuario_seguimiento", ["usuarioId", "fechaProximoSeguimiento"])
+     .index("by_usuario_ultimo_contacto", ["usuarioId", "fechaUltimoContacto"])
+-    .index("by_usuario_etapa", ["usuarioId", "etapaActual"]),
++    .index("by_usuario_etapa", ["usuarioId", "etapaActual"])
++    // Pipeline (JOS-21): con usuarioId y etapaActual fijados por igualdad, el
++    // índice queda ordenado por fechaProximoSeguimiento, de modo que el `.take()`
++    // de la query ya devuelve los MÁS URGENTES. Es lo que impide que el corte de
++    // lectura oculte un vencido — ordenar después del corte solo reordena lo que
++    // el corte ya decidió (bloqueante de la 1ª auditoría del plan). No sustituye a
++    // by_usuario_etapa, que sigue sirviendo a `listar`.
++    .index("by_usuario_etapa_seguimiento", ["usuarioId", "etapaActual", "fechaProximoSeguimiento"]),
+ 
+   interacciones: defineTable({
+     // Denormalizado del prospecto (siempre en servidor): defensa en profundidad
+diff --git a/convex/seed.ts b/convex/seed.ts
+index 824ad50..c24d845 100644
+--- a/convex/seed.ts
++++ b/convex/seed.ts
+@@ -2,7 +2,7 @@ import { internalMutation } from "./_generated/server";
+ import { v } from "convex/values";
+ import { APP_TZ, addCivilDays, dayKeyToday, parseDayKey, zonedMidnightToMs } from "./lib/fecha";
+ import { calcularFechaProximoSeguimiento, type Etapa } from "./lib/seguimiento";
+-import { textoObligatorio } from "./lib/validacion";
++import { LONGITUD_MAX_NOTAS, textoObligatorio } from "./lib/validacion";
+ 
+ type Canal = "phone" | "whatsapp" | "mail" | "instagram" | "otro";
+ type Tipo = "call" | "message" | "meeting";
+@@ -36,6 +36,8 @@ interface Fixture {
+    * desde fechaAlta).
+    */
+   interacciones?: InteraccionFixture[];
++  /** Texto libre; lo usa el escenario `volumen` para engordar el documento. */
++  notas?: string;
+ }
+ 
+ /**
+@@ -58,10 +60,19 @@ interface Fixture {
+  * - populated: hoy + vencidos + un contacto hecho hoy (pantalla completa)
+  * - empty:     sin prospectos (estado "Aún no tienes prospectos")
+  * - alDia:     prospectos sin actividad pendiente (estado "Todo al día")
++ * - pipeline:  reparto por las 6 etapas con vencidos, hoy y futuros (JOS-21)
++ * - volumen:   600 en una etapa, por encima de MAX_PIPELINE, con notas largas —
++ *              para medir truncamiento y latencia real (condición 2 del GO)
+  */
+ export const seed = internalMutation({
+   args: {
+-    scenario: v.union(v.literal("populated"), v.literal("empty"), v.literal("alDia")),
++    scenario: v.union(
++      v.literal("populated"),
++      v.literal("empty"),
++      v.literal("alDia"),
++      v.literal("pipeline"),
++      v.literal("volumen"),
++    ),
+     usuarioId: v.string(),
+     dayKey: v.optional(v.string()),
+   },
+@@ -180,6 +191,72 @@ export const seed = internalMutation({
+           ],
+         },
+       ],
++      // JOS-21: las 6 etapas pobladas y, dentro de las no terminales, mezcla de
++      // vencido / hoy / futuro para ver el orden por urgencia y el badge.
++      // El motor deriva la fecha de (etapa, último contacto ?? alta), así que la
++      // urgencia se controla con haceDias del último contacto.
++      pipeline: [
++        { nombre: "Marta Ruiz", etapa: "new", canal: "whatsapp", comoSeConocio: "Referido", altaHaceDias: 1 },
++        { nombre: "Iván Soler", etapa: "new", canal: "phone", comoSeConocio: "Evento", altaHaceDias: 6 },
++        {
++          nombre: "Carlos Vega", etapa: "contacted", canal: "phone", comoSeConocio: "Evento", altaHaceDias: 10,
++          interacciones: [{ haceDias: 3, tipo: "call", resultado: "interested", queOcurrio: "Le encajó la propuesta." }],
++        },
++        {
++          nombre: "Andrés Molina", etapa: "contacted", canal: "instagram", comoSeConocio: "Red social", altaHaceDias: 15,
++          interacciones: [{ haceDias: 9, tipo: "message", resultado: "thinking", queOcurrio: "DM inicial, sin compromiso." }],
++        },
++        {
++          nombre: "Sara Gil", etapa: "contacted", canal: "mail", comoSeConocio: "Referido", altaHaceDias: 4,
++          interacciones: [{ haceDias: 0, tipo: "message", resultado: "interested", queOcurrio: "Contacto de hoy." }],
++        },
++        {
++          nombre: "Elena Prat", etapa: "presented", canal: "otro", comoSeConocio: "Conocido", altaHaceDias: 40,
++          interacciones: [{ haceDias: 12, tipo: "meeting", resultado: "thinking", queOcurrio: "Presentación completa." }],
++        },
++        {
++          nombre: "Bruno Casas", etapa: "presented", canal: "whatsapp", comoSeConocio: "Referido", altaHaceDias: 20,
++          interacciones: [{ haceDias: 5, tipo: "meeting", resultado: "interested", queOcurrio: "Presentación online." }],
++        },
++        {
++          nombre: "Lucía Ferrer", etapa: "evaluating", canal: "mail", comoSeConocio: "Red social", altaHaceDias: 30,
++          interacciones: [{ haceDias: 7, tipo: "message", resultado: "thinking", queOcurrio: "Resolvimos dudas del contrato." }],
++        },
++        {
++          nombre: "Nuria Campos", etapa: "joined", canal: "phone", comoSeConocio: "Evento", altaHaceDias: 60,
++          interacciones: [{ haceDias: 20, tipo: "call", resultado: "other", queOcurrio: "Cerramos su incorporación." }],
++        },
++        {
++          nombre: "Raúl Ortega", etapa: "discarded", canal: "otro", comoSeConocio: "Otro", altaHaceDias: 90,
++          interacciones: [{ haceDias: 45, tipo: "call", resultado: "not_interested", queOcurrio: "No le encaja el modelo." }],
++        },
++      ],
++      // Por encima de MAX_PIPELINE en una etapa, con notas largas: ejercita el
++      // truncamiento real, el contador "500+" y la latencia contra el deployment.
++      // Los vencidos se crean LOS ÚLTIMOS a propósito — con un orden que no
++      // viniera del índice, desaparecerían de la pantalla.
++      volumen: Array.from({ length: 600 }, (_, i) => {
++        const vencido = i >= 550;
++        return {
++          nombre: `Prospecto ${String(i + 1).padStart(3, "0")}${vencido ? " (vencido)" : ""}`,
++          etapa: "contacted" as Etapa,
++          canal: "whatsapp" as Canal,
++          comoSeConocio: "Carga de volumen",
++          altaHaceDias: 120,
++          // Al tope admisible: el recorrido manual debe ejercitar el documento
++          // más grande que las mutaciones permiten, no uno cómodo (JOS-74).
++          notas: "x".repeat(LONGITUD_MAX_NOTAS),
++          interacciones: [
++            {
++              // contacted = +3 días: 30 → vencido hace 27; 0 → seguimiento futuro.
++              haceDias: vencido ? 30 : 0,
++              tipo: "message" as Tipo,
++              resultado: "thinking" as Resultado,
++              queOcurrio: "Contacto generado por el escenario de volumen.",
++            },
++          ],
++        };
++      }),
+     };
+ 
+     let insertados = 0;
+@@ -199,6 +276,7 @@ export const seed = internalMutation({
+         canalContactoPreferido: f.canal,
+         etapaActual: f.etapa,
+         fechaAlta,
++        ...(f.notas !== undefined ? { notas: f.notas } : {}),
+         ...(fechaUltimoContacto !== undefined ? { fechaUltimoContacto } : {}),
+         ...(prox !== undefined ? { fechaProximoSeguimiento: prox } : {}),
+       });
+diff --git a/src/app/(app)/actividad/page.tsx b/src/app/(app)/actividad/page.tsx
+index 73a2285..b77cb3c 100644
+--- a/src/app/(app)/actividad/page.tsx
++++ b/src/app/(app)/actividad/page.tsx
+@@ -6,36 +6,14 @@ import { useQuery } from "convex/react";
+ import type { FunctionReturnType } from "convex/server";
+ import { api } from "../../../../convex/_generated/api";
+ import { VENCIDOS_VISIBLES } from "../../../../convex/lib/constants";
+-import { APP_TZ, dayKeyToday, siguienteMedianocheMs, ventanaDia } from "../../../../convex/lib/fecha";
++import { APP_TZ, ventanaDia } from "../../../../convex/lib/fecha";
+ import { Button, EmptyState, Icon, ProspectCard } from "@/components/ui";
++import { useDayKey } from "@/lib/useDayKey";
+ import { BANNER_VISTA_PARCIAL, formatTimeAgo, textoRitmo, textoVencido } from "./textos";
+ 
+ type DatosActividad = FunctionReturnType<typeof api.prospectos.actividadDiaria>;
+ type Prospecto = DatosActividad["hoy"][number];
+ 
+-/**
+- * Día visible en pantalla. Las queries de Convex re-corren cuando cambian los
+- * DATOS, no el reloj: a medianoche es el cliente quien renueva el dayKey. Al
+- * dispararse el timer se RECOMPUTA con dayKeyToday (no se incrementa) y se
+- * re-arma — así también quedan cubiertos la suspensión del navegador y los
+- * cambios de reloj, donde el timer puede despertar en un día arbitrario.
+- */
+-function useDayKey(): string {
+-  const [dayKey, setDayKey] = React.useState(() => dayKeyToday(Date.now(), APP_TZ));
+-  React.useEffect(() => {
+-    let timer: ReturnType<typeof setTimeout>;
+-    const armar = () => {
+-      timer = setTimeout(() => {
+-        setDayKey(dayKeyToday(Date.now(), APP_TZ));
+-        armar();
+-      }, siguienteMedianocheMs(Date.now(), APP_TZ) - Date.now());
+-    };
+-    armar();
+-    return () => clearTimeout(timer);
+-  }, []);
+-  return dayKey;
+-}
+-
+ export default function ActividadPage() {
+   const dayKey = useDayKey();
+   const datos = useQuery(api.prospectos.actividadDiaria, { dayKey });
+diff --git a/src/app/(app)/prospectos/[id]/textos.ts b/src/app/(app)/prospectos/[id]/textos.ts
+index 244cb41..1e31ac1 100644
+--- a/src/app/(app)/prospectos/[id]/textos.ts
++++ b/src/app/(app)/prospectos/[id]/textos.ts
+@@ -1,12 +1,15 @@
+ import { APP_TZ } from "../../../../../convex/lib/fecha";
+ import type { InteraccionPublica, ProspectoPublico } from "../../../../../convex/lib/proyecciones";
+-import { OPCIONES_CANAL, OPCIONES_RESULTADO, OPCIONES_TIPO, formatearFechaEs } from "@/lib/etiquetas";
++import { OPCIONES_CANAL, OPCIONES_RESULTADO, OPCIONES_TIPO, etiquetaEtapa, formatearFechaEs, type Etapa } from "@/lib/etiquetas";
+ import type { BadgeProps } from "@/components/ui";
+ 
+ type Canal = ProspectoPublico["canalContactoPreferido"];
+ type Tipo = InteraccionPublica["tipo"];
+ type Resultado = InteraccionPublica["resultado"];
+-export type Etapa = ProspectoPublico["etapaActual"];
++// Etapa, OPCIONES_ETAPA y etiquetaEtapa viven ahora en @/lib/etiquetas (los
++// necesita también el Pipeline, JOS-21). Se re-exportan para que los
++// consumidores de esta pantalla —SelectorEtapa— sigan importándolos de aquí.
++export { OPCIONES_ETAPA, etiquetaEtapa, type Etapa } from "@/lib/etiquetas";
+ 
+ export const TITULO_FALLBACK = "Ficha del prospecto";
+ export const ETIQUETA_ATRAS = "Volver a Inicio";
+@@ -74,23 +77,6 @@ export function tituloHistorial(cantidad: number, completo: boolean): string {
+ export const TITULO_ETAPA = "Etapa del pipeline";
+ export const ERROR_CAMBIO_ETAPA = "No se pudo cambiar la etapa. Comprueba tu conexión e inténtalo de nuevo.";
+ 
+-/**
+- * Las 6 etapas fijas del pipeline, en el orden de la metodología (JOS-19) y
+- * con las etiquetas de producto de JOS-7 — las mismas que muestra StageBadge.
+- */
+-export const OPCIONES_ETAPA: Array<{ value: Etapa; label: string }> = [
+-  { value: "new", label: "Nuevo" },
+-  { value: "contacted", label: "Contactado" },
+-  { value: "presented", label: "Presentación realizada" },
+-  { value: "evaluating", label: "En valoración" },
+-  { value: "joined", label: "Incorporado" },
+-  { value: "discarded", label: "Descartado" },
+-];
+-
+-export function etiquetaEtapa(etapa: Etapa): string {
+-  return OPCIONES_ETAPA.find((o) => o.value === etapa)?.label ?? etapa;
+-}
+-
+ /**
+  * Toast del cambio de etapa (P6): en no terminales el motor SIEMPRE deja
+  * fecha (el fallback sin fecha es solo defensivo); en terminales el prospecto
+diff --git a/src/app/(app)/prospectos/error.test.tsx b/src/app/(app)/prospectos/error.test.tsx
+new file mode 100644
+index 0000000..7964404
+--- /dev/null
++++ b/src/app/(app)/prospectos/error.test.tsx
+@@ -0,0 +1,24 @@
++// @vitest-environment jsdom
++import * as React from "react";
++import { afterEach, describe, expect, it, vi } from "vitest";
++import { cleanup, fireEvent, render, screen } from "@testing-library/react";
++import ProspectosError from "./error";
++
++// Mismo alcance que el resto de boundaries del proyecto: SOLO el contrato del
++// fallback. La reconstrucción real del segmento por Next queda como exploratorio.
++afterEach(cleanup);
++
++describe("error.tsx del Pipeline (contrato del fallback)", () => {
++  it("pulsar 'Reintentar' invoca unstable_retry exactamente una vez", () => {
++    const retry = vi.fn();
++    const silencio = vi.spyOn(console, "error").mockImplementation(() => {});
++
++    render(<ProspectosError error={new Error("boom")} unstable_retry={retry} />);
++    expect(screen.getByText("No se pudo cargar el pipeline")).toBeDefined();
++
++    fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
++    expect(retry).toHaveBeenCalledTimes(1);
++
++    silencio.mockRestore();
++  });
++});
+diff --git a/src/app/(app)/prospectos/error.tsx b/src/app/(app)/prospectos/error.tsx
+new file mode 100644
+index 0000000..55ccd97
+--- /dev/null
++++ b/src/app/(app)/prospectos/error.tsx
+@@ -0,0 +1,57 @@
++"use client";
++
++import * as React from "react";
++import { Button, Icon } from "@/components/ui";
++
++/**
++ * Error boundary del segmento /prospectos (contrato Next 16: error + unstable_retry).
++ * "Reintentar" re-obtiene y re-renderiza el segmento; si la causa era transitoria
++ * (p. ej. red caída al suscribirse a Convex), la pantalla se recupera sola.
++ *
++ * Las subrutas con boundary propio —[id] y nuevo— siguen usando el suyo, que es
++ * más cercano en el árbol; este solo cubre el Pipeline.
++ */
++export default function ProspectosError({
++  error,
++  unstable_retry,
++}: {
++  error: Error & { digest?: string };
++  unstable_retry: () => void;
++}) {
++  React.useEffect(() => {
++    console.error(error);
++  }, [error]);
++
++  return (
++    <div
++      className="flex flex-col items-center text-center gap-2"
++      style={{ padding: "48px 24px", fontFamily: "var(--font-sans)" }}
++    >
++      <div
++        style={{
++          width: 72,
++          height: 72,
++          borderRadius: "50%",
++          background: "var(--color-error-bg)",
++          display: "flex",
++          alignItems: "center",
++          justifyContent: "center",
++          marginBottom: 8,
++        }}
++      >
++        <Icon name="alert-circle" size={32} color="var(--color-error-text)" />
++      </div>
++      <h2 style={{ fontSize: 18, fontWeight: 600, color: "var(--color-neutral-900)" }}>
++        No se pudo cargar el pipeline
++      </h2>
++      <p style={{ fontSize: 15, color: "var(--color-neutral-500)", maxWidth: 300, lineHeight: 1.5 }}>
++        Ha ocurrido un error inesperado. Puedes intentarlo de nuevo.
++      </p>
++      <div style={{ marginTop: 12 }}>
++        <Button variant="primary" onClick={() => unstable_retry()}>
++          Reintentar
++        </Button>
++      </div>
++    </div>
++  );
++}
+diff --git a/src/app/(app)/prospectos/page.test.tsx b/src/app/(app)/prospectos/page.test.tsx
+new file mode 100644
+index 0000000..9cc26cf
+--- /dev/null
++++ b/src/app/(app)/prospectos/page.test.tsx
+@@ -0,0 +1,225 @@
++// @vitest-environment jsdom
++import * as React from "react";
++import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++import { MAX_PIPELINE, PIPELINE_VISIBLES } from "../../../../convex/lib/constants";
++import { BANNER_VISTA_PARCIAL, SIN_PROSPECTOS_ETAPA } from "./textos";
++import PipelinePage from "./page";
++
++// Como el resto de pantallas: no se monta un proveedor Convex real.
++const { useQueryMock, pushMock } = vi.hoisted(() => ({
++  useQueryMock: vi.fn(),
++  pushMock: vi.fn(),
++}));
++
++vi.mock("convex/react", () => ({ useQuery: useQueryMock }));
++vi.mock("next/navigation", () => ({ useRouter: () => ({ push: pushMock }) }));
++
++type Etapa = "new" | "contacted" | "presented" | "evaluating" | "joined" | "discarded";
++
++type Prospecto = {
++  id: string;
++  nombre: string;
++  etapaActual: Etapa;
++  canalContactoPreferido: "phone" | "whatsapp" | "mail" | "instagram" | "otro";
++  fechaUltimoContacto?: number;
++  fechaProximoSeguimiento?: number;
++  diasVencido?: number;
++};
++
++type Grupo = { prospectos: Prospecto[]; total: number; truncado: boolean };
++
++const DAY_KEY = "2026-07-12";
++// Medianoche del 2026-07-12 en Europe/Madrid, coherente con DAY_KEY.
++const HOY_INICIO = Date.UTC(2026, 6, 11, 22, 0, 0);
++const DIA = 86_400_000;
++const ETAPAS: Etapa[] = ["new", "contacted", "presented", "evaluating", "joined", "discarded"];
++
++function grupo(prospectos: Prospecto[] = [], truncado = false): Grupo {
++  return { prospectos, total: prospectos.length, truncado };
++}
++
++function payload(grupos: Partial<Record<Etapa, Grupo>> = {}, overrides: { tieneProspectos?: boolean } = {}) {
++  return {
++    dayKey: DAY_KEY,
++    tieneProspectos: overrides.tieneProspectos ?? true,
++    grupos: Object.fromEntries(ETAPAS.map((e) => [e, grupos[e] ?? grupo()])) as Record<Etapa, Grupo>,
++  };
++}
++
++function prospecto(id: string, nombre: string, extra: Partial<Prospecto> = {}): Prospecto {
++  return { id, nombre, etapaActual: "new", canalContactoPreferido: "phone", ...extra };
++}
++
++/** La cabecera de cada etapa es el disclosure: <h2> con un <button aria-expanded>. */
++function cabecera(nombre: RegExp) {
++  return screen.getByRole("button", { name: nombre });
++}
++
++beforeEach(() => {
++  useQueryMock.mockReset();
++  pushMock.mockReset();
++});
++
++afterEach(cleanup);
++
++describe("estados de la pantalla", () => {
++  it("mientras carga muestra el aviso y ninguna sección", () => {
++    useQueryMock.mockReturnValue(undefined);
++    render(<PipelinePage />);
++
++    expect(screen.getByRole("status")).toBeDefined();
++    expect(screen.queryByRole("heading", { name: /Nuevo/ })).toBeNull();
++  });
++
++  it("sin prospectos muestra el vacío con CTA de alta (lo afirma el servidor)", () => {
++    useQueryMock.mockReturnValue(payload({}, { tieneProspectos: false }));
++    render(<PipelinePage />);
++
++    expect(screen.getByText("Aún no tienes prospectos")).toBeDefined();
++    expect(screen.getByRole("link", { name: "Añadir prospecto" }).getAttribute("href")).toBe("/prospectos/nuevo");
++  });
++
++  it("pinta las 6 etapas con su contador", () => {
++    useQueryMock.mockReturnValue(
++      payload({
++        new: grupo([prospecto("1", "Ana"), prospecto("2", "Beatriz")]),
++        contacted: grupo([prospecto("3", "Carlos", { etapaActual: "contacted" })]),
++      }),
++    );
++    render(<PipelinePage />);
++
++    expect(cabecera(/^Nuevo \(2\)$/)).toBeDefined();
++    expect(cabecera(/^Contactado \(1\)$/)).toBeDefined();
++    expect(cabecera(/^Presentación realizada \(0\)$/)).toBeDefined();
++    expect(cabecera(/^En valoración \(0\)$/)).toBeDefined();
++    expect(cabecera(/^Incorporado \(0\)$/)).toBeDefined();
++    expect(cabecera(/^Descartado \(0\)$/)).toBeDefined();
++  });
++
++  it("una etapa vacía muestra su texto sin afectar a las demás", () => {
++    useQueryMock.mockReturnValue(payload({ new: grupo([prospecto("1", "Ana")]) }));
++    render(<PipelinePage />);
++
++    expect(screen.getByText("Ana")).toBeDefined();
++    // Nuevo tiene contenido; las otras tres no terminales están vacías y visibles.
++    expect(screen.getAllByText(SIN_PROSPECTOS_ETAPA)).toHaveLength(3);
++  });
++});
++
++describe("colapso de secciones", () => {
++  it("Incorporado y Descartado arrancan colapsadas; el resto expandidas", () => {
++    useQueryMock.mockReturnValue(payload());
++    render(<PipelinePage />);
++
++    expect(cabecera(/^Incorporado/).getAttribute("aria-expanded")).toBe("false");
++    expect(cabecera(/^Descartado/).getAttribute("aria-expanded")).toBe("false");
++    expect(cabecera(/^Nuevo/).getAttribute("aria-expanded")).toBe("true");
++    expect(cabecera(/^Contactado/).getAttribute("aria-expanded")).toBe("true");
++  });
++
++  it("una etapa colapsada oculta sus tarjetas y al pulsar las muestra", () => {
++    useQueryMock.mockReturnValue(
++      payload({ joined: grupo([prospecto("9", "Incorporada Inés", { etapaActual: "joined" })]) }),
++    );
++    render(<PipelinePage />);
++
++    expect(screen.queryByText("Incorporada Inés")).toBeNull();
++
++    fireEvent.click(cabecera(/^Incorporado \(1\)$/));
++    expect(screen.getByText("Incorporada Inés")).toBeDefined();
++    expect(cabecera(/^Incorporado \(1\)$/).getAttribute("aria-expanded")).toBe("true");
++  });
++
++  it("una etapa expandida se puede plegar", () => {
++    useQueryMock.mockReturnValue(payload({ new: grupo([prospecto("1", "Ana")]) }));
++    render(<PipelinePage />);
++
++    expect(screen.getByText("Ana")).toBeDefined();
++    fireEvent.click(cabecera(/^Nuevo \(1\)$/));
++    expect(screen.queryByText("Ana")).toBeNull();
++  });
++});
++
++describe("tarjetas: urgencia y navegación", () => {
++  it("el badge 'Vencido' aparece solo en los vencidos", () => {
++    useQueryMock.mockReturnValue(
++      payload({
++        new: grupo([
++          prospecto("1", "Vencida Vera", { fechaProximoSeguimiento: HOY_INICIO - 3 * DIA, diasVencido: 3 }),
++          prospecto("2", "Futura Fina", { fechaProximoSeguimiento: HOY_INICIO + 5 * DIA }),
++        ]),
++      }),
++    );
++    render(<PipelinePage />);
++
++    expect(screen.getAllByText("Vencido")).toHaveLength(1);
++    expect(screen.getByText("Vencido hace 3 días")).toBeDefined();
++    expect(screen.getByText("En 5 días")).toBeDefined();
++  });
++
++  it("la etapa no se repite dentro de la tarjeta (la declara la sección)", () => {
++    useQueryMock.mockReturnValue(payload({ new: grupo([prospecto("1", "Ana")]) }));
++    render(<PipelinePage />);
++
++    // La etiqueta de etapa vive en la cabecera de la sección; dentro de la
++    // tarjeta no debe repetirse como pill (showStage={false}).
++    const seccion = screen.getByRole("region", { name: "Nuevo" });
++    const tarjeta = within(seccion).getByRole("button", { name: /Ana/ });
++    expect(within(tarjeta).queryByText(/^Nuevo$/)).toBeNull();
++  });
++
++  it("los terminales muestran que no tienen seguimiento", () => {
++    useQueryMock.mockReturnValue(
++      payload({ discarded: grupo([prospecto("7", "Descartado Dani", { etapaActual: "discarded" })]) }),
++    );
++    render(<PipelinePage />);
++
++    fireEvent.click(cabecera(/^Descartado \(1\)$/));
++    expect(screen.getByText("Sin seguimiento")).toBeDefined();
++  });
++
++  it("pulsar una tarjeta navega a su ficha", () => {
++    useQueryMock.mockReturnValue(payload({ new: grupo([prospecto("abc123", "Ana")]) }));
++    render(<PipelinePage />);
++
++    const seccion = screen.getByRole("region", { name: "Nuevo" });
++    fireEvent.click(within(seccion).getByRole("button", { name: /Ana/ }));
++    expect(pushMock).toHaveBeenCalledWith("/prospectos/abc123");
++  });
++});
++
++describe("corte por grupo y vista parcial", () => {
++  it("muestra PIPELINE_VISIBLES y expande con 'Ver todos'", () => {
++    const muchos = Array.from({ length: PIPELINE_VISIBLES + 5 }, (_, i) => prospecto(String(i), `Prospecto ${i}`));
++    useQueryMock.mockReturnValue(payload({ new: grupo(muchos) }));
++    render(<PipelinePage />);
++
++    expect(screen.queryByText(`Prospecto ${PIPELINE_VISIBLES}`)).toBeNull();
++
++    fireEvent.click(screen.getByRole("button", { name: `Ver todos (${PIPELINE_VISIBLES + 5})` }));
++    expect(screen.getByText(`Prospecto ${PIPELINE_VISIBLES}`)).toBeDefined();
++  });
++
++  it("con truncamiento avisa de vista parcial y declara el contador como '500+'", () => {
++    const muchos = Array.from({ length: PIPELINE_VISIBLES + 1 }, (_, i) => prospecto(String(i), `Prospecto ${i}`));
++    useQueryMock.mockReturnValue(payload({ new: { prospectos: muchos, total: MAX_PIPELINE, truncado: true } }));
++    render(<PipelinePage />);
++
++    expect(screen.getByText(BANNER_VISTA_PARCIAL)).toBeDefined();
++    expect(cabecera(new RegExp(`^Nuevo \\(${MAX_PIPELINE}\\+\\)$`))).toBeDefined();
++    // El botón cuenta lo que despliega de verdad (lo cargado), no el total con
++    // "+": expandir no puede mostrar más de lo que trajo la query.
++    expect(screen.getByRole("button", { name: `Ver todos (${muchos.length})` })).toBeDefined();
++  });
++});
++
++describe("consulta", () => {
++  it("pide el pipeline con el dayKey del día visible", () => {
++    useQueryMock.mockReturnValue(payload());
++    render(<PipelinePage />);
++
++    const args = useQueryMock.mock.calls[useQueryMock.mock.calls.length - 1][1] as { dayKey: string };
++    expect(args.dayKey).toMatch(/^\d{4}-\d{2}-\d{2}$/);
++  });
++});
+diff --git a/src/app/(app)/prospectos/page.tsx b/src/app/(app)/prospectos/page.tsx
+new file mode 100644
+index 0000000..7d5c249
+--- /dev/null
++++ b/src/app/(app)/prospectos/page.tsx
+@@ -0,0 +1,212 @@
++"use client";
++
++import * as React from "react";
++import { useRouter } from "next/navigation";
++import { useQuery } from "convex/react";
++import type { FunctionReturnType } from "convex/server";
++import { api } from "../../../../convex/_generated/api";
++import { PIPELINE_VISIBLES } from "../../../../convex/lib/constants";
++import { APP_TZ, ventanaDia } from "../../../../convex/lib/fecha";
++import { Badge, Button, EmptyState, Icon, ProspectCard } from "@/components/ui";
++import { OPCIONES_ETAPA, type Etapa } from "@/lib/etiquetas";
++import { useDayKey } from "@/lib/useDayKey";
++import {
++  BANNER_VISTA_PARCIAL,
++  CARGANDO,
++  ETAPAS_COLAPSADAS_INICIO,
++  ETIQUETA_VENCIDO,
++  SIN_PROSPECTOS_ETAPA,
++  TITULO,
++  VACIO_CTA,
++  VACIO_DESCRIPCION,
++  VACIO_TITULO,
++  textoSeguimiento,
++  textoTotal,
++} from "./textos";
++
++type DatosPipeline = FunctionReturnType<typeof api.prospectos.pipeline>;
++type Grupo = DatosPipeline["grupos"][Etapa];
++type Prospecto = Grupo["prospectos"][number];
++
++export default function PipelinePage() {
++  const dayKey = useDayKey();
++  const datos = useQuery(api.prospectos.pipeline, { dayKey });
++
++  return (
++    <div className="mx-auto w-full max-w-2xl md:max-w-none px-4 py-6 md:px-6 md:py-8" style={{ fontFamily: "var(--font-sans)" }}>
++      <h1
++        style={{
++          fontSize: "var(--text-h2-size)",
++          fontWeight: "var(--text-h2-weight)" as React.CSSProperties["fontWeight"],
++          letterSpacing: "var(--text-h2-ls)",
++          color: "var(--color-neutral-900)",
++          marginBottom: 16,
++        }}
++      >
++        {TITULO}
++      </h1>
++      <Contenido datos={datos} />
++    </div>
++  );
++}
++
++function Contenido({ datos }: { datos: DatosPipeline | undefined }) {
++  // Tres estados excluyentes: carga / sin prospectos / pipeline.
++  if (datos === undefined) {
++    return (
++      <p role="status" style={{ padding: "48px 0", textAlign: "center", color: "var(--color-neutral-500)", fontSize: 15 }}>
++        {CARGANDO}
++      </p>
++    );
++  }
++
++  if (!datos.tieneProspectos) {
++    // Lo afirma el servidor: grupos vacíos por sí solos no bastan.
++    return (
++      <EmptyState icon="users" title={VACIO_TITULO} description={VACIO_DESCRIPCION} ctaLabel={VACIO_CTA} ctaHref="/prospectos/nuevo" />
++    );
++  }
++
++  return <Pipeline datos={datos} />;
++}
++
++function Pipeline({ datos }: { datos: DatosPipeline }) {
++  const router = useRouter();
++  const { hoyInicio } = ventanaDia(datos.dayKey, APP_TZ);
++  const [colapsadas, setColapsadas] = React.useState<ReadonlySet<Etapa>>(() => new Set(ETAPAS_COLAPSADAS_INICIO));
++
++  const alternar = (etapa: Etapa) =>
++    setColapsadas((previas) => {
++      const siguiente = new Set(previas);
++      if (!siguiente.delete(etapa)) siguiente.add(etapa);
++      return siguiente;
++    });
++
++  return (
++    // Un solo árbol para los dos layouts: apilado en móvil, kanban con scroll
++    // horizontal en desktop (6 columnas fijas darían ~160px, insuficiente para
++    // la tarjeta). Duplicar el árbol con md:hidden doblaría las tarjetas del DOM.
++    <div className="flex flex-col gap-6 md:flex-row md:items-start md:gap-4 md:overflow-x-auto md:pb-3">
++      {OPCIONES_ETAPA.map(({ value, label }) => (
++        <Columna
++          key={value}
++          titulo={label}
++          grupo={datos.grupos[value]}
++          colapsada={colapsadas.has(value)}
++          onAlternar={() => alternar(value)}
++          hoyInicio={hoyInicio}
++          onAbrir={(p) => router.push(`/prospectos/${p.id}`)}
++        />
++      ))}
++    </div>
++  );
++}
++
++function Columna({
++  titulo,
++  grupo,
++  colapsada,
++  onAlternar,
++  hoyInicio,
++  onAbrir,
++}: {
++  titulo: string;
++  grupo: Grupo;
++  colapsada: boolean;
++  onAlternar: () => void;
++  hoyInicio: number;
++  onAbrir: (p: Prospecto) => void;
++}) {
++  const [verTodos, setVerTodos] = React.useState(false);
++  const visibles = verTodos ? grupo.prospectos : grupo.prospectos.slice(0, PIPELINE_VISIBLES);
++
++  return (
++    <section aria-label={titulo} className="flex flex-col gap-3 md:w-72 md:flex-none">
++      <h2 style={{ margin: 0 }}>
++        <button
++          type="button"
++          onClick={onAlternar}
++          aria-expanded={!colapsada}
++          style={{
++            all: "unset",
++            boxSizing: "border-box",
++            display: "flex",
++            alignItems: "center",
++            gap: 8,
++            width: "100%",
++            cursor: "pointer",
++            fontFamily: "var(--font-sans)",
++            fontSize: "var(--text-h3-size)",
++            fontWeight: "var(--text-h3-weight)" as React.CSSProperties["fontWeight"],
++            color: "var(--color-neutral-900)",
++          }}
++        >
++          {/* El set de iconos no tiene chevron-down (design.md §3): se rota el right. */}
++          <Icon
++            name="chevron-right"
++            size={16}
++            color="var(--color-neutral-400)"
++            style={{
++              flex: "none",
++              transform: colapsada ? "none" : "rotate(90deg)",
++              transition: "transform var(--duration-base) var(--ease-standard)",
++            }}
++          />
++          {titulo} <span style={{ color: "var(--color-neutral-500)", fontWeight: 500 }}>({textoTotal(grupo.total, grupo.truncado)})</span>
++        </button>
++      </h2>
++
++      {!colapsada && (
++        <>
++          {grupo.truncado && <BannerVistaParcial />}
++          {grupo.prospectos.length === 0 ? (
++            <p style={{ color: "var(--color-neutral-500)", fontSize: 14, padding: "4px 2px" }}>{SIN_PROSPECTOS_ETAPA}</p>
++          ) : (
++            visibles.map((p) => (
++              <ProspectCard
++                key={p.id}
++                name={p.nombre}
++                showStage={false}
++                priority="medium"
++                channel={p.canalContactoPreferido}
++                lastInteraction={textoSeguimiento(p.fechaProximoSeguimiento, p.diasVencido, hoyInicio)}
++                accessory={p.diasVencido !== undefined ? <Badge tone="error">{ETIQUETA_VENCIDO}</Badge> : undefined}
++                onOpen={() => onAbrir(p)}
++              />
++            ))
++          )}
++          {!verTodos && grupo.prospectos.length > PIPELINE_VISIBLES && (
++            // Cuenta lo que el botón realmente despliega, no el total de la
++            // cabecera: con truncamiento no hay más de MAX_PIPELINE cargados y
++            // "Ver todos (500+)" prometería algo que la expansión no da. Que hay
++            // más allá de lo cargado ya lo dice el banner de vista parcial.
++            <Button variant="secondary" fullWidth onClick={() => setVerTodos(true)}>
++              Ver todos ({grupo.prospectos.length})
++            </Button>
++          )}
++        </>
++      )}
++    </section>
++  );
++}
++
++function BannerVistaParcial() {
++  return (
++    <p
++      style={{
++        display: "flex",
++        alignItems: "center",
++        gap: 8,
++        padding: "10px 12px",
++        borderRadius: "var(--radius-md)",
++        background: "var(--color-warning-bg)",
++        color: "var(--color-warning-text)",
++        fontSize: 13,
++        fontWeight: 500,
++      }}
++    >
++      <Icon name="info" size={15} style={{ flex: "none" }} />
++      {BANNER_VISTA_PARCIAL}
++    </p>
++  );
++}
+diff --git a/src/app/(app)/prospectos/textos.test.ts b/src/app/(app)/prospectos/textos.test.ts
+new file mode 100644
+index 0000000..494bfbe
+--- /dev/null
++++ b/src/app/(app)/prospectos/textos.test.ts
+@@ -0,0 +1,39 @@
++import { describe, expect, it } from "vitest";
++import { APP_TZ, ventanaDia } from "../../../../convex/lib/fecha";
++import { FECHA_POR_VALIDAR, SIN_SEGUIMIENTO, textoSeguimiento, textoTotal } from "./textos";
++
++const { hoyInicio, mananaInicio } = ventanaDia("2026-07-12", APP_TZ);
++const DIA = 86_400_000;
++
++describe("textoTotal", () => {
++  it("es exacto salvo truncamiento, donde declara el tope con '+'", () => {
++    expect(textoTotal(0, false)).toBe("0");
++    expect(textoTotal(42, false)).toBe("42");
++    expect(textoTotal(500, true)).toBe("500+");
++  });
++});
++
++describe("textoSeguimiento", () => {
++  it("prioriza el vencimiento que calcula el servidor, con singular y plural", () => {
++    expect(textoSeguimiento(hoyInicio - DIA, 1, hoyInicio)).toBe("Vencido hace 1 día");
++    expect(textoSeguimiento(hoyInicio - 5 * DIA, 5, hoyInicio)).toBe("Vencido hace 5 días");
++  });
++
++  it("sin fecha (etapas terminales) lo dice explícitamente", () => {
++    expect(textoSeguimiento(undefined, undefined, hoyInicio)).toBe(SIN_SEGUIMIENTO);
++  });
++
++  it("distingue hoy, mañana y el futuro por días de calendario", () => {
++    expect(textoSeguimiento(hoyInicio, undefined, hoyInicio)).toBe("Hoy");
++    // Último instante del día visible: sigue siendo hoy.
++    expect(textoSeguimiento(mananaInicio - 1, undefined, hoyInicio)).toBe("Hoy");
++    expect(textoSeguimiento(mananaInicio, undefined, hoyInicio)).toBe("Mañana");
++    expect(textoSeguimiento(hoyInicio + 4 * DIA, undefined, hoyInicio)).toBe("En 4 días");
++  });
++
++  it("una fecha pasada sin diasVencido es un dato incoherente y no se presenta como válido", () => {
++    // El servidor siempre acompaña un vencido con diasVencido; llegar aquí
++    // significa payload inconsistente, no un caso de producto.
++    expect(textoSeguimiento(hoyInicio - 2 * DIA, undefined, hoyInicio)).toBe(FECHA_POR_VALIDAR);
++  });
++});
+diff --git a/src/app/(app)/prospectos/textos.ts b/src/app/(app)/prospectos/textos.ts
+new file mode 100644
+index 0000000..d463149
+--- /dev/null
++++ b/src/app/(app)/prospectos/textos.ts
+@@ -0,0 +1,56 @@
++import { MAX_PIPELINE } from "../../../../convex/lib/constants";
++import { APP_TZ, diffCalendarDays } from "../../../../convex/lib/fecha";
++import type { Etapa } from "@/lib/etiquetas";
++
++/* Copy y formateadores puros del Pipeline (JOS-21). */
++
++export const TITULO = "Pipeline";
++export const CARGANDO = "Cargando prospectos…";
++
++export const VACIO_TITULO = "Aún no tienes prospectos";
++export const VACIO_DESCRIPCION = "Añade tu primer prospecto para empezar a trabajar tu red.";
++export const VACIO_CTA = "Añadir prospecto";
++
++export const SIN_PROSPECTOS_ETAPA = "Nadie en esta etapa.";
++export const SIN_SEGUIMIENTO = "Sin seguimiento";
++export const FECHA_POR_VALIDAR = "Fecha por validar";
++export const ETIQUETA_VENCIDO = "Vencido";
++
++/**
++ * Aviso de truncamiento. Sin "primeros": aunque el índice garantiza que el corte
++ * descarta los MENOS urgentes, la vista sigue sin ser el total y no se presenta
++ * como tal.
++ */
++export const BANNER_VISTA_PARCIAL = `Mostrando ${MAX_PIPELINE} prospectos de esta etapa; hay más.`;
++
++/** Etapas terminales: se acumulan, así que arrancan plegadas (JOS-21). */
++export const ETAPAS_COLAPSADAS_INICIO: readonly Etapa[] = ["joined", "discarded"];
++
++/** Contador de la cabecera: exacto salvo truncamiento, donde se declara "500+". */
++export function textoTotal(total: number, truncado: boolean): string {
++  return truncado ? `${total}+` : String(total);
++}
++
++/**
++ * Meta de la tarjeta, relativa al día visible (hoyInicio) y no al reloj — puro
++ * sobre (fecha, dayKey), coherente con el diasVencido que calcula el servidor.
++ * En etapas terminales no hay fecha porque el motor no programa seguimiento.
++ */
++export function textoSeguimiento(
++  fechaProximoSeguimiento: number | undefined,
++  diasVencido: number | undefined,
++  hoyInicio: number,
++): string {
++  if (diasVencido !== undefined) {
++    return diasVencido === 1 ? "Vencido hace 1 día" : `Vencido hace ${diasVencido} días`;
++  }
++  if (fechaProximoSeguimiento === undefined) return SIN_SEGUIMIENTO;
++
++  const dias = diffCalendarDays(hoyInicio, fechaProximoSeguimiento, APP_TZ);
++  if (dias === 0) return "Hoy";
++  if (dias === 1) return "Mañana";
++  // Defensivo: un vencido llega siempre con diasVencido desde el servidor, así
++  // que aquí un valor negativo significaría datos incoherentes.
++  if (dias < 0) return FECHA_POR_VALIDAR;
++  return `En ${dias} días`;
++}
+diff --git a/src/components/ui/ProspectCard.test.tsx b/src/components/ui/ProspectCard.test.tsx
+new file mode 100644
+index 0000000..463f855
+--- /dev/null
++++ b/src/components/ui/ProspectCard.test.tsx
+@@ -0,0 +1,36 @@
++// @vitest-environment jsdom
++import { afterEach, describe, expect, it, vi } from "vitest";
++import { cleanup, fireEvent, render, screen } from "@testing-library/react";
++import { Badge } from "./Badge";
++import { ProspectCard } from "./ProspectCard";
++
++afterEach(cleanup);
++
++describe("ProspectCard", () => {
++  it("muestra la etapa por defecto (retrocompatible con Actividad Diaria)", () => {
++    render(<ProspectCard name="Ana García" stage="presented" />);
++    expect(screen.getByText("Presentación realizada")).toBeDefined();
++  });
++
++  it("showStage={false} oculta la etapa sin tocar el resto de la tarjeta", () => {
++    render(<ProspectCard name="Ana García" stage="presented" showStage={false} lastInteraction="Vencido hace 3 días" />);
++    expect(screen.queryByText("Presentación realizada")).toBeNull();
++    expect(screen.getByText("Ana García")).toBeDefined();
++    expect(screen.getByText("Vencido hace 3 días")).toBeDefined();
++  });
++
++  it("accessory se renderiza en la fila de metadatos y por defecto no hay ninguno", () => {
++    const { rerender } = render(<ProspectCard name="Ana García" />);
++    expect(screen.queryByText("Vencido")).toBeNull();
++
++    rerender(<ProspectCard name="Ana García" accessory={<Badge tone="error">Vencido</Badge>} />);
++    expect(screen.getByText("Vencido")).toBeDefined();
++  });
++
++  it("onOpen se dispara al pulsar la tarjeta", () => {
++    const onOpen = vi.fn();
++    render(<ProspectCard name="Ana García" onOpen={onOpen} />);
++    fireEvent.click(screen.getByRole("button"));
++    expect(onOpen).toHaveBeenCalledTimes(1);
++  });
++});
+diff --git a/src/components/ui/ProspectCard.tsx b/src/components/ui/ProspectCard.tsx
+index 508c375..8d7af68 100644
+--- a/src/components/ui/ProspectCard.tsx
++++ b/src/components/ui/ProspectCard.tsx
+@@ -16,6 +16,15 @@ export interface ProspectCardProps extends React.HTMLAttributes<HTMLDivElement>
+   lastInteraction?: string;
+   /** Relative time, e.g. "hace 2 días". */
+   timeAgo?: string;
++  /**
++   * Show the stage pill. Turn it off where the container already states the
++   * stage — grouped views such as the Pipeline (JOS-21), whose narrow kanban
++   * columns would also wrap the longer labels.
++   * @default true
++   */
++  showStage?: boolean;
++  /** Extra slot at the end of the meta row, e.g. an overdue `<Badge>`. */
++  accessory?: React.ReactNode;
+   onCall?: () => void;
+   onWhatsApp?: () => void;
+   onNote?: () => void;
+@@ -30,6 +39,8 @@ export function ProspectCard({
+   channel = "phone",
+   lastInteraction = "",
+   timeAgo = "",
++  showStage = true,
++  accessory,
+   onCall,
+   onWhatsApp,
+   onNote,
+@@ -70,10 +81,12 @@ export function ProspectCard({
+                 {name}
+               </span>
+             </div>
+-            <div style={{ marginTop: 8 }}>
+-              <StageBadge stage={stage} />
+-            </div>
+-            <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10, color: "var(--color-neutral-500)", fontSize: 13 }}>
++            {showStage && (
++              <div style={{ marginTop: 8 }}>
++                <StageBadge stage={stage} />
++              </div>
++            )}
++            <div style={{ marginTop: 10, display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, color: "var(--color-neutral-500)", fontSize: 13 }}>
+               <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                 <Icon name={CHANNEL_ICON[channel] || "phone"} size={15} />
+                 {lastInteraction}
+@@ -84,6 +97,7 @@ export function ProspectCard({
+                   {timeAgo}
+                 </span>
+               )}
++              {accessory}
+             </div>
+           </div>
+           <Icon name="chevron-right" size={20} color="var(--color-neutral-300)" style={{ marginTop: 2 }} />
+diff --git a/src/lib/etiquetas.ts b/src/lib/etiquetas.ts
+index 4bdebcd..62bff71 100644
+--- a/src/lib/etiquetas.ts
++++ b/src/lib/etiquetas.ts
+@@ -12,6 +12,27 @@ import type { PillOption } from "@/components/ui";
+ export type CanalContacto = ProspectoPublico["canalContactoPreferido"];
+ export type TipoInteraccion = InteraccionPublica["tipo"];
+ export type ResultadoInteraccion = InteraccionPublica["resultado"];
++export type Etapa = ProspectoPublico["etapaActual"];
++
++/**
++ * Las 6 etapas fijas del pipeline, en el orden de la metodología (JOS-19) y con
++ * las etiquetas de producto de JOS-7 — las mismas que muestra StageBadge.
++ *
++ * Promovido aquí desde el textos.ts de la ficha al necesitarlo también el
++ * Pipeline (JOS-21); la ficha lo re-exporta y sus consumidores no cambian.
++ */
++export const OPCIONES_ETAPA: Array<{ value: Etapa; label: string }> = [
++  { value: "new", label: "Nuevo" },
++  { value: "contacted", label: "Contactado" },
++  { value: "presented", label: "Presentación realizada" },
++  { value: "evaluating", label: "En valoración" },
++  { value: "joined", label: "Incorporado" },
++  { value: "discarded", label: "Descartado" },
++];
++
++export function etiquetaEtapa(etapa: Etapa): string {
++  return OPCIONES_ETAPA.find((o) => o.value === etapa)?.label ?? etapa;
++}
+ 
+ /** Opciones de JOS-15 mapeadas al enum de la API (etiqueta de producto → clave). */
+ export const OPCIONES_CANAL: Array<{ value: CanalContacto; label: string }> = [
+diff --git a/src/lib/useDayKey.ts b/src/lib/useDayKey.ts
+new file mode 100644
+index 0000000..2931b5e
+--- /dev/null
++++ b/src/lib/useDayKey.ts
+@@ -0,0 +1,30 @@
++"use client";
++
++import * as React from "react";
++import { APP_TZ, dayKeyToday, siguienteMedianocheMs } from "../../convex/lib/fecha";
++
++/**
++ * Día visible en pantalla, compartido por las pantallas cuyo contenido depende
++ * del día (Actividad Diaria JOS-22, Pipeline JOS-21).
++ *
++ * Las queries de Convex re-corren cuando cambian los DATOS, no el reloj: a
++ * medianoche es el cliente quien renueva el dayKey. Al dispararse el timer se
++ * RECOMPUTA con dayKeyToday (no se incrementa) y se re-arma — así también quedan
++ * cubiertos la suspensión del navegador y los cambios de reloj, donde el timer
++ * puede despertar en un día arbitrario.
++ */
++export function useDayKey(): string {
++  const [dayKey, setDayKey] = React.useState(() => dayKeyToday(Date.now(), APP_TZ));
++  React.useEffect(() => {
++    let timer: ReturnType<typeof setTimeout>;
++    const armar = () => {
++      timer = setTimeout(() => {
++        setDayKey(dayKeyToday(Date.now(), APP_TZ));
++        armar();
++      }, siguienteMedianocheMs(Date.now(), APP_TZ) - Date.now());
++    };
++    armar();
++    return () => clearTimeout(timer);
++  }, []);
++  return dayKey;
++}

@@ -3,7 +3,8 @@ import { convexTest, type TestConvex } from "convex-test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { api, internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
-import { MAX_ACTIVIDAD } from "./lib/constants";
+import { MAX_ACTIVIDAD, MAX_PIPELINE } from "./lib/constants";
+import { LONGITUD_MAX_NOTAS } from "./lib/validacion";
 import { APP_TZ, ventanaDia } from "./lib/fecha";
 import schema from "./schema";
 
@@ -56,6 +57,12 @@ async function insertar(t: TestConvex<typeof schema>, docs: Nuevo[]) {
 function actividad(t: TestConvex<typeof schema>, dayKey = DAY_KEY) {
   return t.withIdentity(IDENT_A).query(api.prospectos.actividadDiaria, { dayKey });
 }
+
+function pipeline(t: TestConvex<typeof schema>, dayKey = DAY_KEY) {
+  return t.withIdentity(IDENT_A).query(api.prospectos.pipeline, { dayKey });
+}
+
+const nombres = (g: { prospectos: Array<{ nombre: string }> }) => g.prospectos.map((p) => p.nombre);
 
 beforeEach(() => {
   // Las guardas de entorno solo sobreviven en el seed (bloque final): la query
@@ -249,6 +256,264 @@ describe("actividadDiaria · truncamiento (MAX_ACTIVIDAD+1 leídos, centinela de
   });
 });
 
+describe("pipeline · guardas y aislamiento (JOS-21)", () => {
+  it("aborta sin identidad", async () => {
+    await expect(nuevoTest().query(api.prospectos.pipeline, { dayKey: DAY_KEY })).rejects.toThrow(/Se requiere sesión/);
+  });
+
+  it("base vacía: tieneProspectos false y los 6 grupos a cero", async () => {
+    const r = await pipeline(nuevoTest());
+    expect(r.tieneProspectos).toBe(false);
+    expect(Object.values(r.grupos).every((g) => g.total === 0 && g.prospectos.length === 0 && !g.truncado)).toBe(true);
+  });
+
+  it("no cruza tenants: el prefijo usuarioId del índice excluye al otro usuario", async () => {
+    const t = nuevoTest();
+    await insertar(t, [
+      { nombre: "Mío", etapaActual: "new", fechaProximoSeguimiento: hoyInicio },
+      { nombre: "Ajeno nuevo", usuarioId: TENANT_B, etapaActual: "new", fechaProximoSeguimiento: hoyInicio },
+      { nombre: "Ajeno incorporado", usuarioId: TENANT_B, etapaActual: "joined" },
+    ]);
+
+    const r = await pipeline(t);
+    expect(nombres(r.grupos.new)).toEqual(["Mío"]);
+    expect(r.grupos.joined.total).toBe(0);
+  });
+});
+
+describe("pipeline · agrupación, orden y proyección (JOS-21)", () => {
+  it("reparte por las 6 etapas con su contador", async () => {
+    const t = nuevoTest();
+    await insertar(t, [
+      { nombre: "N1", etapaActual: "new", fechaProximoSeguimiento: hoyInicio },
+      { nombre: "N2", etapaActual: "new", fechaProximoSeguimiento: hoyInicio + HORA },
+      { nombre: "C1", etapaActual: "contacted", fechaProximoSeguimiento: hoyInicio },
+      { nombre: "P1", etapaActual: "presented", fechaProximoSeguimiento: hoyInicio },
+      { nombre: "E1", etapaActual: "evaluating", fechaProximoSeguimiento: hoyInicio },
+      { nombre: "J1", etapaActual: "joined" },
+      { nombre: "D1", etapaActual: "discarded" },
+      { nombre: "D2", etapaActual: "discarded" },
+    ]);
+
+    const r = await pipeline(t);
+    expect(r.tieneProspectos).toBe(true);
+    expect(Object.fromEntries(Object.entries(r.grupos).map(([k, g]) => [k, g.total]))).toEqual({
+      new: 2,
+      contacted: 1,
+      presented: 1,
+      evaluating: 1,
+      joined: 1,
+      discarded: 2,
+    });
+  });
+
+  it("etapa no terminal: ordena por fechaProximoSeguimiento ascendente, no por creación", async () => {
+    const t = nuevoTest();
+    // Se insertan del menos al más urgente a propósito: si el orden viniera del
+    // _creationTime saldría justo al revés.
+    await insertar(t, [
+      { nombre: "Futuro", etapaActual: "contacted", fechaProximoSeguimiento: mananaInicio + 5 * DIA },
+      { nombre: "Hoy", etapaActual: "contacted", fechaProximoSeguimiento: hoyInicio + HORA },
+      { nombre: "Vencido", etapaActual: "contacted", fechaProximoSeguimiento: hoyInicio - 3 * DIA },
+    ]);
+
+    expect(nombres((await pipeline(t)).grupos.contacted)).toEqual(["Vencido", "Hoy", "Futuro"]);
+  });
+
+  it("etapa terminal: sin fecha, ordena por creación descendente (lo más reciente arriba)", async () => {
+    const t = nuevoTest();
+    await insertar(t, [
+      { nombre: "Antiguo", etapaActual: "joined" },
+      { nombre: "Medio", etapaActual: "joined" },
+      { nombre: "Reciente", etapaActual: "joined" },
+    ]);
+
+    const g = (await pipeline(t)).grupos.joined;
+    expect(nombres(g)).toEqual(["Reciente", "Medio", "Antiguo"]);
+    expect(g.prospectos.every((p) => p.fechaProximoSeguimiento === undefined)).toBe(true);
+  });
+
+  it("no terminal SIN fechaProximoSeguimiento encabeza el grupo (anomalía visible, no oculta)", async () => {
+    // El esquema permite la ausencia aunque las mutaciones de producción siempre
+    // la calculen en etapas no terminales. La Actividad Diaria excluye esos docs
+    // (gte(1)), así que el Pipeline es la ÚNICA pantalla donde se ven: van
+    // primeros para que el truncamiento no pueda borrarlos. Observación menor de
+    // la auditoría del plan.
+    const t = nuevoTest();
+    await insertar(t, [
+      { nombre: "Vencido", etapaActual: "presented", fechaProximoSeguimiento: hoyInicio - DIA },
+      { nombre: "Sin fecha", etapaActual: "presented" },
+      { nombre: "Futuro", etapaActual: "presented", fechaProximoSeguimiento: mananaInicio + DIA },
+    ]);
+
+    const g = (await pipeline(t)).grupos.presented;
+    expect(nombres(g)).toEqual(["Sin fecha", "Vencido", "Futuro"]);
+    expect(g.prospectos[0].fechaProximoSeguimiento).toBeUndefined();
+    expect(g.prospectos[0].diasVencido).toBeUndefined();
+  });
+
+  it("proyecta diasVencido solo en los anteriores a hoyInicio y no filtra usuarioId", async () => {
+    const t = nuevoTest();
+    await insertar(t, [
+      { nombre: "Vencido", etapaActual: "new", fechaProximoSeguimiento: hoyInicio - 2 * DIA, fechaUltimoContacto: hoyInicio - 6 * DIA },
+      { nombre: "Justo hoy", etapaActual: "new", fechaProximoSeguimiento: hoyInicio },
+      { nombre: "Mañana", etapaActual: "new", fechaProximoSeguimiento: mananaInicio },
+    ]);
+
+    const [vencido, hoy, manana] = (await pipeline(t)).grupos.new.prospectos;
+    expect(vencido).toMatchObject({
+      nombre: "Vencido",
+      diasVencido: 2,
+      etapaActual: "new",
+      canalContactoPreferido: "phone",
+      fechaUltimoContacto: hoyInicio - 6 * DIA,
+    });
+    expect(hoy.diasVencido).toBeUndefined();
+    expect(manana.diasVencido).toBeUndefined();
+    // La proyección no expone el tenant ni los campos de sistema.
+    expect(Object.keys(vencido).sort()).toEqual(
+      ["canalContactoPreferido", "diasVencido", "etapaActual", "fechaProximoSeguimiento", "fechaUltimoContacto", "id", "nombre"],
+    );
+  });
+
+  it("desempata de forma determinista y estable cuando la fecha coincide", async () => {
+    const t = nuevoTest();
+    await insertar(
+      t,
+      ["A", "B", "C", "D"].map((n) => ({ nombre: n, etapaActual: "contacted" as const, fechaProximoSeguimiento: hoyInicio })),
+    );
+
+    // Convex añade _creationTime al final de todo índice como desempate, así que
+    // el orden es total y se repite entre ejecuciones.
+    const primera = nombres((await pipeline(t)).grupos.contacted);
+    const segunda = nombres((await pipeline(t)).grupos.contacted);
+    expect(primera).toEqual(["A", "B", "C", "D"]);
+    expect(segunda).toEqual(primera);
+  });
+});
+
+describe("pipeline · truncamiento (MAX_PIPELINE+1 leídos, centinela descartado)", () => {
+  it("corta en MAX_PIPELINE y lo declara", async () => {
+    const t = nuevoTest();
+    await insertar(
+      t,
+      Array.from({ length: MAX_PIPELINE + 1 }, (_, i) => ({
+        nombre: `C ${i}`,
+        etapaActual: "contacted" as const,
+        fechaProximoSeguimiento: hoyInicio + i * 60_000,
+      })),
+    );
+
+    const r = await pipeline(t);
+    expect(r.grupos.contacted.prospectos).toHaveLength(MAX_PIPELINE);
+    expect(r.grupos.contacted.total).toBe(MAX_PIPELINE);
+    expect(r.grupos.contacted.truncado).toBe(true);
+    // El truncamiento de una etapa no contamina a las demás.
+    expect(r.grupos.new.truncado).toBe(false);
+  });
+
+  it("⭐ NO oculta vencidos al truncar, aunque se hayan creado los últimos", async () => {
+    // REGRESIÓN del bloqueante de la 1ª auditoría del plan. La implementación
+    // anterior leía por by_usuario_etapa (orden de creación) y ordenaba DESPUÉS
+    // del .take(): estos 50 vencidos, creados al final, quedaban fuera del corte
+    // y desaparecían de la pantalla. Si alguien vuelve a ese índice o reintroduce
+    // un .sort() posterior, este test falla.
+    const t = nuevoTest();
+    const futuros = Array.from({ length: MAX_PIPELINE }, (_, i) => ({
+      nombre: `Futuro ${i}`,
+      etapaActual: "contacted" as const,
+      fechaProximoSeguimiento: mananaInicio + (i + 1) * 60_000,
+    }));
+    const vencidos = Array.from({ length: 50 }, (_, i) => ({
+      nombre: `Vencido ${i}`,
+      etapaActual: "contacted" as const,
+      fechaProximoSeguimiento: hoyInicio - DIA - (50 - i) * 60_000,
+    }));
+    await insertar(t, futuros);
+    await insertar(t, vencidos); // creados los ÚLTIMOS, a propósito
+
+    const g = (await pipeline(t)).grupos.contacted;
+    expect(g.truncado).toBe(true);
+    expect(g.prospectos).toHaveLength(MAX_PIPELINE);
+
+    const devueltos = new Set(nombres(g));
+    const faltan = vencidos.map((v) => v.nombre).filter((n) => !devueltos.has(n));
+    expect(faltan).toEqual([]);
+    // Y además encabezan el grupo: lo urgente arriba.
+    expect(nombres(g).slice(0, 50)).toEqual(vencidos.map((v) => v.nombre));
+    expect(g.prospectos.slice(0, 50).every((p) => (p.diasVencido ?? 0) >= 1)).toBe(true);
+  });
+});
+
+describe("pipeline · presupuesto de lectura (condición 2 del GO de auditoría)", () => {
+  it("en el PEOR caso admisible (notas al tope) se mantiene lejos de los límites de Convex", async () => {
+    // Límites documentados por query: 32.000 documentos escaneados y 16 MiB
+    // leídos (docs.convex.dev/production/state/limits). El peor caso de esta
+    // query es determinista: 6 etapas × (MAX_PIPELINE+1) + 1 de tieneProspectos.
+    //
+    // Se usa LONGITUD_MAX_NOTAS, no un tamaño "típico": desde JOS-74 ese es el
+    // documento MÁS GRANDE que las mutaciones permiten crear, así que este test
+    // acota el peor caso real y no una estimación optimista. Es la razón por la
+    // que MAX_PIPELINE y LONGITUD_MAX_NOTAS no se pueden tocar por separado.
+    const t = nuevoTest();
+    const NOTAS = "x".repeat(LONGITUD_MAX_NOTAS);
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 600; i++) {
+        await ctx.db.insert("prospectos", {
+          usuarioId: TENANT_A,
+          nombre: `Prospecto ${i}`,
+          comoSeConocio: "Evento de networking",
+          canalContactoPreferido: "whatsapp",
+          etapaActual: "contacted",
+          telefono: "+34 600 000 000",
+          email: `prospecto${i}@ejemplo.com`,
+          notas: NOTAS,
+          fechaAlta: hoyInicio - 30 * DIA,
+          fechaProximoSeguimiento: hoyInicio + i * 60_000,
+        });
+      }
+    });
+
+    const r = await pipeline(t);
+    expect(r.grupos.contacted.prospectos).toHaveLength(MAX_PIPELINE);
+    expect(r.grupos.contacted.truncado).toBe(true);
+
+    const docsPeorCaso = 6 * (MAX_PIPELINE + 1) + 1;
+    // Guardas sobre las constantes: subir MAX_PIPELINE o LONGITUD_MAX_NOTAS sin
+    // volver a medir rompe aquí, que es justo el punto.
+    expect(docsPeorCaso).toBeLessThan(32_000 / 4);
+
+    const bytesDoc = await t.run(async (ctx) => JSON.stringify(await ctx.db.query("prospectos").first()).length);
+    expect(docsPeorCaso * bytesDoc).toBeLessThan((16 * 1024 * 1024) / 4);
+  });
+
+  it("las mutaciones no dejan crear el documento gigante que rompería el presupuesto", async () => {
+    // Cierra el círculo: el test anterior acota el peor caso ADMISIBLE; este
+    // comprueba que "admisible" lo impone el servidor y no la buena voluntad del
+    // cliente (JOS-74).
+    const t = nuevoTest().withIdentity(IDENT_A);
+    const base = { nombre: "Ana", comoSeConocio: "Evento", canalContactoPreferido: "phone" as const };
+
+    await expect(
+      t.mutation(api.prospectos.crear, { ...base, notas: "x".repeat(LONGITUD_MAX_NOTAS + 1) }),
+    ).rejects.toThrow(/notas no puede superar/);
+
+    // Justo en el tope sí entra, y el trim se aplica ANTES de medir.
+    const creado = await t.mutation(api.prospectos.crear, { ...base, notas: "x".repeat(LONGITUD_MAX_NOTAS) });
+    expect(creado.notas).toHaveLength(LONGITUD_MAX_NOTAS);
+    const conEspacios = await t.mutation(api.prospectos.crear, {
+      ...base,
+      notas: `  ${"y".repeat(LONGITUD_MAX_NOTAS)}  `,
+    });
+    expect(conEspacios.notas).toHaveLength(LONGITUD_MAX_NOTAS);
+
+    // Y tampoco por la puerta de atrás de la edición.
+    await expect(
+      t.mutation(api.prospectos.actualizar, { id: creado.id, notas: "z".repeat(LONGITUD_MAX_NOTAS + 1) }),
+    ).rejects.toThrow(/notas no puede superar/);
+  });
+});
+
 describe("seed", () => {
   it("dayKey inválido lanza también en seed", async () => {
     process.env.ALLOW_SEED = "true";
@@ -269,5 +534,29 @@ describe("seed", () => {
     expect(r.vencidos.map((p) => p.nombre)).toEqual(["Elena Prat", "Andrés Molina"]);
     expect(r.vencidos.map((p) => p.diasVencido)).toEqual([7, 2]);
     expect(r.ritmo).toMatchObject({ completados: 1, pendientes: 3, total: 4 });
+  });
+
+  it("pipeline puebla las 6 etapas (escenario del recorrido manual de JOS-21)", async () => {
+    process.env.ALLOW_SEED = "true";
+    const t = nuevoTest();
+    await t.mutation(internal.seed.seed, { scenario: "pipeline", usuarioId: TENANT_A, dayKey: DAY_KEY });
+
+    const r = await pipeline(t);
+    expect(Object.values(r.grupos).every((g) => g.total > 0)).toBe(true);
+    // Dentro de Contactado hay vencido, hoy y futuro, y el vencido va primero.
+    expect(r.grupos.contacted.prospectos[0].diasVencido).toBeGreaterThanOrEqual(1);
+  });
+
+  it("volumen supera el tope y el truncamiento sigue dejando ver los vencidos", async () => {
+    process.env.ALLOW_SEED = "true";
+    const t = nuevoTest();
+    const res = await t.mutation(internal.seed.seed, { scenario: "volumen", usuarioId: TENANT_A, dayKey: DAY_KEY });
+    expect(res.insertados).toBe(600);
+
+    const g = (await pipeline(t)).grupos.contacted;
+    expect(g.truncado).toBe(true);
+    expect(g.prospectos).toHaveLength(MAX_PIPELINE);
+    // Los 50 vencidos son los ÚLTIMOS que inserta el seed: deben salir arriba.
+    expect(g.prospectos.slice(0, 50).every((p) => p.nombre.includes("(vencido)"))).toBe(true);
   });
 });

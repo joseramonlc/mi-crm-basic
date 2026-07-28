@@ -31,6 +31,27 @@ export function textoOpcional(valor: string | undefined): string | undefined {
   return limpio === "" ? undefined : limpio;
 }
 
+/**
+ * Tope de `notas` (JOS-74). No es cosmético ni de producto: las pantallas
+ * agregadas (`actividadDiaria`, `pipeline`) leen documentos COMPLETOS —Convex no
+ * proyecta a nivel de base de datos— contra un límite de 16 MiB por query. Un
+ * campo de texto libre sin acotar deja que el propio tenant degrade su pantalla
+ * hasta romperla, sin forma de arreglarlo desde la app.
+ *
+ * 2.000 caracteres ≈ 300 palabras. Con MAX_PIPELINE = 200 el peor caso de
+ * lectura queda en ~19 % del límite (medición en la auditoría de JOS-21).
+ */
+export const LONGITUD_MAX_NOTAS = 2000;
+
+/** `notas` normalizado y acotado. La longitud se mide DESPUÉS del trim. */
+export function notasOpcional(valor: string | undefined): string | undefined {
+  const limpio = textoOpcional(valor);
+  if (limpio !== undefined && limpio.length > LONGITUD_MAX_NOTAS) {
+    throw validationError(`notas no puede superar ${LONGITUD_MAX_NOTAS} caracteres`, "notas");
+  }
+  return limpio;
+}
+
 /** Email opcional normalizado; si queda contenido, exige formato algo@algo.algo. */
 export function emailOpcional(valor: string | undefined): string | undefined {
   const limpio = textoOpcional(valor);

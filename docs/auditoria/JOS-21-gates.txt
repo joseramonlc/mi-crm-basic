@@ -1,0 +1,44 @@
+GATES — JOS-21 · Pipeline de Prospectos (rev. 2, tras el NO-GO)
+Rama: joseramonlc/jos-21-pantalla-pipeline-de-prospectos-vista-agrupada-por-etapas
+Base: master 9c5c479
+Fecha: 2026-07-27T21:05:35+02:00
+
+===== npx tsc --noEmit =====
+convex/interacciones.test.ts(11,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+convex/prospectos.api.test.ts(10,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+convex/prospectos.test.ts(14,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+convex/seed.test.ts(8,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+(solo los 4 errores preexistentes de import.meta.glob — los mismos que en master)
+
+===== npm run lint =====
+
+> crm-networker@0.1.0 lint
+> eslint
+
+(sin hallazgos)
+
+===== npm run build =====
+✓ Compiled successfully in 22.7s
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ○ /actividad
+├ ○ /login
+├ ○ /prospectos
+├ ƒ /prospectos/[id]
+├ ƒ /prospectos/[id]/interacciones/nueva
+├ ○ /prospectos/nuevo
+├ ○ /recuperar
+└ ○ /registro
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+===== npx vitest run --no-file-parallelism =====
+
+ Test Files  34 passed (34)
+      Tests  325 passed (325)
+   Start at  20:53:19
+   Duration  680.96s (transform 13.01s, setup 0ms, import 174.50s, tests 19.80s, environment 417.97s)
+
+(secuencial: es el recuento fiable — en paralelo el pool da 'Timeout waiting for worker' por Dropbox + /mnt/c)
+Base master: 286 tests. Esta rama: 325. Nuevos: 39.

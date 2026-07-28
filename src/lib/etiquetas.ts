@@ -12,6 +12,27 @@ import type { PillOption } from "@/components/ui";
 export type CanalContacto = ProspectoPublico["canalContactoPreferido"];
 export type TipoInteraccion = InteraccionPublica["tipo"];
 export type ResultadoInteraccion = InteraccionPublica["resultado"];
+export type Etapa = ProspectoPublico["etapaActual"];
+
+/**
+ * Las 6 etapas fijas del pipeline, en el orden de la metodología (JOS-19) y con
+ * las etiquetas de producto de JOS-7 — las mismas que muestra StageBadge.
+ *
+ * Promovido aquí desde el textos.ts de la ficha al necesitarlo también el
+ * Pipeline (JOS-21); la ficha lo re-exporta y sus consumidores no cambian.
+ */
+export const OPCIONES_ETAPA: Array<{ value: Etapa; label: string }> = [
+  { value: "new", label: "Nuevo" },
+  { value: "contacted", label: "Contactado" },
+  { value: "presented", label: "Presentación realizada" },
+  { value: "evaluating", label: "En valoración" },
+  { value: "joined", label: "Incorporado" },
+  { value: "discarded", label: "Descartado" },
+];
+
+export function etiquetaEtapa(etapa: Etapa): string {
+  return OPCIONES_ETAPA.find((o) => o.value === etapa)?.label ?? etapa;
+}
 
 /** Opciones de JOS-15 mapeadas al enum de la API (etiqueta de producto → clave). */
 export const OPCIONES_CANAL: Array<{ value: CanalContacto; label: string }> = [

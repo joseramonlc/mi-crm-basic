@@ -6,35 +6,13 @@ import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { api } from "../../../../convex/_generated/api";
 import { VENCIDOS_VISIBLES } from "../../../../convex/lib/constants";
-import { APP_TZ, dayKeyToday, siguienteMedianocheMs, ventanaDia } from "../../../../convex/lib/fecha";
+import { APP_TZ, ventanaDia } from "../../../../convex/lib/fecha";
 import { Button, EmptyState, Icon, ProspectCard } from "@/components/ui";
+import { useDayKey } from "@/lib/useDayKey";
 import { BANNER_VISTA_PARCIAL, formatTimeAgo, textoRitmo, textoVencido } from "./textos";
 
 type DatosActividad = FunctionReturnType<typeof api.prospectos.actividadDiaria>;
 type Prospecto = DatosActividad["hoy"][number];
-
-/**
- * Día visible en pantalla. Las queries de Convex re-corren cuando cambian los
- * DATOS, no el reloj: a medianoche es el cliente quien renueva el dayKey. Al
- * dispararse el timer se RECOMPUTA con dayKeyToday (no se incrementa) y se
- * re-arma — así también quedan cubiertos la suspensión del navegador y los
- * cambios de reloj, donde el timer puede despertar en un día arbitrario.
- */
-function useDayKey(): string {
-  const [dayKey, setDayKey] = React.useState(() => dayKeyToday(Date.now(), APP_TZ));
-  React.useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
-    const armar = () => {
-      timer = setTimeout(() => {
-        setDayKey(dayKeyToday(Date.now(), APP_TZ));
-        armar();
-      }, siguienteMedianocheMs(Date.now(), APP_TZ) - Date.now());
-    };
-    armar();
-    return () => clearTimeout(timer);
-  }, []);
-  return dayKey;
-}
 
 export default function ActividadPage() {
   const dayKey = useDayKey();

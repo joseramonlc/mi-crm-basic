@@ -1,12 +1,15 @@
 import { APP_TZ } from "../../../../../convex/lib/fecha";
 import type { InteraccionPublica, ProspectoPublico } from "../../../../../convex/lib/proyecciones";
-import { OPCIONES_CANAL, OPCIONES_RESULTADO, OPCIONES_TIPO, formatearFechaEs } from "@/lib/etiquetas";
+import { OPCIONES_CANAL, OPCIONES_RESULTADO, OPCIONES_TIPO, etiquetaEtapa, formatearFechaEs, type Etapa } from "@/lib/etiquetas";
 import type { BadgeProps } from "@/components/ui";
 
 type Canal = ProspectoPublico["canalContactoPreferido"];
 type Tipo = InteraccionPublica["tipo"];
 type Resultado = InteraccionPublica["resultado"];
-export type Etapa = ProspectoPublico["etapaActual"];
+// Etapa, OPCIONES_ETAPA y etiquetaEtapa viven ahora en @/lib/etiquetas (los
+// necesita también el Pipeline, JOS-21). Se re-exportan para que los
+// consumidores de esta pantalla —SelectorEtapa— sigan importándolos de aquí.
+export { OPCIONES_ETAPA, etiquetaEtapa, type Etapa } from "@/lib/etiquetas";
 
 export const TITULO_FALLBACK = "Ficha del prospecto";
 export const ETIQUETA_ATRAS = "Volver a Inicio";
@@ -73,23 +76,6 @@ export function tituloHistorial(cantidad: number, completo: boolean): string {
 
 export const TITULO_ETAPA = "Etapa del pipeline";
 export const ERROR_CAMBIO_ETAPA = "No se pudo cambiar la etapa. Comprueba tu conexión e inténtalo de nuevo.";
-
-/**
- * Las 6 etapas fijas del pipeline, en el orden de la metodología (JOS-19) y
- * con las etiquetas de producto de JOS-7 — las mismas que muestra StageBadge.
- */
-export const OPCIONES_ETAPA: Array<{ value: Etapa; label: string }> = [
-  { value: "new", label: "Nuevo" },
-  { value: "contacted", label: "Contactado" },
-  { value: "presented", label: "Presentación realizada" },
-  { value: "evaluating", label: "En valoración" },
-  { value: "joined", label: "Incorporado" },
-  { value: "discarded", label: "Descartado" },
-];
-
-export function etiquetaEtapa(etapa: Etapa): string {
-  return OPCIONES_ETAPA.find((o) => o.value === etapa)?.label ?? etapa;
-}
 
 /**
  * Toast del cambio de etapa (P6): en no terminales el motor SIEMPRE deja
