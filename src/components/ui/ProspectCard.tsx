@@ -16,6 +16,15 @@ export interface ProspectCardProps extends React.HTMLAttributes<HTMLDivElement> 
   lastInteraction?: string;
   /** Relative time, e.g. "hace 2 días". */
   timeAgo?: string;
+  /**
+   * Show the stage pill. Turn it off where the container already states the
+   * stage — grouped views such as the Pipeline (JOS-21), whose narrow kanban
+   * columns would also wrap the longer labels.
+   * @default true
+   */
+  showStage?: boolean;
+  /** Extra slot at the end of the meta row, e.g. an overdue `<Badge>`. */
+  accessory?: React.ReactNode;
   onCall?: () => void;
   onWhatsApp?: () => void;
   onNote?: () => void;
@@ -30,6 +39,8 @@ export function ProspectCard({
   channel = "phone",
   lastInteraction = "",
   timeAgo = "",
+  showStage = true,
+  accessory,
   onCall,
   onWhatsApp,
   onNote,
@@ -70,10 +81,12 @@ export function ProspectCard({
                 {name}
               </span>
             </div>
-            <div style={{ marginTop: 8 }}>
-              <StageBadge stage={stage} />
-            </div>
-            <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10, color: "var(--color-neutral-500)", fontSize: 13 }}>
+            {showStage && (
+              <div style={{ marginTop: 8 }}>
+                <StageBadge stage={stage} />
+              </div>
+            )}
+            <div style={{ marginTop: 10, display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, color: "var(--color-neutral-500)", fontSize: 13 }}>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                 <Icon name={CHANNEL_ICON[channel] || "phone"} size={15} />
                 {lastInteraction}
@@ -84,6 +97,7 @@ export function ProspectCard({
                   {timeAgo}
                 </span>
               )}
+              {accessory}
             </div>
           </div>
           <Icon name="chevron-right" size={20} color="var(--color-neutral-300)" style={{ marginTop: 2 }} />

@@ -2,7 +2,7 @@ import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { APP_TZ, addCivilDays, dayKeyToday, parseDayKey, zonedMidnightToMs } from "./lib/fecha";
 import { calcularFechaProximoSeguimiento, type Etapa } from "./lib/seguimiento";
-import { textoObligatorio } from "./lib/validacion";
+import { LONGITUD_MAX_NOTAS, textoObligatorio } from "./lib/validacion";
 
 type Canal = "phone" | "whatsapp" | "mail" | "instagram" | "otro";
 type Tipo = "call" | "message" | "meeting";
@@ -36,6 +36,8 @@ interface Fixture {
    * desde fechaAlta).
    */
   interacciones?: InteraccionFixture[];
+  /** Texto libre; lo usa el escenario `volumen` para engordar el documento. */
+  notas?: string;
 }
 
 /**
@@ -58,10 +60,19 @@ interface Fixture {
  * - populated: hoy + vencidos + un contacto hecho hoy (pantalla completa)
  * - empty:     sin prospectos (estado "Aún no tienes prospectos")
  * - alDia:     prospectos sin actividad pendiente (estado "Todo al día")
+ * - pipeline:  reparto por las 6 etapas con vencidos, hoy y futuros (JOS-21)
+ * - volumen:   600 en una etapa, por encima de MAX_PIPELINE, con notas largas —
+ *              para medir truncamiento y latencia real (condición 2 del GO)
  */
 export const seed = internalMutation({
   args: {
-    scenario: v.union(v.literal("populated"), v.literal("empty"), v.literal("alDia")),
+    scenario: v.union(
+      v.literal("populated"),
+      v.literal("empty"),
+      v.literal("alDia"),
+      v.literal("pipeline"),
+      v.literal("volumen"),
+    ),
     usuarioId: v.string(),
     dayKey: v.optional(v.string()),
   },
@@ -180,6 +191,72 @@ export const seed = internalMutation({
           ],
         },
       ],
+      // JOS-21: las 6 etapas pobladas y, dentro de las no terminales, mezcla de
+      // vencido / hoy / futuro para ver el orden por urgencia y el badge.
+      // El motor deriva la fecha de (etapa, último contacto ?? alta), así que la
+      // urgencia se controla con haceDias del último contacto.
+      pipeline: [
+        { nombre: "Marta Ruiz", etapa: "new", canal: "whatsapp", comoSeConocio: "Referido", altaHaceDias: 1 },
+        { nombre: "Iván Soler", etapa: "new", canal: "phone", comoSeConocio: "Evento", altaHaceDias: 6 },
+        {
+          nombre: "Carlos Vega", etapa: "contacted", canal: "phone", comoSeConocio: "Evento", altaHaceDias: 10,
+          interacciones: [{ haceDias: 3, tipo: "call", resultado: "interested", queOcurrio: "Le encajó la propuesta." }],
+        },
+        {
+          nombre: "Andrés Molina", etapa: "contacted", canal: "instagram", comoSeConocio: "Red social", altaHaceDias: 15,
+          interacciones: [{ haceDias: 9, tipo: "message", resultado: "thinking", queOcurrio: "DM inicial, sin compromiso." }],
+        },
+        {
+          nombre: "Sara Gil", etapa: "contacted", canal: "mail", comoSeConocio: "Referido", altaHaceDias: 4,
+          interacciones: [{ haceDias: 0, tipo: "message", resultado: "interested", queOcurrio: "Contacto de hoy." }],
+        },
+        {
+          nombre: "Elena Prat", etapa: "presented", canal: "otro", comoSeConocio: "Conocido", altaHaceDias: 40,
+          interacciones: [{ haceDias: 12, tipo: "meeting", resultado: "thinking", queOcurrio: "Presentación completa." }],
+        },
+        {
+          nombre: "Bruno Casas", etapa: "presented", canal: "whatsapp", comoSeConocio: "Referido", altaHaceDias: 20,
+          interacciones: [{ haceDias: 5, tipo: "meeting", resultado: "interested", queOcurrio: "Presentación online." }],
+        },
+        {
+          nombre: "Lucía Ferrer", etapa: "evaluating", canal: "mail", comoSeConocio: "Red social", altaHaceDias: 30,
+          interacciones: [{ haceDias: 7, tipo: "message", resultado: "thinking", queOcurrio: "Resolvimos dudas del contrato." }],
+        },
+        {
+          nombre: "Nuria Campos", etapa: "joined", canal: "phone", comoSeConocio: "Evento", altaHaceDias: 60,
+          interacciones: [{ haceDias: 20, tipo: "call", resultado: "other", queOcurrio: "Cerramos su incorporación." }],
+        },
+        {
+          nombre: "Raúl Ortega", etapa: "discarded", canal: "otro", comoSeConocio: "Otro", altaHaceDias: 90,
+          interacciones: [{ haceDias: 45, tipo: "call", resultado: "not_interested", queOcurrio: "No le encaja el modelo." }],
+        },
+      ],
+      // Por encima de MAX_PIPELINE en una etapa, con notas largas: ejercita el
+      // truncamiento real, el contador "500+" y la latencia contra el deployment.
+      // Los vencidos se crean LOS ÚLTIMOS a propósito — con un orden que no
+      // viniera del índice, desaparecerían de la pantalla.
+      volumen: Array.from({ length: 600 }, (_, i) => {
+        const vencido = i >= 550;
+        return {
+          nombre: `Prospecto ${String(i + 1).padStart(3, "0")}${vencido ? " (vencido)" : ""}`,
+          etapa: "contacted" as Etapa,
+          canal: "whatsapp" as Canal,
+          comoSeConocio: "Carga de volumen",
+          altaHaceDias: 120,
+          // Al tope admisible: el recorrido manual debe ejercitar el documento
+          // más grande que las mutaciones permiten, no uno cómodo (JOS-74).
+          notas: "x".repeat(LONGITUD_MAX_NOTAS),
+          interacciones: [
+            {
+              // contacted = +3 días: 30 → vencido hace 27; 0 → seguimiento futuro.
+              haceDias: vencido ? 30 : 0,
+              tipo: "message" as Tipo,
+              resultado: "thinking" as Resultado,
+              queOcurrio: "Contacto generado por el escenario de volumen.",
+            },
+          ],
+        };
+      }),
     };
 
     let insertados = 0;
@@ -199,6 +276,7 @@ export const seed = internalMutation({
         canalContactoPreferido: f.canal,
         etapaActual: f.etapa,
         fechaAlta,
+        ...(f.notas !== undefined ? { notas: f.notas } : {}),
         ...(fechaUltimoContacto !== undefined ? { fechaUltimoContacto } : {}),
         ...(prox !== undefined ? { fechaProximoSeguimiento: prox } : {}),
       });

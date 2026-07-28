@@ -65,7 +65,14 @@ export default defineSchema({
     .index("by_usuario", ["usuarioId"])
     .index("by_usuario_seguimiento", ["usuarioId", "fechaProximoSeguimiento"])
     .index("by_usuario_ultimo_contacto", ["usuarioId", "fechaUltimoContacto"])
-    .index("by_usuario_etapa", ["usuarioId", "etapaActual"]),
+    .index("by_usuario_etapa", ["usuarioId", "etapaActual"])
+    // Pipeline (JOS-21): con usuarioId y etapaActual fijados por igualdad, el
+    // índice queda ordenado por fechaProximoSeguimiento, de modo que el `.take()`
+    // de la query ya devuelve los MÁS URGENTES. Es lo que impide que el corte de
+    // lectura oculte un vencido — ordenar después del corte solo reordena lo que
+    // el corte ya decidió (bloqueante de la 1ª auditoría del plan). No sustituye a
+    // by_usuario_etapa, que sigue sirviendo a `listar`.
+    .index("by_usuario_etapa_seguimiento", ["usuarioId", "etapaActual", "fechaProximoSeguimiento"]),
 
   interacciones: defineTable({
     // Denormalizado del prospecto (siempre en servidor): defensa en profundidad

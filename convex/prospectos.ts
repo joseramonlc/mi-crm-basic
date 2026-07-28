@@ -2,13 +2,13 @@ import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { MAX_ACTIVIDAD } from "./lib/constants";
+import { MAX_ACTIVIDAD, MAX_PIPELINE } from "./lib/constants";
 import { APP_TZ, diffCalendarDays, ventanaDia } from "./lib/fecha";
-import { calcularFechaProximoSeguimiento } from "./lib/seguimiento";
+import { SEGUIMIENTO_DIAS, calcularFechaProximoSeguimiento } from "./lib/seguimiento";
 import { requireUsuario } from "./lib/usuario";
 import { prospectoDelUsuario } from "./lib/acceso";
 import { prospectoPublicoValidator, toProspectoPublico } from "./lib/proyecciones";
-import { conLimites, emailOpcional, textoObligatorio, textoOpcional, validarNumItems } from "./lib/validacion";
+import { conLimites, emailOpcional, notasOpcional, textoObligatorio, textoOpcional, validarNumItems } from "./lib/validacion";
 import { canalContacto, etapaProspecto } from "./schema";
 
 export interface ProspectoActividad {
@@ -117,6 +117,114 @@ export const actividadDiaria = query({
   },
 });
 
+/* ── Pipeline de Prospectos (JOS-21) ──────────────────────────────────────── */
+
+const prospectoPipelineValidator = v.object({
+  id: v.id("prospectos"),
+  nombre: v.string(),
+  etapaActual: etapaProspecto,
+  canalContactoPreferido: canalContacto,
+  fechaUltimoContacto: v.optional(v.number()),
+  fechaProximoSeguimiento: v.optional(v.number()),
+  diasVencido: v.optional(v.number()),
+});
+
+const grupoPipelineValidator = v.object({
+  prospectos: v.array(prospectoPipelineValidator),
+  /** Exacto por debajo de MAX_PIPELINE; con `truncado` la UI muestra "500+". */
+  total: v.number(),
+  truncado: v.boolean(),
+});
+
+/** Terminal = el motor no programa seguimiento (JOS-8): sin fechaProximoSeguimiento. */
+function esTerminal(etapa: Doc<"prospectos">["etapaActual"]): boolean {
+  return SEGUIMIENTO_DIAS[etapa] === null;
+}
+
+/**
+ * Datos de la pantalla Pipeline (JOS-21): los 6 grupos por etapa ya formados.
+ *
+ * `dayKey` está aquí por el mismo motivo que en actividadDiaria —reactividad, no
+ * tenancy— y sirve para marcar los vencidos. El handler es puro sobre
+ * (dayKey, datos), sin Date.now().
+ *
+ * ⚠️ INVARIANTE DEL ORDEN — no introducir un `.sort()` posterior al `.take()`.
+ * El orden lo da el índice by_usuario_etapa_seguimiento ANTES del corte, de modo
+ * que al truncar se descartan los MENOS urgentes. Ordenar después del corte solo
+ * reordena lo que el corte ya decidió y puede ocultar vencidos (bloqueante de la
+ * 1ª auditoría del plan; lo cubre el test "no oculta vencidos al truncar").
+ */
+export const pipeline = query({
+  args: { dayKey: v.string() },
+  returns: v.object({
+    dayKey: v.string(),
+    tieneProspectos: v.boolean(),
+    grupos: v.object({
+      new: grupoPipelineValidator,
+      contacted: grupoPipelineValidator,
+      presented: grupoPipelineValidator,
+      evaluating: grupoPipelineValidator,
+      joined: grupoPipelineValidator,
+      discarded: grupoPipelineValidator,
+    }),
+  }),
+  handler: async (ctx, { dayKey }) => {
+    const usuarioId = await requireUsuario(ctx);
+    const { hoyInicio } = ventanaDia(dayKey, APP_TZ);
+
+    const tieneProspectos =
+      (await ctx.db
+        .query("prospectos")
+        .withIndex("by_usuario", (q) => q.eq("usuarioId", usuarioId))
+        .first()) !== null;
+
+    const proyectar = (p: Doc<"prospectos">) => {
+      const proxima = p.fechaProximoSeguimiento;
+      return {
+        id: p._id,
+        nombre: p.nombre,
+        etapaActual: p.etapaActual,
+        canalContactoPreferido: p.canalContactoPreferido,
+        ...(p.fechaUltimoContacto !== undefined ? { fechaUltimoContacto: p.fechaUltimoContacto } : {}),
+        ...(proxima !== undefined ? { fechaProximoSeguimiento: proxima } : {}),
+        ...(proxima !== undefined && proxima < hoyInicio
+          ? { diasVencido: diffCalendarDays(proxima, hoyInicio, APP_TZ) }
+          : {}),
+      };
+    };
+
+    const grupoDe = async (etapa: Doc<"prospectos">["etapaActual"]) => {
+      // Con usuarioId y etapaActual fijados por igualdad, el índice ordena por
+      // fechaProximoSeguimiento. Ascendente en no terminales = lo más vencido
+      // primero, así el centinela se lleva a los menos urgentes. En terminales
+      // nadie tiene fecha: todas empatan y decide el desempate implícito de
+      // Convex (_creationTime), que en "desc" deja arriba lo más reciente.
+      const leidos = await ctx.db
+        .query("prospectos")
+        .withIndex("by_usuario_etapa_seguimiento", (q) => q.eq("usuarioId", usuarioId).eq("etapaActual", etapa))
+        .order(esTerminal(etapa) ? "desc" : "asc")
+        .take(MAX_PIPELINE + 1);
+
+      const truncado = leidos.length > MAX_PIPELINE;
+      const filas = truncado ? leidos.slice(0, MAX_PIPELINE) : leidos;
+      return { prospectos: filas.map(proyectar), total: filas.length, truncado };
+    };
+
+    return {
+      dayKey,
+      tieneProspectos,
+      grupos: {
+        new: await grupoDe("new"),
+        contacted: await grupoDe("contacted"),
+        presented: await grupoDe("presented"),
+        evaluating: await grupoDe("evaluating"),
+        joined: await grupoDe("joined"),
+        discarded: await grupoDe("discarded"),
+      },
+    };
+  },
+});
+
 /**
  * POST /prospectos (JOS-13/JOS-10). Etapa forzada "new" — el cliente no la
  * envía; fechaAlta automática; el motor calcula el primer seguimiento
@@ -138,7 +246,7 @@ export const crear = mutation({
     const comoSeConocio = textoObligatorio(args.comoSeConocio, "comoSeConocio");
     const telefono = textoOpcional(args.telefono);
     const email = emailOpcional(args.email);
-    const notas = textoOpcional(args.notas);
+    const notas = notasOpcional(args.notas);
 
     const fechaAlta = Date.now();
     const fechaProximoSeguimiento = calcularFechaProximoSeguimiento("new", fechaAlta);
@@ -216,7 +324,7 @@ export const actualizar = mutation({
     if (args.canalContactoPreferido !== undefined) patch.canalContactoPreferido = args.canalContactoPreferido;
     if (args.telefono !== undefined) patch.telefono = textoOpcional(args.telefono);
     if (args.email !== undefined) patch.email = emailOpcional(args.email);
-    if (args.notas !== undefined) patch.notas = textoOpcional(args.notas);
+    if (args.notas !== undefined) patch.notas = notasOpcional(args.notas);
 
     await ctx.db.patch(doc._id, patch);
     return toProspectoPublico((await ctx.db.get(doc._id))!);
