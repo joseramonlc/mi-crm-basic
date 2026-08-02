@@ -3,6 +3,7 @@ import * as React from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_ACTIVIDAD, VENCIDOS_VISIBLES } from "../../../../convex/lib/constants";
+import { consumirFlash, escribirFlash } from "@/lib/flash";
 import { BANNER_VISTA_PARCIAL } from "./textos";
 import ActividadPage from "./page";
 
@@ -65,6 +66,9 @@ function ultimoDayKey(): string {
 beforeEach(() => {
   useQueryMock.mockReset();
   pushMock.mockReset();
+  // El flash vive en sessionStorage: sin limpiar, un toast se filtraría de un
+  // test al siguiente.
+  window.sessionStorage.clear();
 });
 
 afterEach(() => {
@@ -184,5 +188,149 @@ describe("renovación de día a medianoche (Europe/Madrid)", () => {
       vi.advanceTimersByTime(24 * 3_600_000); // el timer se re-armó: siguiente medianoche
     });
     expect(ultimoDayKey()).toBe("2026-07-14");
+  });
+});
+
+describe("acción rápida «Ya contacté» (JOS-23)", () => {
+  it("lleva al formulario del prospecto marcando el origen, sin abrir la ficha", () => {
+    useQueryMock.mockReturnValue(payload({ hoy: [prospecto("p1", "Marta Ruiz")] }));
+    render(<ActividadPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Ya contacté con Marta Ruiz" }));
+
+    expect(pushMock).toHaveBeenCalledTimes(1);
+    expect(pushMock).toHaveBeenCalledWith("/prospectos/p1/interacciones/nueva?volver=actividad");
+    // La ficha NO se abre: ese sería el flujo de 4 pasos que JOS-23 evita.
+    expect(pushMock).not.toHaveBeenCalledWith("/prospectos/p1");
+  });
+
+  it("también está en los vencidos, que son igualmente prospectos a contactar", () => {
+    useQueryMock.mockReturnValue(
+      payload({ vencidos: [prospecto("p3", "Elena Prat", { etapaActual: "presented", diasVencido: 7 })] }),
+    );
+    render(<ActividadPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Ya contacté con Elena Prat" }));
+
+    expect(pushMock).toHaveBeenCalledWith("/prospectos/p3/interacciones/nueva?volver=actividad");
+  });
+
+  it("cada tarjeta lleva su propio botón, distinguible por el nombre", () => {
+    useQueryMock.mockReturnValue(
+      payload({ hoy: [prospecto("p1", "Marta Ruiz"), prospecto("p2", "Carlos Vega")] }),
+    );
+    render(<ActividadPage />);
+
+    expect(screen.getAllByRole("button", { name: /^Ya contacté con/ })).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Ya contacté con Carlos Vega" }));
+    expect(pushMock).toHaveBeenCalledWith("/prospectos/p2/interacciones/nueva?volver=actividad");
+  });
+});
+
+describe("reactividad tras registrar el contacto (JOS-23, puntos 7 y 8)", () => {
+  const ritmo = (completados: number, pendientes: number) => ({
+    completados,
+    pendientes,
+    total: completados + pendientes,
+    completadosTruncados: false,
+    pendientesTruncados: false,
+    aproximado: true as const,
+  });
+
+  it("cuando la query se reemite sin el prospecto contactado, este sale de «Para hoy» y el ritmo sube", () => {
+    useQueryMock.mockReturnValue(
+      payload({ ritmo: ritmo(0, 2), hoy: [prospecto("p1", "Marta Ruiz"), prospecto("p2", "Carlos Vega")] }),
+    );
+    const { rerender } = render(<ActividadPage />);
+    expect(screen.getByText("Marta Ruiz")).toBeDefined();
+    expect(screen.getByText("0 de 2 seguimientos de hoy (aprox.)")).toBeDefined();
+
+    // Lo que hace Convex por su cuenta al confirmarse la mutación: reemite la
+    // query ya recalculada. No hay refresco manual en la pantalla.
+    useQueryMock.mockReturnValue(payload({ ritmo: ritmo(1, 1), hoy: [prospecto("p2", "Carlos Vega")] }));
+    rerender(<ActividadPage />);
+
+    expect(screen.queryByText("Marta Ruiz")).toBeNull();
+    expect(screen.getByText("Carlos Vega")).toBeDefined();
+    expect(screen.getByRole("heading", { name: /Para hoy \(1\)/ })).toBeDefined();
+    expect(screen.getByText("1 de 2 seguimientos de hoy (aprox.)")).toBeDefined();
+  });
+
+  it("si era el último pendiente, la pantalla pasa a «¡Todo al día!»", () => {
+    useQueryMock.mockReturnValue(payload({ ritmo: ritmo(0, 1), hoy: [prospecto("p1", "Marta Ruiz")] }));
+    const { rerender } = render(<ActividadPage />);
+    expect(screen.getByText("Marta Ruiz")).toBeDefined();
+
+    useQueryMock.mockReturnValue(payload({ ritmo: ritmo(1, 0), hoy: [] }));
+    rerender(<ActividadPage />);
+
+    expect(screen.queryByText("Marta Ruiz")).toBeNull();
+    expect(screen.getByText("¡Todo al día!")).toBeDefined();
+    expect(screen.getByText("1 de 1 seguimiento de hoy (aprox.)")).toBeDefined();
+  });
+});
+
+describe("toast de confirmación al volver del formulario (JOS-23)", () => {
+  const MENSAJE = "Interacción registrada, próximo contacto: 17 jul 2026";
+
+  it("«¡Todo al día!»: se ve aunque no quede ni una tarjeta", () => {
+    // El caso límite que motivó subir el consumo del flash a ActividadPage:
+    // se contacta al último prospecto pendiente y <Actividad> ni se monta.
+    escribirFlash(MENSAJE);
+    useQueryMock.mockReturnValue(payload());
+    render(<ActividadPage />);
+
+    expect(screen.getByText("¡Todo al día!")).toBeDefined();
+    expect(screen.getByText(MENSAJE)).toBeDefined();
+  });
+
+  it("sin prospectos: se ve sobre el estado vacío", () => {
+    escribirFlash(MENSAJE);
+    useQueryMock.mockReturnValue(payload({ tieneProspectos: false }));
+    render(<ActividadPage />);
+
+    expect(screen.getByText("Aún no tienes prospectos")).toBeDefined();
+    expect(screen.getByText(MENSAJE)).toBeDefined();
+  });
+
+  it("cargando: se ve antes de que la query responda", () => {
+    escribirFlash(MENSAJE);
+    useQueryMock.mockReturnValue(undefined);
+    render(<ActividadPage />);
+
+    expect(screen.getByText("Cargando actividad…")).toBeDefined();
+    expect(screen.getByText(MENSAJE)).toBeDefined();
+  });
+
+  it("con actividad: se ve junto a las tarjetas restantes", () => {
+    escribirFlash(MENSAJE);
+    useQueryMock.mockReturnValue(payload({ hoy: [prospecto("p2", "Carlos Vega")] }));
+    render(<ActividadPage />);
+
+    expect(screen.getByText("Carlos Vega")).toBeDefined();
+    expect(screen.getByText(MENSAJE)).toBeDefined();
+  });
+
+  it("Strict Mode: el flash se consume una sola vez y el mensaje sigue visible", () => {
+    escribirFlash(MENSAJE);
+    useQueryMock.mockReturnValue(payload());
+    render(
+      <React.StrictMode>
+        <ActividadPage />
+      </React.StrictMode>,
+    );
+
+    // Sin la guarda de ref, la segunda pasada del efecto leería un flash ya
+    // vacío y pisaría el aviso con null.
+    expect(screen.getByText(MENSAJE)).toBeDefined();
+    // Y se consumió: no queda residuo que reaparezca en la siguiente visita.
+    expect(consumirFlash()).toBeNull();
+  });
+
+  it("sin flash pendiente no aparece ningún toast", () => {
+    useQueryMock.mockReturnValue(payload({ hoy: [prospecto("p1", "Marta Ruiz")] }));
+    render(<ActividadPage />);
+
+    expect(screen.queryByText(MENSAJE)).toBeNull();
   });
 });

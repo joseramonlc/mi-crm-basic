@@ -16,18 +16,26 @@ import RegistrarInteraccionPage from "./page";
 
 // Sin proveedor Convex real (estrategia de JOS-22): se mockean useQuery (el
 // contexto del prospecto), useMutation y el router. El id llega por useParams.
-const { useQueryMock, mutateMock, pushMock, replaceMock } = vi.hoisted(() => ({
+const { useQueryMock, mutateMock, pushMock, replaceMock, searchParamsMock } = vi.hoisted(() => ({
   useQueryMock: vi.fn(),
   mutateMock: vi.fn(),
   pushMock: vi.fn(),
   replaceMock: vi.fn(),
+  searchParamsMock: vi.fn(),
 }));
 
 vi.mock("convex/react", () => ({ useQuery: useQueryMock, useMutation: () => mutateMock }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushMock, replace: replaceMock }),
   useParams: () => ({ id: "p7" }),
+  useSearchParams: () => searchParamsMock(),
 }));
+
+/** Monta la pantalla con el parámetro `volver` que traería la URL (JOS-23). */
+function renderConOrigen(origen?: string) {
+  searchParamsMock.mockReturnValue(new URLSearchParams(origen === undefined ? "" : `volver=${origen}`));
+  return render(<RegistrarInteraccionPage />);
+}
 
 const PROSPECTO = {
   id: "p7",
@@ -49,6 +57,9 @@ beforeEach(() => {
   pushMock.mockReset();
   replaceMock.mockReset();
   useQueryMock.mockReturnValue(PROSPECTO);
+  // Sin parámetro por defecto: el resto de la suite comprueba el contrato de M3
+  // (salida a la Ficha), que JOS-23 no debe alterar.
+  searchParamsMock.mockReturnValue(new URLSearchParams());
   window.sessionStorage.clear();
   vi.spyOn(Date, "now").mockReturnValue(AHORA);
 });
@@ -249,5 +260,40 @@ describe("cancelar determinista (rev. 2, bloqueo 2)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancelar y volver" }));
     expect(replaceMock).toHaveBeenCalledWith("/prospectos/p7");
     expect(pushMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("destino de salida según el origen (JOS-23)", () => {
+  it("con origen «actividad»: al guardar vuelve a la Actividad Diaria, no a la Ficha", async () => {
+    const proximo = zonedMidnightToMs({ y: 2026, m: 7, d: 17 }, APP_TZ);
+    mutateMock.mockResolvedValue({
+      interaccion: { id: "i9" },
+      prospecto: { ...PROSPECTO, fechaUltimoContacto: AHORA, fechaProximoSeguimiento: proximo },
+    });
+    renderConOrigen("actividad");
+    rellenarObligatorios();
+    fireEvent.submit(boton().closest("form") as HTMLFormElement);
+
+    await waitFor(() => expect(replaceMock).toHaveBeenCalledWith("/actividad"));
+    expect(replaceMock).not.toHaveBeenCalledWith("/prospectos/p7");
+    // El flash viaja igual: lo consume la Actividad Diaria en vez de la Ficha.
+    expect(consumirFlash()).toBe(textoToast(proximo));
+  });
+
+  it("con origen «actividad»: cancelar también vuelve a la Actividad Diaria", () => {
+    renderConOrigen("actividad");
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar y volver" }));
+    expect(replaceMock).toHaveBeenCalledTimes(1);
+    expect(replaceMock).toHaveBeenCalledWith("/actividad");
+  });
+
+  it("un origen inventado se ignora: se mantiene el contrato de M3 (Ficha)", async () => {
+    mutateMock.mockResolvedValue({ interaccion: { id: "i10" }, prospecto: { ...PROSPECTO } });
+    renderConOrigen("https://ejemplo.invalido");
+    rellenarObligatorios();
+    fireEvent.submit(boton().closest("form") as HTMLFormElement);
+
+    await waitFor(() => expect(replaceMock).toHaveBeenCalledWith("/prospectos/p7"));
+    expect(replaceMock).not.toHaveBeenCalledWith("https://ejemplo.invalido");
   });
 });

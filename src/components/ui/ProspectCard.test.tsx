@@ -33,4 +33,27 @@ describe("ProspectCard", () => {
     fireEvent.click(screen.getByRole("button"));
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
+
+  it("sin onContacted la tarjeta no muestra el botón (no-regresión del Pipeline)", () => {
+    render(<ProspectCard name="Ana García" stage="presented" onOpen={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: /ya contacté/i })).toBeNull();
+    // Sigue habiendo un único botón: el de abrir la ficha.
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+  });
+
+  it("onContacted añade el botón con el nombre del prospecto en su nombre accesible", () => {
+    render(<ProspectCard name="Ana García" onContacted={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Ya contacté con Ana García" })).toBeDefined();
+  });
+
+  it("pulsar «Ya contacté» no abre la ficha", () => {
+    const onContacted = vi.fn();
+    const onOpen = vi.fn();
+    render(<ProspectCard name="Ana García" onContacted={onContacted} onOpen={onOpen} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Ya contacté con Ana García" }));
+
+    expect(onContacted).toHaveBeenCalledTimes(1);
+    expect(onOpen).not.toHaveBeenCalled();
+  });
 });

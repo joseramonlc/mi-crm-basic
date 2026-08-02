@@ -100,8 +100,8 @@ export const actividadDiaria = query({
       dayKey,
       tieneProspectos,
       // "Completados" aproxima contactos de hoy, no seguimientos planificados
-      // cumplidos — seguirá siendo aproximado hasta que JOS-23 lo compute
-      // directamente sobre `interacciones`.
+      // cumplidos. JOS-23 (acción rápida "Ya contacté") NO cambia este cálculo:
+      // computarlo directamente sobre `interacciones` es JOS-77.
       ritmo: {
         completados,
         pendientes,

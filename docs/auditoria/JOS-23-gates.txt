@@ -1,0 +1,128 @@
+GATES — JOS-23 · Acción rápida "Ya contacté" desde la Actividad Diaria
+Rama: joseramonlc/jos-23-accion-rapida-ya-contacte-desde-la-actividad-diaria
+Base: master 61e9886 (tras `git pull`; el master local venía de 9c5c479)
+Fecha: 2026-08-02
+
+===== PUERTA PREVIA DEL GO CONDICIONADO (obs. 1): git pull =====
+$ git checkout master && git pull --ff-only
+Switched to branch 'master'
+Your branch is behind 'origin/master' by 2 commits, and can be fast-forwarded.
+Updating 9c5c479..61e9886
+Fast-forward
+$ git log --oneline -1
+61e9886 Merge pull request #4 from joseramonlc/joseramonlc/jos-21-pantalla-pipeline-de-prospectos-vista-agrupada-por-etapas
+$ git checkout -b joseramonlc/jos-23-accion-rapida-ya-contacte-desde-la-actividad-diaria
+Switched to a new branch
+
+(La rama NO parte de la de JOS-21. Confirmado que origin/master contiene 94de598.)
+
+
+===== npx tsc --noEmit =====
+convex/interacciones.test.ts(11,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+convex/prospectos.api.test.ts(10,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+convex/prospectos.test.ts(14,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+convex/seed.test.ts(8,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+
+(Solo los 4 errores preexistentes de import.meta.glob — los mismos que ya
+documentaba JOS-21-gates.txt sobre master. Ninguno en ficheros de JOS-23.)
+
+
+===== npm run lint =====
+> crm-networker@0.1.0 lint
+> eslint
+
+(sin hallazgos)
+
+
+===== npm run build =====
+▲ Next.js 16.2.10 (Turbopack)
+- Environments: .env.local
+✓ Compiled successfully in 37.8s
+  Running TypeScript ...
+  Finished TypeScript in 69s ...
+✓ Generating static pages using 7 workers (9/9) in 5.9s
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ○ /actividad
+├ ○ /login
+├ ○ /prospectos
+├ ƒ /prospectos/[id]
+├ ƒ /prospectos/[id]/interacciones/nueva
+├ ○ /prospectos/nuevo
+├ ○ /recuperar
+└ ○ /registro
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+NOTA PARA LA AUDITORÍA — la ruta del formulario sale marcada como ƒ (Dynamic),
+o sea que NO se prerenderiza. El plan justificaba la barrera <Suspense> diciendo
+que sin ella podía fallar la compilación de producción; con esta clasificación
+ese fallo no se habría producido hoy. La barrera se mantiene por recomendación
+de la documentación de Next 16 y como protección ante cambios futuros, pero es
+seguridad por diseño, no un fallo evitado. NO se ha ejecutado el contrafactual
+(compilar sin la barrera): la afirmación se apoya en la clasificación de la
+ruta, no en una prueba directa.
+
+
+===== TESTS =====
+
+El proyecto vive en /mnt/c dentro de Dropbox y vitest en paralelo deja workers
+sin arrancar. Todas las ejecuciones van con --pool=threads --no-file-parallelism.
+
+Comando equivalente al declarado en el plan (`npm run test`), con las opciones
+que este entorno exige:
+
+    npm run test -- --pool=threads --no-file-parallelism
+
+Las ejecuciones de abajo se lanzaron como `npx vitest run` con esas mismas
+opciones; es el mismo binario y la misma configuración que `npm run test`.
+
+--- Ejecución 1: suite completa ---
+$ npx vitest run --pool=threads --no-file-parallelism
+ Test Files  34 passed (34)
+      Tests  335 passed (335)
+     Errors  1 error
+   Duration  922.94s
+
+INCIDENCIA: vitest salió con CÓDIGO 0 pese a este error:
+
+  Error: [vitest-pool]: Failed to start threads worker for test files
+  src/app/(app)/prospectos/nuevo/page.test.tsx
+  Caused by: [vitest-pool-runner]: Timeout waiting for worker to respond
+
+El repositorio tiene 35 ficheros de test (`find src convex -name "*.test.ts*" | wc -l`
+= 35) y solo se contaron 34: ese fichero NO llegó a ejecutarse y quedó fuera del
+recuento, sin marcar el run como fallido. Es infraestructura (timeout de arranque
+del worker en /mnt/c), no código, pero deja la puerta abierta.
+
+--- Ejecución 2: el fichero que se quedó sin ejecutar ---
+$ npx vitest run --pool=threads --no-file-parallelism "src/app/(app)/prospectos/nuevo/page.test.tsx"
+ Test Files  1 passed (1)
+      Tests  12 passed (12)
+   Duration  38.00s
+
+--- TOTAL: 35/35 ficheros, 347/347 tests en verde ---
+(325 preexistentes + 22 nuevos de JOS-23; desglose abajo)
+
+--- Ejecución 3 (previa, de trabajo): ficheros afectados por JOS-23 ---
+$ npx vitest run --pool=threads --no-file-parallelism \
+    "src/app/(app)/actividad" "src/components/ui/ProspectCard.test.tsx" \
+    "src/lib/volver.test.ts" "src/app/(app)/prospectos/[id]/interacciones"
+ Test Files  8 passed (8)
+      Tests  67 passed (67)
+
+Tests nuevos aportados por JOS-23: 22
+  src/lib/volver.test.ts                    5
+  src/components/ui/ProspectCard.test.tsx   3
+  src/app/(app)/actividad/page.test.tsx    11
+  .../interacciones/nueva/page.test.tsx     3
+
+Ningún test preexistente se ha modificado ni eliminado.
+
+
+===== ESTADO DEL ÁRBOL =====
+Sin commit, sin push, sin PR. Los dos ficheros nuevos están en intent-to-add
+(`git add -N`) únicamente para que aparezcan en JOS-23.diff.

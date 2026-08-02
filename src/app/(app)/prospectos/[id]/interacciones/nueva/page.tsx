@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
 import { ConvexError } from "convex/values";
 import { api } from "../../../../../../../convex/_generated/api";
@@ -10,6 +10,7 @@ import { APP_TZ, dayKeyToday, ventanaDia } from "../../../../../../../convex/lib
 import { Avatar, Button, Input, PillSelect, StageBadge } from "@/components/ui";
 import { FormHeader } from "@/components/layout/FormHeader";
 import { escribirFlash } from "@/lib/flash";
+import { destinoAlSalir, PARAM_VOLVER } from "@/lib/volver";
 import {
   BANNER_ERROR_RED,
   ERROR_FECHA_FUTURA,
@@ -52,17 +53,51 @@ function fechaSeleccionadaAMs(dayKey: string, ahoraMs: number): number {
 }
 
 /**
+ * Envoltura de la pantalla: el formulario lee el parámetro `volver` de la URL y
+ * `useSearchParams` suspende durante el prerenderizado, así que el hook necesita
+ * una barrera por encima (docs de Next 16, use-search-params § "Behavior").
+ *
+ * Matiz medido, no supuesto: hoy esta ruta es dinámica (`[id]` sin
+ * `generateStaticParams`) y `next build` la clasifica como ƒ, luego no se
+ * prerenderiza y la compilación pasaría igual sin la barrera. Se mantiene por lo
+ * que recomienda la documentación y porque un cambio futuro —añadir
+ * `generateStaticParams`, activar PPR— convertiría su ausencia en un fallo de
+ * build.
+ */
+export default function RegistrarInteraccionPage() {
+  return (
+    <React.Suspense fallback={<CargandoFormulario />}>
+      <FormularioInteraccion />
+    </React.Suspense>
+  );
+}
+
+function CargandoFormulario() {
+  return (
+    <p role="status" style={{ padding: "48px 16px", textAlign: "center", color: "var(--color-neutral-500)", fontSize: 15, fontFamily: "var(--font-sans)" }}>
+      Cargando formulario…
+    </p>
+  );
+}
+
+/**
  * Pantalla "Registrar Interacción" (JOS-16): log del contacto con el prospecto
  * SIEMPRE preseleccionado (viene en la ruta). El backend de M2 actualiza
  * fechaUltimoContacto y recalcula el seguimiento en la misma transacción.
- * Al éxito: flash + replace a la Ficha (P8/P10). Cancelar navega SIEMPRE a la
- * Ficha con replace (contrato rev. 2). Si el prospecto no existe o es ajeno,
- * la query de contexto lanza NOT_FOUND al error boundary del segmento.
+ *
+ * Salida DETERMINISTA con replace, tanto al guardar como al cancelar (contrato
+ * rev. 2 de M3), pero el destino ya no es único: desde la acción rápida de la
+ * Actividad Diaria (JOS-23) se vuelve a ella; desde la Ficha, a la Ficha. Lo
+ * decide `destinoAlSalir`, que compara el parámetro y nunca lo concatena.
+ *
+ * Si el prospecto no existe o es ajeno, la query de contexto lanza NOT_FOUND al
+ * error boundary del segmento.
  */
-export default function RegistrarInteraccionPage() {
+function FormularioInteraccion() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const prospectoId = params.id as Id<"prospectos">;
+  const destinoSalida = destinoAlSalir(useSearchParams().get(PARAM_VOLVER), prospectoId);
 
   const prospecto = useQuery(api.prospectos.obtener, { id: prospectoId });
   const crear = useMutation(api.interacciones.crear);
@@ -125,9 +160,10 @@ export default function RegistrarInteraccionPage() {
         resultado: resultado as ResultadoInteraccion,
         ...(siguientePaso.trim() !== "" ? { siguientePasoAcordado: siguientePaso.trim() } : {}),
       });
-      // El destino (Ficha) consume el flash al montar y muestra el toast (P8).
+      // El destino —Ficha o Actividad Diaria— consume el flash al montar y
+      // muestra el toast (P8).
       escribirFlash(textoToast(respuesta.prospecto.fechaProximoSeguimiento));
-      router.replace(`/prospectos/${prospectoId}`);
+      router.replace(destinoSalida);
     } catch (err) {
       const datos = datosConvex(err);
       const mapeo = datos?.code === "VALIDATION_ERROR" && datos.field !== undefined ? ERROR_SERVIDOR[datos.field] : undefined;
@@ -143,7 +179,7 @@ export default function RegistrarInteraccionPage() {
 
   return (
     <div style={{ fontFamily: "var(--font-sans)" }}>
-      <FormHeader titulo="Registrar interacción" hrefCancelar={`/prospectos/${prospectoId}`} />
+      <FormHeader titulo="Registrar interacción" hrefCancelar={destinoSalida} />
       <form onSubmit={manejarEnvio} noValidate className="mx-auto w-full max-w-2xl px-4 pt-6 md:px-6 md:pt-8">
         {/* Contexto del prospecto SIEMPRE visible en cabecera (JOS-16/JOS-61). */}
         {prospecto === undefined ? (

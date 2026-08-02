@@ -7,8 +7,10 @@ import type { FunctionReturnType } from "convex/server";
 import { api } from "../../../../convex/_generated/api";
 import { VENCIDOS_VISIBLES } from "../../../../convex/lib/constants";
 import { APP_TZ, ventanaDia } from "../../../../convex/lib/fecha";
-import { Button, EmptyState, Icon, ProspectCard } from "@/components/ui";
+import { Button, EmptyState, Icon, ProspectCard, Toast } from "@/components/ui";
+import { consumirFlash } from "@/lib/flash";
 import { useDayKey } from "@/lib/useDayKey";
+import { rutaRegistrarDesdeActividad } from "@/lib/volver";
 import { BANNER_VISTA_PARCIAL, formatTimeAgo, textoRitmo, textoVencido } from "./textos";
 
 type DatosActividad = FunctionReturnType<typeof api.prospectos.actividadDiaria>;
@@ -17,6 +19,24 @@ type Prospecto = DatosActividad["hoy"][number];
 export default function ActividadPage() {
   const dayKey = useDayKey();
   const datos = useQuery(api.prospectos.actividadDiaria, { dayKey });
+  const [aviso, setAviso] = React.useState<string | null>(null);
+  const flashConsumido = React.useRef(false);
+
+  React.useEffect(() => {
+    // Mismo patrón que la Ficha: lectura única de sessionStorage tras el commit,
+    // con guarda de ref para que la segunda pasada del Strict Mode no consuma un
+    // flash ya vacío y pise el aviso con null.
+    //
+    // Vive AQUÍ y no dentro de <Actividad> (JOS-23): el toast no puede depender
+    // de que existan tarjetas. Al registrar el contacto del último prospecto
+    // pendiente la pantalla pasa a "¡Todo al día!" y <Actividad> ni se monta —
+    // justo el caso en que la confirmación más se necesita.
+    if (flashConsumido.current) return;
+    flashConsumido.current = true;
+    const mensaje = consumirFlash();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (mensaje !== null) setAviso(mensaje);
+  }, []);
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-6 md:px-6 md:py-8" style={{ fontFamily: "var(--font-sans)" }}>
@@ -32,6 +52,7 @@ export default function ActividadPage() {
         Actividad diaria
       </h1>
       <Contenido datos={datos} />
+      {aviso !== null && <Toast mensaje={aviso} onClose={() => setAviso(null)} />}
     </div>
   );
 }
@@ -88,6 +109,9 @@ function Actividad({ datos }: { datos: DatosActividad }) {
 
   const vencidosVisibles = verTodosVencidos ? datos.vencidos : datos.vencidos.slice(0, VENCIDOS_VISIBLES);
   const abrir = (p: Prospecto) => router.push(`/prospectos/${p.id}`);
+  // Atajo de 2 pasos (JOS-23): al formulario del prospecto, marcado para que la
+  // salida —guardar o cancelar— devuelva aquí en vez de a la Ficha.
+  const registrarContacto = (p: Prospecto) => router.push(rutaRegistrarDesdeActividad(p.id));
 
   return (
     <div className="flex flex-col gap-6">
@@ -105,6 +129,7 @@ function Actividad({ datos }: { datos: DatosActividad }) {
               lastInteraction="Para hoy"
               timeAgo={formatTimeAgo(p.fechaUltimoContacto, hoyInicio)}
               onOpen={() => abrir(p)}
+              onContacted={() => registrarContacto(p)}
             />
           ))}
         </Seccion>
@@ -122,6 +147,7 @@ function Actividad({ datos }: { datos: DatosActividad }) {
               lastInteraction={p.diasVencido !== undefined ? textoVencido(p.diasVencido) : ""}
               timeAgo={formatTimeAgo(p.fechaUltimoContacto, hoyInicio)}
               onOpen={() => abrir(p)}
+              onContacted={() => registrarContacto(p)}
             />
           ))}
           {!verTodosVencidos && datos.vencidos.length > VENCIDOS_VISIBLES && (
@@ -135,7 +161,11 @@ function Actividad({ datos }: { datos: DatosActividad }) {
   );
 }
 
-/** El ritmo es aproximado por diseño (cuenta contactos de hoy, no seguimientos cumplidos — exacto con JOS-23). */
+/**
+ * El ritmo es aproximado por diseño: cuenta contactos de hoy, no seguimientos
+ * cumplidos. JOS-23 no cambia este cálculo — solo añade la acción rápida; la
+ * exactitud es JOS-77.
+ */
 function LineaRitmo({ ritmo, centrada = false }: { ritmo: DatosActividad["ritmo"]; centrada?: boolean }) {
   return (
     <p
