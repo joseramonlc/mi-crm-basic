@@ -1,0 +1,620 @@
+diff --git a/convex/prospectos.ts b/convex/prospectos.ts
+index 030c014..e44fa07 100644
+--- a/convex/prospectos.ts
++++ b/convex/prospectos.ts
+@@ -100,8 +100,8 @@ export const actividadDiaria = query({
+       dayKey,
+       tieneProspectos,
+       // "Completados" aproxima contactos de hoy, no seguimientos planificados
+-      // cumplidos — seguirá siendo aproximado hasta que JOS-23 lo compute
+-      // directamente sobre `interacciones`.
++      // cumplidos. JOS-23 (acción rápida "Ya contacté") NO cambia este cálculo:
++      // computarlo directamente sobre `interacciones` es JOS-77.
+       ritmo: {
+         completados,
+         pendientes,
+diff --git a/src/app/(app)/actividad/page.test.tsx b/src/app/(app)/actividad/page.test.tsx
+index 3f304ec..e36e782 100644
+--- a/src/app/(app)/actividad/page.test.tsx
++++ b/src/app/(app)/actividad/page.test.tsx
+@@ -3,6 +3,7 @@ import * as React from "react";
+ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+ import { MAX_ACTIVIDAD, VENCIDOS_VISIBLES } from "../../../../convex/lib/constants";
++import { consumirFlash, escribirFlash } from "@/lib/flash";
+ import { BANNER_VISTA_PARCIAL } from "./textos";
+ import ActividadPage from "./page";
+ 
+@@ -65,6 +66,9 @@ function ultimoDayKey(): string {
+ beforeEach(() => {
+   useQueryMock.mockReset();
+   pushMock.mockReset();
++  // El flash vive en sessionStorage: sin limpiar, un toast se filtraría de un
++  // test al siguiente.
++  window.sessionStorage.clear();
+ });
+ 
+ afterEach(() => {
+@@ -186,3 +190,147 @@ describe("renovación de día a medianoche (Europe/Madrid)", () => {
+     expect(ultimoDayKey()).toBe("2026-07-14");
+   });
+ });
++
++describe("acción rápida «Ya contacté» (JOS-23)", () => {
++  it("lleva al formulario del prospecto marcando el origen, sin abrir la ficha", () => {
++    useQueryMock.mockReturnValue(payload({ hoy: [prospecto("p1", "Marta Ruiz")] }));
++    render(<ActividadPage />);
++
++    fireEvent.click(screen.getByRole("button", { name: "Ya contacté con Marta Ruiz" }));
++
++    expect(pushMock).toHaveBeenCalledTimes(1);
++    expect(pushMock).toHaveBeenCalledWith("/prospectos/p1/interacciones/nueva?volver=actividad");
++    // La ficha NO se abre: ese sería el flujo de 4 pasos que JOS-23 evita.
++    expect(pushMock).not.toHaveBeenCalledWith("/prospectos/p1");
++  });
++
++  it("también está en los vencidos, que son igualmente prospectos a contactar", () => {
++    useQueryMock.mockReturnValue(
++      payload({ vencidos: [prospecto("p3", "Elena Prat", { etapaActual: "presented", diasVencido: 7 })] }),
++    );
++    render(<ActividadPage />);
++
++    fireEvent.click(screen.getByRole("button", { name: "Ya contacté con Elena Prat" }));
++
++    expect(pushMock).toHaveBeenCalledWith("/prospectos/p3/interacciones/nueva?volver=actividad");
++  });
++
++  it("cada tarjeta lleva su propio botón, distinguible por el nombre", () => {
++    useQueryMock.mockReturnValue(
++      payload({ hoy: [prospecto("p1", "Marta Ruiz"), prospecto("p2", "Carlos Vega")] }),
++    );
++    render(<ActividadPage />);
++
++    expect(screen.getAllByRole("button", { name: /^Ya contacté con/ })).toHaveLength(2);
++    fireEvent.click(screen.getByRole("button", { name: "Ya contacté con Carlos Vega" }));
++    expect(pushMock).toHaveBeenCalledWith("/prospectos/p2/interacciones/nueva?volver=actividad");
++  });
++});
++
++describe("reactividad tras registrar el contacto (JOS-23, puntos 7 y 8)", () => {
++  const ritmo = (completados: number, pendientes: number) => ({
++    completados,
++    pendientes,
++    total: completados + pendientes,
++    completadosTruncados: false,
++    pendientesTruncados: false,
++    aproximado: true as const,
++  });
++
++  it("cuando la query se reemite sin el prospecto contactado, este sale de «Para hoy» y el ritmo sube", () => {
++    useQueryMock.mockReturnValue(
++      payload({ ritmo: ritmo(0, 2), hoy: [prospecto("p1", "Marta Ruiz"), prospecto("p2", "Carlos Vega")] }),
++    );
++    const { rerender } = render(<ActividadPage />);
++    expect(screen.getByText("Marta Ruiz")).toBeDefined();
++    expect(screen.getByText("0 de 2 seguimientos de hoy (aprox.)")).toBeDefined();
++
++    // Lo que hace Convex por su cuenta al confirmarse la mutación: reemite la
++    // query ya recalculada. No hay refresco manual en la pantalla.
++    useQueryMock.mockReturnValue(payload({ ritmo: ritmo(1, 1), hoy: [prospecto("p2", "Carlos Vega")] }));
++    rerender(<ActividadPage />);
++
++    expect(screen.queryByText("Marta Ruiz")).toBeNull();
++    expect(screen.getByText("Carlos Vega")).toBeDefined();
++    expect(screen.getByRole("heading", { name: /Para hoy \(1\)/ })).toBeDefined();
++    expect(screen.getByText("1 de 2 seguimientos de hoy (aprox.)")).toBeDefined();
++  });
++
++  it("si era el último pendiente, la pantalla pasa a «¡Todo al día!»", () => {
++    useQueryMock.mockReturnValue(payload({ ritmo: ritmo(0, 1), hoy: [prospecto("p1", "Marta Ruiz")] }));
++    const { rerender } = render(<ActividadPage />);
++    expect(screen.getByText("Marta Ruiz")).toBeDefined();
++
++    useQueryMock.mockReturnValue(payload({ ritmo: ritmo(1, 0), hoy: [] }));
++    rerender(<ActividadPage />);
++
++    expect(screen.queryByText("Marta Ruiz")).toBeNull();
++    expect(screen.getByText("¡Todo al día!")).toBeDefined();
++    expect(screen.getByText("1 de 1 seguimiento de hoy (aprox.)")).toBeDefined();
++  });
++});
++
++describe("toast de confirmación al volver del formulario (JOS-23)", () => {
++  const MENSAJE = "Interacción registrada, próximo contacto: 17 jul 2026";
++
++  it("«¡Todo al día!»: se ve aunque no quede ni una tarjeta", () => {
++    // El caso límite que motivó subir el consumo del flash a ActividadPage:
++    // se contacta al último prospecto pendiente y <Actividad> ni se monta.
++    escribirFlash(MENSAJE);
++    useQueryMock.mockReturnValue(payload());
++    render(<ActividadPage />);
++
++    expect(screen.getByText("¡Todo al día!")).toBeDefined();
++    expect(screen.getByText(MENSAJE)).toBeDefined();
++  });
++
++  it("sin prospectos: se ve sobre el estado vacío", () => {
++    escribirFlash(MENSAJE);
++    useQueryMock.mockReturnValue(payload({ tieneProspectos: false }));
++    render(<ActividadPage />);
++
++    expect(screen.getByText("Aún no tienes prospectos")).toBeDefined();
++    expect(screen.getByText(MENSAJE)).toBeDefined();
++  });
++
++  it("cargando: se ve antes de que la query responda", () => {
++    escribirFlash(MENSAJE);
++    useQueryMock.mockReturnValue(undefined);
++    render(<ActividadPage />);
++
++    expect(screen.getByText("Cargando actividad…")).toBeDefined();
++    expect(screen.getByText(MENSAJE)).toBeDefined();
++  });
++
++  it("con actividad: se ve junto a las tarjetas restantes", () => {
++    escribirFlash(MENSAJE);
++    useQueryMock.mockReturnValue(payload({ hoy: [prospecto("p2", "Carlos Vega")] }));
++    render(<ActividadPage />);
++
++    expect(screen.getByText("Carlos Vega")).toBeDefined();
++    expect(screen.getByText(MENSAJE)).toBeDefined();
++  });
++
++  it("Strict Mode: el flash se consume una sola vez y el mensaje sigue visible", () => {
++    escribirFlash(MENSAJE);
++    useQueryMock.mockReturnValue(payload());
++    render(
++      <React.StrictMode>
++        <ActividadPage />
++      </React.StrictMode>,
++    );
++
++    // Sin la guarda de ref, la segunda pasada del efecto leería un flash ya
++    // vacío y pisaría el aviso con null.
++    expect(screen.getByText(MENSAJE)).toBeDefined();
++    // Y se consumió: no queda residuo que reaparezca en la siguiente visita.
++    expect(consumirFlash()).toBeNull();
++  });
++
++  it("sin flash pendiente no aparece ningún toast", () => {
++    useQueryMock.mockReturnValue(payload({ hoy: [prospecto("p1", "Marta Ruiz")] }));
++    render(<ActividadPage />);
++
++    expect(screen.queryByText(MENSAJE)).toBeNull();
++  });
++});
+diff --git a/src/app/(app)/actividad/page.tsx b/src/app/(app)/actividad/page.tsx
+index b77cb3c..0cb4537 100644
+--- a/src/app/(app)/actividad/page.tsx
++++ b/src/app/(app)/actividad/page.tsx
+@@ -7,8 +7,10 @@ import type { FunctionReturnType } from "convex/server";
+ import { api } from "../../../../convex/_generated/api";
+ import { VENCIDOS_VISIBLES } from "../../../../convex/lib/constants";
+ import { APP_TZ, ventanaDia } from "../../../../convex/lib/fecha";
+-import { Button, EmptyState, Icon, ProspectCard } from "@/components/ui";
++import { Button, EmptyState, Icon, ProspectCard, Toast } from "@/components/ui";
++import { consumirFlash } from "@/lib/flash";
+ import { useDayKey } from "@/lib/useDayKey";
++import { rutaRegistrarDesdeActividad } from "@/lib/volver";
+ import { BANNER_VISTA_PARCIAL, formatTimeAgo, textoRitmo, textoVencido } from "./textos";
+ 
+ type DatosActividad = FunctionReturnType<typeof api.prospectos.actividadDiaria>;
+@@ -17,6 +19,24 @@ type Prospecto = DatosActividad["hoy"][number];
+ export default function ActividadPage() {
+   const dayKey = useDayKey();
+   const datos = useQuery(api.prospectos.actividadDiaria, { dayKey });
++  const [aviso, setAviso] = React.useState<string | null>(null);
++  const flashConsumido = React.useRef(false);
++
++  React.useEffect(() => {
++    // Mismo patrón que la Ficha: lectura única de sessionStorage tras el commit,
++    // con guarda de ref para que la segunda pasada del Strict Mode no consuma un
++    // flash ya vacío y pise el aviso con null.
++    //
++    // Vive AQUÍ y no dentro de <Actividad> (JOS-23): el toast no puede depender
++    // de que existan tarjetas. Al registrar el contacto del último prospecto
++    // pendiente la pantalla pasa a "¡Todo al día!" y <Actividad> ni se monta —
++    // justo el caso en que la confirmación más se necesita.
++    if (flashConsumido.current) return;
++    flashConsumido.current = true;
++    const mensaje = consumirFlash();
++    // eslint-disable-next-line react-hooks/set-state-in-effect
++    if (mensaje !== null) setAviso(mensaje);
++  }, []);
+ 
+   return (
+     <div className="mx-auto w-full max-w-2xl px-4 py-6 md:px-6 md:py-8" style={{ fontFamily: "var(--font-sans)" }}>
+@@ -32,6 +52,7 @@ export default function ActividadPage() {
+         Actividad diaria
+       </h1>
+       <Contenido datos={datos} />
++      {aviso !== null && <Toast mensaje={aviso} onClose={() => setAviso(null)} />}
+     </div>
+   );
+ }
+@@ -88,6 +109,9 @@ function Actividad({ datos }: { datos: DatosActividad }) {
+ 
+   const vencidosVisibles = verTodosVencidos ? datos.vencidos : datos.vencidos.slice(0, VENCIDOS_VISIBLES);
+   const abrir = (p: Prospecto) => router.push(`/prospectos/${p.id}`);
++  // Atajo de 2 pasos (JOS-23): al formulario del prospecto, marcado para que la
++  // salida —guardar o cancelar— devuelva aquí en vez de a la Ficha.
++  const registrarContacto = (p: Prospecto) => router.push(rutaRegistrarDesdeActividad(p.id));
+ 
+   return (
+     <div className="flex flex-col gap-6">
+@@ -105,6 +129,7 @@ function Actividad({ datos }: { datos: DatosActividad }) {
+               lastInteraction="Para hoy"
+               timeAgo={formatTimeAgo(p.fechaUltimoContacto, hoyInicio)}
+               onOpen={() => abrir(p)}
++              onContacted={() => registrarContacto(p)}
+             />
+           ))}
+         </Seccion>
+@@ -122,6 +147,7 @@ function Actividad({ datos }: { datos: DatosActividad }) {
+               lastInteraction={p.diasVencido !== undefined ? textoVencido(p.diasVencido) : ""}
+               timeAgo={formatTimeAgo(p.fechaUltimoContacto, hoyInicio)}
+               onOpen={() => abrir(p)}
++              onContacted={() => registrarContacto(p)}
+             />
+           ))}
+           {!verTodosVencidos && datos.vencidos.length > VENCIDOS_VISIBLES && (
+@@ -135,7 +161,11 @@ function Actividad({ datos }: { datos: DatosActividad }) {
+   );
+ }
+ 
+-/** El ritmo es aproximado por diseño (cuenta contactos de hoy, no seguimientos cumplidos — exacto con JOS-23). */
++/**
++ * El ritmo es aproximado por diseño: cuenta contactos de hoy, no seguimientos
++ * cumplidos. JOS-23 no cambia este cálculo — solo añade la acción rápida; la
++ * exactitud es JOS-77.
++ */
+ function LineaRitmo({ ritmo, centrada = false }: { ritmo: DatosActividad["ritmo"]; centrada?: boolean }) {
+   return (
+     <p
+diff --git a/src/app/(app)/prospectos/[id]/interacciones/nueva/page.test.tsx b/src/app/(app)/prospectos/[id]/interacciones/nueva/page.test.tsx
+index 8275b08..05db387 100644
+--- a/src/app/(app)/prospectos/[id]/interacciones/nueva/page.test.tsx
++++ b/src/app/(app)/prospectos/[id]/interacciones/nueva/page.test.tsx
+@@ -16,19 +16,27 @@ import RegistrarInteraccionPage from "./page";
+ 
+ // Sin proveedor Convex real (estrategia de JOS-22): se mockean useQuery (el
+ // contexto del prospecto), useMutation y el router. El id llega por useParams.
+-const { useQueryMock, mutateMock, pushMock, replaceMock } = vi.hoisted(() => ({
++const { useQueryMock, mutateMock, pushMock, replaceMock, searchParamsMock } = vi.hoisted(() => ({
+   useQueryMock: vi.fn(),
+   mutateMock: vi.fn(),
+   pushMock: vi.fn(),
+   replaceMock: vi.fn(),
++  searchParamsMock: vi.fn(),
+ }));
+ 
+ vi.mock("convex/react", () => ({ useQuery: useQueryMock, useMutation: () => mutateMock }));
+ vi.mock("next/navigation", () => ({
+   useRouter: () => ({ push: pushMock, replace: replaceMock }),
+   useParams: () => ({ id: "p7" }),
++  useSearchParams: () => searchParamsMock(),
+ }));
+ 
++/** Monta la pantalla con el parámetro `volver` que traería la URL (JOS-23). */
++function renderConOrigen(origen?: string) {
++  searchParamsMock.mockReturnValue(new URLSearchParams(origen === undefined ? "" : `volver=${origen}`));
++  return render(<RegistrarInteraccionPage />);
++}
++
+ const PROSPECTO = {
+   id: "p7",
+   nombre: "Lucía Ferrer",
+@@ -49,6 +57,9 @@ beforeEach(() => {
+   pushMock.mockReset();
+   replaceMock.mockReset();
+   useQueryMock.mockReturnValue(PROSPECTO);
++  // Sin parámetro por defecto: el resto de la suite comprueba el contrato de M3
++  // (salida a la Ficha), que JOS-23 no debe alterar.
++  searchParamsMock.mockReturnValue(new URLSearchParams());
+   window.sessionStorage.clear();
+   vi.spyOn(Date, "now").mockReturnValue(AHORA);
+ });
+@@ -251,3 +262,38 @@ describe("cancelar determinista (rev. 2, bloqueo 2)", () => {
+     expect(pushMock).not.toHaveBeenCalled();
+   });
+ });
++
++describe("destino de salida según el origen (JOS-23)", () => {
++  it("con origen «actividad»: al guardar vuelve a la Actividad Diaria, no a la Ficha", async () => {
++    const proximo = zonedMidnightToMs({ y: 2026, m: 7, d: 17 }, APP_TZ);
++    mutateMock.mockResolvedValue({
++      interaccion: { id: "i9" },
++      prospecto: { ...PROSPECTO, fechaUltimoContacto: AHORA, fechaProximoSeguimiento: proximo },
++    });
++    renderConOrigen("actividad");
++    rellenarObligatorios();
++    fireEvent.submit(boton().closest("form") as HTMLFormElement);
++
++    await waitFor(() => expect(replaceMock).toHaveBeenCalledWith("/actividad"));
++    expect(replaceMock).not.toHaveBeenCalledWith("/prospectos/p7");
++    // El flash viaja igual: lo consume la Actividad Diaria en vez de la Ficha.
++    expect(consumirFlash()).toBe(textoToast(proximo));
++  });
++
++  it("con origen «actividad»: cancelar también vuelve a la Actividad Diaria", () => {
++    renderConOrigen("actividad");
++    fireEvent.click(screen.getByRole("button", { name: "Cancelar y volver" }));
++    expect(replaceMock).toHaveBeenCalledTimes(1);
++    expect(replaceMock).toHaveBeenCalledWith("/actividad");
++  });
++
++  it("un origen inventado se ignora: se mantiene el contrato de M3 (Ficha)", async () => {
++    mutateMock.mockResolvedValue({ interaccion: { id: "i10" }, prospecto: { ...PROSPECTO } });
++    renderConOrigen("https://ejemplo.invalido");
++    rellenarObligatorios();
++    fireEvent.submit(boton().closest("form") as HTMLFormElement);
++
++    await waitFor(() => expect(replaceMock).toHaveBeenCalledWith("/prospectos/p7"));
++    expect(replaceMock).not.toHaveBeenCalledWith("https://ejemplo.invalido");
++  });
++});
+diff --git a/src/app/(app)/prospectos/[id]/interacciones/nueva/page.tsx b/src/app/(app)/prospectos/[id]/interacciones/nueva/page.tsx
+index 53fff01..fffa7da 100644
+--- a/src/app/(app)/prospectos/[id]/interacciones/nueva/page.tsx
++++ b/src/app/(app)/prospectos/[id]/interacciones/nueva/page.tsx
+@@ -1,7 +1,7 @@
+ "use client";
+ 
+ import * as React from "react";
+-import { useParams, useRouter } from "next/navigation";
++import { useParams, useRouter, useSearchParams } from "next/navigation";
+ import { useMutation, useQuery } from "convex/react";
+ import { ConvexError } from "convex/values";
+ import { api } from "../../../../../../../convex/_generated/api";
+@@ -10,6 +10,7 @@ import { APP_TZ, dayKeyToday, ventanaDia } from "../../../../../../../convex/lib
+ import { Avatar, Button, Input, PillSelect, StageBadge } from "@/components/ui";
+ import { FormHeader } from "@/components/layout/FormHeader";
+ import { escribirFlash } from "@/lib/flash";
++import { destinoAlSalir, PARAM_VOLVER } from "@/lib/volver";
+ import {
+   BANNER_ERROR_RED,
+   ERROR_FECHA_FUTURA,
+@@ -51,18 +52,52 @@ function fechaSeleccionadaAMs(dayKey: string, ahoraMs: number): number {
+   return ventanaDia(dayKey, APP_TZ).hoyInicio + 12 * 3_600_000;
+ }
+ 
++/**
++ * Envoltura de la pantalla: el formulario lee el parámetro `volver` de la URL y
++ * `useSearchParams` suspende durante el prerenderizado, así que el hook necesita
++ * una barrera por encima (docs de Next 16, use-search-params § "Behavior").
++ *
++ * Matiz medido, no supuesto: hoy esta ruta es dinámica (`[id]` sin
++ * `generateStaticParams`) y `next build` la clasifica como ƒ, luego no se
++ * prerenderiza y la compilación pasaría igual sin la barrera. Se mantiene por lo
++ * que recomienda la documentación y porque un cambio futuro —añadir
++ * `generateStaticParams`, activar PPR— convertiría su ausencia en un fallo de
++ * build.
++ */
++export default function RegistrarInteraccionPage() {
++  return (
++    <React.Suspense fallback={<CargandoFormulario />}>
++      <FormularioInteraccion />
++    </React.Suspense>
++  );
++}
++
++function CargandoFormulario() {
++  return (
++    <p role="status" style={{ padding: "48px 16px", textAlign: "center", color: "var(--color-neutral-500)", fontSize: 15, fontFamily: "var(--font-sans)" }}>
++      Cargando formulario…
++    </p>
++  );
++}
++
+ /**
+  * Pantalla "Registrar Interacción" (JOS-16): log del contacto con el prospecto
+  * SIEMPRE preseleccionado (viene en la ruta). El backend de M2 actualiza
+  * fechaUltimoContacto y recalcula el seguimiento en la misma transacción.
+- * Al éxito: flash + replace a la Ficha (P8/P10). Cancelar navega SIEMPRE a la
+- * Ficha con replace (contrato rev. 2). Si el prospecto no existe o es ajeno,
+- * la query de contexto lanza NOT_FOUND al error boundary del segmento.
++ *
++ * Salida DETERMINISTA con replace, tanto al guardar como al cancelar (contrato
++ * rev. 2 de M3), pero el destino ya no es único: desde la acción rápida de la
++ * Actividad Diaria (JOS-23) se vuelve a ella; desde la Ficha, a la Ficha. Lo
++ * decide `destinoAlSalir`, que compara el parámetro y nunca lo concatena.
++ *
++ * Si el prospecto no existe o es ajeno, la query de contexto lanza NOT_FOUND al
++ * error boundary del segmento.
+  */
+-export default function RegistrarInteraccionPage() {
++function FormularioInteraccion() {
+   const router = useRouter();
+   const params = useParams<{ id: string }>();
+   const prospectoId = params.id as Id<"prospectos">;
++  const destinoSalida = destinoAlSalir(useSearchParams().get(PARAM_VOLVER), prospectoId);
+ 
+   const prospecto = useQuery(api.prospectos.obtener, { id: prospectoId });
+   const crear = useMutation(api.interacciones.crear);
+@@ -125,9 +160,10 @@ export default function RegistrarInteraccionPage() {
+         resultado: resultado as ResultadoInteraccion,
+         ...(siguientePaso.trim() !== "" ? { siguientePasoAcordado: siguientePaso.trim() } : {}),
+       });
+-      // El destino (Ficha) consume el flash al montar y muestra el toast (P8).
++      // El destino —Ficha o Actividad Diaria— consume el flash al montar y
++      // muestra el toast (P8).
+       escribirFlash(textoToast(respuesta.prospecto.fechaProximoSeguimiento));
+-      router.replace(`/prospectos/${prospectoId}`);
++      router.replace(destinoSalida);
+     } catch (err) {
+       const datos = datosConvex(err);
+       const mapeo = datos?.code === "VALIDATION_ERROR" && datos.field !== undefined ? ERROR_SERVIDOR[datos.field] : undefined;
+@@ -143,7 +179,7 @@ export default function RegistrarInteraccionPage() {
+ 
+   return (
+     <div style={{ fontFamily: "var(--font-sans)" }}>
+-      <FormHeader titulo="Registrar interacción" hrefCancelar={`/prospectos/${prospectoId}`} />
++      <FormHeader titulo="Registrar interacción" hrefCancelar={destinoSalida} />
+       <form onSubmit={manejarEnvio} noValidate className="mx-auto w-full max-w-2xl px-4 pt-6 md:px-6 md:pt-8">
+         {/* Contexto del prospecto SIEMPRE visible en cabecera (JOS-16/JOS-61). */}
+         {prospecto === undefined ? (
+diff --git a/src/components/ui/ProspectCard.test.tsx b/src/components/ui/ProspectCard.test.tsx
+index 463f855..2584816 100644
+--- a/src/components/ui/ProspectCard.test.tsx
++++ b/src/components/ui/ProspectCard.test.tsx
+@@ -33,4 +33,27 @@ describe("ProspectCard", () => {
+     fireEvent.click(screen.getByRole("button"));
+     expect(onOpen).toHaveBeenCalledTimes(1);
+   });
++
++  it("sin onContacted la tarjeta no muestra el botón (no-regresión del Pipeline)", () => {
++    render(<ProspectCard name="Ana García" stage="presented" onOpen={vi.fn()} />);
++    expect(screen.queryByRole("button", { name: /ya contacté/i })).toBeNull();
++    // Sigue habiendo un único botón: el de abrir la ficha.
++    expect(screen.getAllByRole("button")).toHaveLength(1);
++  });
++
++  it("onContacted añade el botón con el nombre del prospecto en su nombre accesible", () => {
++    render(<ProspectCard name="Ana García" onContacted={vi.fn()} />);
++    expect(screen.getByRole("button", { name: "Ya contacté con Ana García" })).toBeDefined();
++  });
++
++  it("pulsar «Ya contacté» no abre la ficha", () => {
++    const onContacted = vi.fn();
++    const onOpen = vi.fn();
++    render(<ProspectCard name="Ana García" onContacted={onContacted} onOpen={onOpen} />);
++
++    fireEvent.click(screen.getByRole("button", { name: "Ya contacté con Ana García" }));
++
++    expect(onContacted).toHaveBeenCalledTimes(1);
++    expect(onOpen).not.toHaveBeenCalled();
++  });
+ });
+diff --git a/src/components/ui/ProspectCard.tsx b/src/components/ui/ProspectCard.tsx
+index 8d7af68..d207434 100644
+--- a/src/components/ui/ProspectCard.tsx
++++ b/src/components/ui/ProspectCard.tsx
+@@ -1,5 +1,6 @@
+ import * as React from "react";
+ import { Avatar } from "./Avatar";
++import { Button } from "./Button";
+ import { Icon } from "./Icon";
+ import { StageBadge, type PipelineStage } from "./StageBadge";
+ import { PriorityBadge, type PriorityLevel } from "./PriorityBadge";
+@@ -25,6 +26,12 @@ export interface ProspectCardProps extends React.HTMLAttributes<HTMLDivElement>
+   showStage?: boolean;
+   /** Extra slot at the end of the meta row, e.g. an overdue `<Badge>`. */
+   accessory?: React.ReactNode;
++  /**
++   * Quick "already contacted" action (JOS-23) — renders the prototype's solid
++   * green button in the card footer. Opt-in: screens that don't pass it, such
++   * as the Pipeline, keep the card exactly as it was.
++   */
++  onContacted?: () => void;
+   onCall?: () => void;
+   onWhatsApp?: () => void;
+   onNote?: () => void;
+@@ -41,6 +48,7 @@ export function ProspectCard({
+   timeAgo = "",
+   showStage = true,
+   accessory,
++  onContacted,
+   onCall,
+   onWhatsApp,
+   onNote,
+@@ -103,6 +111,16 @@ export function ProspectCard({
+           <Icon name="chevron-right" size={20} color="var(--color-neutral-300)" style={{ marginTop: 2 }} />
+         </div>
+       </button>
++      {onContacted && (
++        // Fuera del <button> de apertura: son hermanos, nunca botones anidados.
++        // El nombre accesible lleva el del prospecto porque en una lista hay
++        // tantos "Ya contacté" como tarjetas y por voz no se distinguirían.
++        <div style={{ padding: "0 16px 16px" }}>
++          <Button fullWidth aria-label={`Ya contacté con ${name}`} iconLeft={<Icon name="check" size={17} />} onClick={onContacted}>
++            Ya contacté
++          </Button>
++        </div>
++      )}
+       {(onCall || onWhatsApp || onNote) && (
+         <div style={{ display: "flex", borderTop: "1px solid var(--border-default)" }}>
+           {[
+diff --git a/src/lib/volver.test.ts b/src/lib/volver.test.ts
+new file mode 100644
+index 0000000..24fb701
+--- /dev/null
++++ b/src/lib/volver.test.ts
+@@ -0,0 +1,42 @@
++import { describe, expect, it } from "vitest";
++import { destinoAlSalir, ORIGEN_ACTIVIDAD, rutaRegistrarDesdeActividad, RUTA_ACTIVIDAD } from "./volver";
++
++const ID = "j57abc123";
++
++describe("destinoAlSalir", () => {
++  it("vuelve a la Actividad Diaria cuando el origen es exactamente el esperado", () => {
++    expect(destinoAlSalir(ORIGEN_ACTIVIDAD, ID)).toBe(RUTA_ACTIVIDAD);
++  });
++
++  it("sin origen mantiene el contrato de M3: vuelve a la Ficha", () => {
++    expect(destinoAlSalir(null, ID)).toBe(`/prospectos/${ID}`);
++    expect(destinoAlSalir(undefined, ID)).toBe(`/prospectos/${ID}`);
++    expect(destinoAlSalir("", ID)).toBe(`/prospectos/${ID}`);
++  });
++
++  it("un origen inventado se ignora y no puede convertirse en el destino", () => {
++    // El parámetro solo se compara; nunca se usa para construir la ruta. Cada
++    // uno de estos valores sería una redirección abierta si se concatenara.
++    for (const hostil of [
++      "https://ejemplo.invalido",
++      "//ejemplo.invalido",
++      "/actividad/../../otra",
++      "ACTIVIDAD",
++      " actividad",
++      "actividad ",
++    ]) {
++      expect(destinoAlSalir(hostil, ID)).toBe(`/prospectos/${ID}`);
++    }
++  });
++});
++
++describe("rutaRegistrarDesdeActividad", () => {
++  it("apunta al formulario del prospecto marcando el origen", () => {
++    expect(rutaRegistrarDesdeActividad(ID)).toBe(`/prospectos/${ID}/interacciones/nueva?volver=actividad`);
++  });
++
++  it("el destino de ida y el de vuelta son coherentes entre sí", () => {
++    const url = new URL(rutaRegistrarDesdeActividad(ID), "https://crm.invalido");
++    expect(destinoAlSalir(url.searchParams.get("volver"), ID)).toBe(RUTA_ACTIVIDAD);
++  });
++});
+diff --git a/src/lib/volver.ts b/src/lib/volver.ts
+new file mode 100644
+index 0000000..8ba2378
+--- /dev/null
++++ b/src/lib/volver.ts
+@@ -0,0 +1,30 @@
++/**
++ * Origen de la navegación al formulario "Registrar interacción" (JOS-23).
++ *
++ * El contrato rev. 2 de M3 fija un destino DETERMINISTA al salir del formulario
++ * —al guardar y al cancelar—, nunca history.back(). La acción rápida "Ya
++ * contacté" rompe la premisa de que ese destino sea único: quien entra desde la
++ * Actividad Diaria debe volver a ella; quien entra desde la Ficha, a la Ficha.
++ *
++ * El origen viaja en la URL, no en sessionStorage, para que sobreviva a una
++ * recarga con el formulario a medio rellenar. Pero NUNCA se usa para construir
++ * la ruta: solo se compara con el literal ORIGEN_ACTIVIDAD, y cualquier otro
++ * valor —o su ausencia— cae en el destino por defecto. Los dos destinos
++ * posibles son constantes del código, así que no hay redirección abierta.
++ */
++export const PARAM_VOLVER = "volver";
++export const ORIGEN_ACTIVIDAD = "actividad";
++export const RUTA_ACTIVIDAD = "/actividad";
++
++/** Ruta del formulario de interacción marcada para volver a la Actividad Diaria. */
++export function rutaRegistrarDesdeActividad(prospectoId: string): string {
++  return `/prospectos/${prospectoId}/interacciones/nueva?${PARAM_VOLVER}=${ORIGEN_ACTIVIDAD}`;
++}
++
++/**
++ * Destino al salir del formulario. `origen` es el valor crudo del parámetro de
++ * la URL: se compara, no se concatena.
++ */
++export function destinoAlSalir(origen: string | null | undefined, prospectoId: string): string {
++  return origen === ORIGEN_ACTIVIDAD ? RUTA_ACTIVIDAD : `/prospectos/${prospectoId}`;
++}

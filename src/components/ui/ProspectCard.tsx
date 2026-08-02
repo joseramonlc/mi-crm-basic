@@ -1,5 +1,6 @@
 import * as React from "react";
 import { Avatar } from "./Avatar";
+import { Button } from "./Button";
 import { Icon } from "./Icon";
 import { StageBadge, type PipelineStage } from "./StageBadge";
 import { PriorityBadge, type PriorityLevel } from "./PriorityBadge";
@@ -25,6 +26,12 @@ export interface ProspectCardProps extends React.HTMLAttributes<HTMLDivElement> 
   showStage?: boolean;
   /** Extra slot at the end of the meta row, e.g. an overdue `<Badge>`. */
   accessory?: React.ReactNode;
+  /**
+   * Quick "already contacted" action (JOS-23) — renders the prototype's solid
+   * green button in the card footer. Opt-in: screens that don't pass it, such
+   * as the Pipeline, keep the card exactly as it was.
+   */
+  onContacted?: () => void;
   onCall?: () => void;
   onWhatsApp?: () => void;
   onNote?: () => void;
@@ -41,6 +48,7 @@ export function ProspectCard({
   timeAgo = "",
   showStage = true,
   accessory,
+  onContacted,
   onCall,
   onWhatsApp,
   onNote,
@@ -103,6 +111,16 @@ export function ProspectCard({
           <Icon name="chevron-right" size={20} color="var(--color-neutral-300)" style={{ marginTop: 2 }} />
         </div>
       </button>
+      {onContacted && (
+        // Fuera del <button> de apertura: son hermanos, nunca botones anidados.
+        // El nombre accesible lleva el del prospecto porque en una lista hay
+        // tantos "Ya contacté" como tarjetas y por voz no se distinguirían.
+        <div style={{ padding: "0 16px 16px" }}>
+          <Button fullWidth aria-label={`Ya contacté con ${name}`} iconLeft={<Icon name="check" size={17} />} onClick={onContacted}>
+            Ya contacté
+          </Button>
+        </div>
+      )}
       {(onCall || onWhatsApp || onNote) && (
         <div style={{ display: "flex", borderTop: "1px solid var(--border-default)" }}>
           {[
