@@ -1,0 +1,319 @@
+GATES — JOS-24 · Pantalla Resumen (Dashboard) — BOCADO A (backend)
+Rama: joseramonlc/jos-24-pantalla-dashboard-resumen-global-del-estado-del-pipeline
+Base: origin/master 4c51b12 (verificado con git fetch antes de crear la rama)
+Fecha: 2026-08-03
+Plan: docs/auditoria/JOS-24-plan.md rev. 4 + TRES correcciones posteriores al GO:
+        §4.4-bis    topes de texto en `interacciones` y cota bajada de 1.000 a 500
+        §4.4-ter    el gate de medición e2e se mueve al bocado B
+        §4.4-quater el documento de prospecto pasa a ser finito (2ª auditoría)
+      Cada una conserva intacto debajo el texto original que sustituye.
+
+
+===== ALCANCE DE ESTE BOCADO =====
+
+SOLO BACKEND. No se ha creado ninguna pantalla ni componente de UI.
+Comprobación objetiva: la ruta /resumen NO aparece en la tabla de rutas del build
+(ver sección "npm run build"). El bocado B (interfaz) no está empezado.
+
+
+===== npx convex codegen =====
+
+Necesario: `resumen.ts` es un módulo nuevo y la API generada no lo conocía.
+Sin esto, `npx tsc --noEmit` fallaba con "Property 'resumen' does not exist".
+
+Resultado: convex/_generated/api.d.ts modificado (+2 líneas, generado por la
+herramienta, no editado a mano).
+
+  22:import type * as resumen from "../resumen.js";
+  43:  resumen: typeof resumen;
+
+
+===== npx tsc --noEmit =====
+
+convex/interacciones.test.ts(11,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+convex/prospectos.api.test.ts(10,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+convex/prospectos.test.ts(14,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+convex/resumen.test.ts(11,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+convex/seed.test.ts(8,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+
+DECLARACIÓN HONESTA: son 5, no los 4 preexistentes documentados en JOS-21-gates.txt
+y JOS-23-gates.txt. El quinto (convex/resumen.test.ts) es de un fichero NUEVO de este
+bocado y lo introduzco yo.
+
+No es una regresión ni un patrón nuevo: `import.meta.glob` es el mecanismo que exige
+convex-test para construir el mapa de módulos, y lo usan los otros cuatro ficheros de
+test de convex/ exactamente igual. Añadir un test de Convex implica necesariamente
+añadir una instancia más de este error conocido, salvo que se resuelva la causa raíz
+(los tipos de Vite no entran en el tsconfig raíz), que está fuera del alcance de este
+bocado. Se declara aquí para que la auditoría lo valore y no lo descubra por su cuenta.
+
+
+===== npm run lint =====
+
+> crm-networker@0.1.0 lint
+> eslint
+
+(sin hallazgos)
+
+
+===== npm run build =====
+
+INCIDENCIA en la primera ejecución:
+
+  Error: EACCES: permission denied, rmdir '.../.next/server'
+
+Causa: el proyecto vive en /mnt/c dentro de Dropbox; la sincronización mantenía
+abiertos ficheros de .next. NO es un error de código. Se resolvió con `rm -rf .next`
+(directorio generado, verificado con `git check-ignore -q .next`) y reintento.
+
+AVISO METODOLÓGICO: la primera ejecución se lanzó como `npm run build 2>&1 | tail -20`
+y el runner informó "exit code 0" PESE A HABER FALLADO, porque en una tubería el código
+recogido es el de `tail`, no el del build. Es el mismo patrón de verde falso que
+JOS-23-gates.txt documentó para vitest. Las ejecuciones posteriores capturan el código
+real con `npm run build > fichero 2>&1; echo "EXIT_REAL=$?"`.
+
+Ejecución válida: EXIT_REAL=0
+
+Tabla de rutas — obsérvese la AUSENCIA de /resumen, que confirma el alcance:
+
+  ┌ ○ /
+  ├ ○ /_not-found
+  ├ ○ /actividad
+  ├ ○ /login
+  ├ ○ /prospectos
+  ├ ƒ /prospectos/[id]
+  ├ ƒ /prospectos/[id]/interacciones/nueva
+  ├ ○ /prospectos/nuevo
+  ├ ○ /recuperar
+  └ ○ /registro
+
+
+===== TESTS =====
+
+El proyecto vive en /mnt/c dentro de Dropbox y vitest en paralelo deja workers
+colgados (incidencia documentada en JOS-23-gates.txt), así que se usan las mismas
+opciones que allí:
+
+    npx vitest run --pool=threads --no-file-parallelism
+
+VERIFICACIÓN ANTI-VERDE-FALSO (lección de JOS-23): se contrasta el número de ficheros
+ejecutados con los que existen en el repo. Si vitest arrancase menos ficheros de los
+que hay y saliera con código 0, el contraste lo detecta.
+
+  $ find src convex -name "*.test.ts" -o -name "*.test.tsx" | wc -l
+  36
+
+  $ npx vitest run --pool=threads --no-file-parallelism
+   Test Files  36 passed (36)        <-- coincide con los 36 del repo
+        Tests  376 passed (376)
+     Duration  1005.58s
+
+Estado previo a este bocado (master): 35 ficheros / 347 tests.
+Añadidos:
+  +1 fichero  convex/resumen.test.ts              25 tests
+  +3 tests    convex/interacciones.test.ts        topes de queOcurrio / siguientePaso
+  +1 test     convex/prospectos.test.ts           documento de prospecto finito (2ª pasada)
+  347 + 25 + 3 + 1 = 376. Cuadra.
+
+
+===== MEDICIÓN DEL PRESUPUESTO DE LECTURA =====
+
+Test: convex/resumen.test.ts > "resumen · presupuesto de lectura".
+
+Peor caso ADMISIBLE, con los SIETE campos libres en su tope:
+  notas 2000 · queOcurrio 2000 · siguientePasoAcordado 2000
+  nombre 80 · comoSeConocio 120 · telefono 25 · email 254
+
+  Lectura         Documentos   B/doc    Total
+  prospectos          1.201    2.786    3.345.986 B
+  interacciones         501    4.270    2.139.270 B
+  SUMA                1.702             5.485.256 B
+
+  Documentos: 1.702 / 32.000 = 5,3 %   (guarda del test: < 8.000)
+  Bytes:  5.485.256 / 16 MiB = 32,7 %  (guarda del test: < 1/3 = 5.592.405 B)
+  Margen: 3,06x   ·   Holgura contra la guarda: ~107 KB (2 %)
+
+⚠️ LA CIFRA SUBIÓ respecto a la 1ª medición (2.383 B/doc, 29,8 %, margen 3,35x) y
+eso es CORRECTO: aquella se tomaba con valores realistas sobre un documento de
+prospecto que aún no era finito, así que era el peor caso REALISTA. Tras acotar
+nombre/comoSeConocio/telefono/email (§4.4-quater del plan) se mide el mayor documento
+que el servidor permite crear. Subir es la señal de que la medición pasó a ser
+exhaustiva, no de que algo empeorase.
+
+La guarda es deliberadamente estrecha: cualquier campo nuevo en el documento la rompe
+y obliga a volver a medir. MAX_RESUMEN_INTERACCIONES se mantiene en 500 — bajarlo a
+400 devolvería el margen a 3,3x a costa de truncar antes, y 3,06x sigue muy por encima
+del 2,3x que se rechazó.
+
+El peor caso es ALCANZABLE de verdad: el test verifica que en ese escenario ambas
+lecturas truncan a la vez (prospectos.exacto === false && interacciones.exacto === false).
+
+LIMITACIÓN QUE DEBE CONSTAR: esta medición se obtiene con convex-test (EN MEMORIA),
+con la misma técnica que la guarda que ya vigila el Pipeline. NO es la medición contra
+deployment real que exige §4.3 del plan y que en JOS-21 quedó en JOS-21-e2e.md con
+latencia y porcentaje reales. ESE GATE SIGUE ABIERTO: requiere desplegar a un
+deployment de Convex y sembrarlo, y no se ha hecho por no tocar la infraestructura del
+product owner sin autorización expresa.
+
+
+===== DESPLIEGUE AL DEPLOYMENT REAL DE CONVEX =====
+
+Autorizado expresamente por el product owner el 2026-08-03.
+Deployment: jose-lumbreras:crm-networker:dev -> adamant-mockingbird-816.eu-west-1.convex.cloud
+
+$ npx convex dev --once
+  ✔ Convex functions ready! (2.58s)
+  EXIT_REAL=0
+
+Acredita que el esquema con el índice NUEVO by_usuario_fecha es válido y se publica
+contra un servidor real: un índice mal definido habría hecho fallar el push.
+
+Verificación funcional de la guarda de sesión CONTRA EL DEPLOYMENT REAL:
+
+$ npx convex run resumen:resumen '{"dayKey":"2026-08-03","periodo":"mes"}'
+  ✖ Failed to run function "resumen:resumen":
+  Uncaught ConvexError: {"code":"UNAUTHENTICATED","message":"Se requiere sesión"}
+      at unauthenticated (../../convex/lib/errores.ts:32:0)
+      at requireUsuario (../../convex/lib/usuario.ts:16:19)
+      at async handler (../convex/resumen.ts:99:15)
+
+Prueba dos cosas a la vez: la función está viva en el servidor Y aborta sin identidad
+antes de tocar la base de datos.
+
+
+===== GATE DE MEDICIÓN: MOVIDO AL BOCADO B =====
+
+El gate de §4.3 del plan NO se cierra en este bocado, y no por falta de intento.
+
+`resumen` exige identidad de sesión. Para medirla con datos reales hay que invocarla
+autenticada, y en el bocado A no existe ninguna vía:
+  - `npx convex run` no lleva identidad (demostrado arriba).
+  - No hay pantalla que la llame: /resumen es el bocado B; el build lo confirma.
+  - El proyecto no tiene automatización de navegador. Misma conclusión a la que llegó
+    el departamento de auditoría en JOS-21: "solo lo puede hacer una persona con
+    navegador y sesión iniciada".
+
+En JOS-21 no ocurrió porque la pantalla iba en el mismo bocado. Este plan separó
+backend y UI, y el gate quedó descolgado. Es un fallo de diseño del plan, no del código.
+
+Resolución autorizada por el product owner el 2026-08-03: mover el gate al cierre del
+bocado B, con el mismo escenario y las mismas cifras de contraste. Guión completo en
+docs/auditoria/JOS-24-e2e.md, con la parte no autenticada ya ejecutada (§1).
+
+Evidencia de presupuesto que aporta el bocado A en su lugar:
+  1. La guarda de convex/resumen.test.ts sobre el peor caso ADMISIBLE (ver sección
+     anterior). Ya no es una estimación: los topes de texto la hacen acotable.
+  2. La verificación contra deployment real de esta misma sección.
+
+
+===== SEED: ESCENARIO NUEVO `resumen` =====
+
+Añadido a convex/seed.ts (internalMutation, doble guarda APP_ENV + ALLOW_SEED, no
+invocable desde clientes). Siembra el peor caso con las DOS lecturas saturadas A LA VEZ,
+que es lo que exige §4.3 (medirlas por separado no valdría):
+
+  - 1.201 prospectos    (= MAX_RESUMEN_PROSPECTOS + 1) por las 6 etapas, notas a 2.000
+  -   501 interacciones (= MAX_RESUMEN_INTERACCIONES + 1) en la ventana de 30 días,
+        con queOcurrio Y siguientePasoAcordado a 2.000
+
+⚠️ Como el resto de escenarios desde JOS-22, el seed BORRA en cascada los prospectos e
+interacciones del tenant antes de sembrar. Advertido en rojo en JOS-24-e2e.md §3.2.
+
+
+===== DECISIONES DE PRODUCTO TOMADAS DURANTE EL BOCADO =====
+
+1. Tope de los campos libres de interacción: 2.000 caracteres, aplicado a queOcurrio
+   Y a siguientePasoAcordado (topar solo uno dejaba el documento sin acotar).
+   Motivo: el Resumen es la primera lectura AGREGADA y SIN PAGINAR sobre interacciones;
+   sin tope no existe un "peor caso admisible" que medir. Mismo tratamiento que recibió
+   JOS-74 dentro de JOS-21. Aprobado por el product owner el 2026-08-03.
+
+2. MAX_RESUMEN_INTERACCIONES baja de 1.000 (valor del plan rev. 4) a 500.
+   Motivo: la medición dio 42,5 % del límite con 1.000 (margen 2,3x). Aprobado por el
+   product owner el 2026-08-03 sobre tres opciones cuantificadas (1.000 / 500 / 300).
+   Registrado en el plan §4.4-bis.
+
+
+===== HALLAZGO CERRADO EN LA 2ª PASADA: DOCUMENTO DE PROSPECTO FINITO =====
+
+Lo que en la 1ª entrega se declaró como "hallazgo no cerrado" fue el bloqueante de la
+2ª auditoría, y se ha resuelto ACOTANDO (decisión de producto del 2026-08-03), no
+aceptando el riesgo:
+
+  nombre  80  ·  comoSeConocio  120  ·  telefono  25  ·  email  254
+
+Aplicados en `crear` Y en `actualizar` — un tope solo en el alta se esquiva editando.
+
+Hallazgo adicional NO señalado por la auditoría: `email` se validaba de FORMA pero no
+de LONGITUD (EMAIL_RE acepta cualquier tamaño mientras haya arroba y punto). Son
+cuatro campos, no tres.
+
+Test que lo cubre: convex/prospectos.test.ts > "el documento de prospecto es FINITO:
+los cuatro campos restantes también tienen tope (JOS-24)". Cubre exceso, tope exacto,
+trim-antes-de-medir y la puerta de atrás de la edición.
+
+
+===== DATOS ANTIGUOS: VERIFICADO CONTRA EL DEPLOYMENT REAL =====
+
+Mayor nº 2 de la 2ª auditoría: los registros previos a los topes no se migran (misma
+deuda que ya anotó JOS-74), así que había que comprobar si existían.
+
+$ npx convex data prospectos    -> 12 filas
+$ npx convex data interacciones ->  9 filas
+$ campo de texto más largo del deployment -> 70 caracteres
+
+Nada se acerca a ningún tope (el menor es 25). El riesgo de datos legacy es NULO en
+este deployment, y queda acreditado con datos en lugar de con una declaración.
+
+
+===== ESTADO DEL ÁRBOL =====
+
+ M convex/_generated/api.d.ts      (generado por convex codegen / convex dev)
+ M convex/interacciones.test.ts    (+3 tests de tope)
+ M convex/interacciones.ts         (aplica los validadores acotados)
+ M convex/lib/constants.ts         (+2 constantes de cota)
+ M convex/lib/validacion.ts        (+5 topes de longitud, +3 validadores, email acotado)
+ M convex/prospectos.test.ts       (+1 test: documento de prospecto finito)
+ M convex/prospectos.ts            (crear y actualizar aplican los topes nuevos)
+ M convex/schema.ts                (+1 índice)
+ M convex/seed.ts                  (+1 escenario `resumen`, solo-dev)
+?? convex/resumen.ts               (nuevo)
+?? convex/resumen.test.ts          (nuevo)
+?? docs/auditoria/JOS-24-plan.md   (nuevo)
+?? docs/auditoria/JOS-24-gates.txt (nuevo, este fichero)
+?? docs/auditoria/JOS-24-e2e.md    (nuevo, guión de la medición)
+
+Sin commits. Sin push. Sin PR. A la espera de la auditoría de código del bocado A.
+
+
+===== RESUMEN PARA LA AUDITORÍA =====
+
+Alcance real ejecutado = alcance del plan rev. 4 + TRES ampliaciones aprobadas
+expresamente por el product owner durante la implementación, todas surgidas de
+hallazgos y no de conveniencia:
+
+  1. Topes de texto en `interacciones` (queOcurrio y siguientePasoAcordado, 2.000 c).
+     Sin ellos no existe "peor caso admisible" que medir, y el Resumen reintroducía en
+     esa tabla la vulnerabilidad que JOS-74 cerró en `prospectos`.
+  2. Escenario de seed `resumen`, instrumental para la medición.
+  3. Topes de nombre (80), comoSeConocio (120), telefono (25) y email (254) en
+     `prospectos`, aplicados en crear Y en actualizar. Cierran el BLOQUEANTE de la 2ª
+     auditoría del código: sin ellos el documento no era finito y la medición era el
+     peor caso realista, no el admisible. El de `email` es hallazgo propio, no
+     señalado por la auditoría: se validaba la forma pero no la longitud.
+
+Y TRES ajustes del plan documentados como correcciones posteriores al GO, cada una con
+el texto original que sustituye conservado intacto debajo:
+  - §4.4-bis:    MAX_RESUMEN_INTERACCIONES de 1.000 a 500, decidido POR LA MEDICIÓN.
+  - §4.4-ter:    el gate de medición e2e se mueve al bocado B.
+  - §4.4-quater: el documento de prospecto pasa a ser finito; nueva medición 32,7 %.
+
+Puntos que se piden mirar con atención:
+  - convex/resumen.ts: la pasada única sobre prospectos y el cálculo de
+    diaCompletoDesde (la rama "centinela de otro día" es la que corrigió el mayor 2).
+  - Que ninguna métrica quede sin flag de parcialidad (tabla de §5.2 del plan).
+  - El quinto error de tsc, declarado más arriba.
+
+NO QUEDA NINGÚN HALLAZGO ABIERTO de las dos pasadas anteriores. Lo único pendiente por
+diseño es el e2e contra deployment real, desplazado al cierre del bocado B (§4.4-ter),
+con guión y cifras de contraste ya actualizadas en docs/auditoria/JOS-24-e2e.md.

@@ -84,5 +84,11 @@ export default defineSchema({
     queOcurrio: v.string(),
     resultado: resultadoInteraccion,
     siguientePasoAcordado: v.optional(v.string()),
-  }).index("by_usuario_prospecto_fecha", ["usuarioId", "prospectoId", "fecha"]),
+  })
+    .index("by_usuario_prospecto_fecha", ["usuarioId", "prospectoId", "fecha"])
+    // Resumen (JOS-24): con `prospectoId` en medio, by_usuario_prospecto_fecha NO
+    // permite consultar por rango de fechas todas las interacciones del tenant —
+    // habría que iterar prospecto a prospecto. Este índice es lo que hace posible
+    // la actividad del período y la serie del gráfico con UNA lectura acotada.
+    .index("by_usuario_fecha", ["usuarioId", "fecha"]),
 });

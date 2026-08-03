@@ -8,7 +8,17 @@ import { SEGUIMIENTO_DIAS, calcularFechaProximoSeguimiento } from "./lib/seguimi
 import { requireUsuario } from "./lib/usuario";
 import { prospectoDelUsuario } from "./lib/acceso";
 import { prospectoPublicoValidator, toProspectoPublico } from "./lib/proyecciones";
-import { conLimites, emailOpcional, notasOpcional, textoObligatorio, textoOpcional, validarNumItems } from "./lib/validacion";
+import {
+  LONGITUD_MAX_COMO_SE_CONOCIO,
+  LONGITUD_MAX_NOMBRE,
+  LONGITUD_MAX_TELEFONO,
+  conLimites,
+  emailOpcional,
+  notasOpcional,
+  textoObligatorioAcotado,
+  textoOpcionalAcotado,
+  validarNumItems,
+} from "./lib/validacion";
 import { canalContacto, etapaProspecto } from "./schema";
 
 export interface ProspectoActividad {
@@ -242,9 +252,9 @@ export const crear = mutation({
   returns: prospectoPublicoValidator,
   handler: async (ctx, args) => {
     const usuarioId = await requireUsuario(ctx);
-    const nombre = textoObligatorio(args.nombre, "nombre");
-    const comoSeConocio = textoObligatorio(args.comoSeConocio, "comoSeConocio");
-    const telefono = textoOpcional(args.telefono);
+    const nombre = textoObligatorioAcotado(args.nombre, "nombre", LONGITUD_MAX_NOMBRE);
+    const comoSeConocio = textoObligatorioAcotado(args.comoSeConocio, "comoSeConocio", LONGITUD_MAX_COMO_SE_CONOCIO);
+    const telefono = textoOpcionalAcotado(args.telefono, "telefono", LONGITUD_MAX_TELEFONO);
     const email = emailOpcional(args.email);
     const notas = notasOpcional(args.notas);
 
@@ -319,10 +329,12 @@ export const actualizar = mutation({
     const doc = await prospectoDelUsuario(ctx, args.id, usuarioId);
 
     const patch: Partial<Doc<"prospectos">> = {};
-    if (args.nombre !== undefined) patch.nombre = textoObligatorio(args.nombre, "nombre");
-    if (args.comoSeConocio !== undefined) patch.comoSeConocio = textoObligatorio(args.comoSeConocio, "comoSeConocio");
+    if (args.nombre !== undefined) patch.nombre = textoObligatorioAcotado(args.nombre, "nombre", LONGITUD_MAX_NOMBRE);
+    if (args.comoSeConocio !== undefined)
+      patch.comoSeConocio = textoObligatorioAcotado(args.comoSeConocio, "comoSeConocio", LONGITUD_MAX_COMO_SE_CONOCIO);
     if (args.canalContactoPreferido !== undefined) patch.canalContactoPreferido = args.canalContactoPreferido;
-    if (args.telefono !== undefined) patch.telefono = textoOpcional(args.telefono);
+    if (args.telefono !== undefined)
+      patch.telefono = textoOpcionalAcotado(args.telefono, "telefono", LONGITUD_MAX_TELEFONO);
     if (args.email !== undefined) patch.email = emailOpcional(args.email);
     if (args.notas !== undefined) patch.notas = notasOpcional(args.notas);
 

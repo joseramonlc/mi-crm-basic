@@ -29,3 +29,43 @@ export const MAX_PIPELINE = 200;
 
 /** Tarjetas visibles por grupo del Pipeline antes de expandir con "Ver todos". */
 export const PIPELINE_VISIBLES = 25;
+
+/**
+ * Cota TOTAL de prospectos leídos por el Resumen (JOS-24), con el mismo centinela +1.
+ *
+ * El Resumen hace UNA sola pasada sobre `by_usuario` y de ella deriva recuentos por
+ * etapa, pendientes, nuevos del período y totales. Un único flag `exacto` gobierna
+ * todo lo derivado: o todo es exacto o todo se declara parcial, nunca un conjunto
+ * internamente inconsistente (p. ej. totales exactos con etapas truncadas).
+ *
+ * Se expresa como 6 × MAX_PIPELINE A PROPÓSITO, no como literal 1200: garantiza que
+ * SIEMPRE que el Pipeline muestre recuentos exactos, el Resumen también. Dos pantallas
+ * que cuentan lo mismo no pueden contradecirse. Al acotar por total y no por etapa, el
+ * Resumen puede además ser exacto donde el Pipeline muestra "200+" — es más preciso,
+ * no incoherente (lo fija el test "201 en una etapa, resto vacío").
+ *
+ * ACOPLADO a LONGITUD_MAX_NOTAS igual que MAX_PIPELINE: la query lee documentos
+ * completos contra el límite de 16 MiB. Subir el tope de notas obliga a volver a medir
+ * LAS DOS pantallas, no solo el Pipeline.
+ */
+export const MAX_RESUMEN_PROSPECTOS = 6 * MAX_PIPELINE;
+
+/**
+ * Cota de interacciones leídas por el Resumen dentro de la ventana del período.
+ *
+ * 500 en 30 días son ~17 contactos diarios sostenidos: fuera del alcance realista de un
+ * networker individual, mismo razonamiento que MAX_PIPELINE. La lectura es DESCENDENTE
+ * por fecha, de modo que al truncar se pierden los días MÁS ANTIGUOS y nunca los
+ * recientes, que son los que el usuario mira.
+ *
+ * EL VALOR LO FIJÓ LA MEDICIÓN, no una estimación (docs/auditoria/JOS-24-e2e.md). El
+ * Resumen es la primera pantalla que lee DOS tablas en la misma query, y ambas suman
+ * contra el mismo límite de 16 MiB. Con MAX_RESUMEN_PROSPECTOS atado por coherencia al
+ * Pipeline, esta cota es el único parámetro libre para conservar margen:
+ *
+ *   1.000 → 42,5 % del límite (margen 2,3×)   500 → 29,8 % (margen 3,4×)   300 → 24,7 % (4,1×)
+ *
+ * Decisión de producto (2026-08-03): 500. Recupera margen para añadir campos al
+ * documento más adelante sin que la pantalla se declare parcial en uso realista.
+ */
+export const MAX_RESUMEN_INTERACCIONES = 500;

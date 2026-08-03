@@ -10,7 +10,13 @@ import {
   toInteraccionPublica,
   toProspectoPublico,
 } from "./lib/proyecciones";
-import { conLimites, textoObligatorio, textoOpcional, validarFechaInteraccion, validarNumItems } from "./lib/validacion";
+import {
+  conLimites,
+  queOcurrioObligatorio,
+  siguientePasoOpcional,
+  validarFechaInteraccion,
+  validarNumItems,
+} from "./lib/validacion";
 import { resultadoInteraccion, tipoInteraccion } from "./schema";
 
 /**
@@ -40,8 +46,8 @@ export const crear = mutation({
     const usuarioId = await requireUsuario(ctx);
     const prospecto = await prospectoDelUsuario(ctx, args.prospectoId, usuarioId);
     validarFechaInteraccion(args.fecha, Date.now());
-    const queOcurrio = textoObligatorio(args.queOcurrio, "queOcurrio");
-    const siguientePasoAcordado = textoOpcional(args.siguientePasoAcordado);
+    const queOcurrio = queOcurrioObligatorio(args.queOcurrio);
+    const siguientePasoAcordado = siguientePasoOpcional(args.siguientePasoAcordado);
 
     const interaccionId = await ctx.db.insert("interacciones", {
       usuarioId,
