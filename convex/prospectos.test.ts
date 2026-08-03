@@ -4,7 +4,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { api, internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { MAX_ACTIVIDAD, MAX_PIPELINE } from "./lib/constants";
-import { LONGITUD_MAX_NOTAS } from "./lib/validacion";
+import {
+  LONGITUD_MAX_COMO_SE_CONOCIO,
+  LONGITUD_MAX_EMAIL,
+  LONGITUD_MAX_NOMBRE,
+  LONGITUD_MAX_NOTAS,
+  LONGITUD_MAX_TELEFONO,
+} from "./lib/validacion";
 import { APP_TZ, ventanaDia } from "./lib/fecha";
 import schema from "./schema";
 
@@ -511,6 +517,53 @@ describe("pipeline · presupuesto de lectura (condición 2 del GO de auditoría)
     await expect(
       t.mutation(api.prospectos.actualizar, { id: creado.id, notas: "z".repeat(LONGITUD_MAX_NOTAS + 1) }),
     ).rejects.toThrow(/notas no puede superar/);
+  });
+
+  it("el documento de prospecto es FINITO: los cuatro campos restantes también tienen tope (JOS-24)", async () => {
+    // JOS-74 acotó solo `notas`, así que el documento seguía sin ser finito y el peor
+    // caso medido era el REALISTA, no el admisible. Bloqueante de la 2ª auditoría del
+    // bocado A de JOS-24: sin estos topes no se puede afirmar que el presupuesto de
+    // lectura del Resumen esté acotado para cualquier dato válido.
+    const t = nuevoTest().withIdentity(IDENT_A);
+    const base = { nombre: "Ana", comoSeConocio: "Evento", canalContactoPreferido: "phone" as const };
+
+    await expect(
+      t.mutation(api.prospectos.crear, { ...base, nombre: "x".repeat(LONGITUD_MAX_NOMBRE + 1) }),
+    ).rejects.toThrow(/nombre no puede superar/);
+    await expect(
+      t.mutation(api.prospectos.crear, { ...base, comoSeConocio: "x".repeat(LONGITUD_MAX_COMO_SE_CONOCIO + 1) }),
+    ).rejects.toThrow(/comoSeConocio no puede superar/);
+    await expect(
+      t.mutation(api.prospectos.crear, { ...base, telefono: "9".repeat(LONGITUD_MAX_TELEFONO + 1) }),
+    ).rejects.toThrow(/telefono no puede superar/);
+
+    // El email se validaba de FORMA pero no de longitud: la expresión regular acepta
+    // una cadena de cualquier tamaño mientras tenga arroba y punto.
+    await expect(
+      t.mutation(api.prospectos.crear, { ...base, email: `${"x".repeat(LONGITUD_MAX_EMAIL)}@ejemplo.com` }),
+    ).rejects.toThrow(/email no puede superar/);
+
+    // Justo en el tope entran los cuatro, con el trim aplicado ANTES de medir.
+    const emailAlTope = `${"x".repeat(LONGITUD_MAX_EMAIL - "@ejemplo.com".length)}@ejemplo.com`;
+    const creado = await t.mutation(api.prospectos.crear, {
+      nombre: `  ${"n".repeat(LONGITUD_MAX_NOMBRE)}  `,
+      comoSeConocio: "c".repeat(LONGITUD_MAX_COMO_SE_CONOCIO),
+      canalContactoPreferido: "phone" as const,
+      telefono: "9".repeat(LONGITUD_MAX_TELEFONO),
+      email: emailAlTope,
+    });
+    expect(creado.nombre).toHaveLength(LONGITUD_MAX_NOMBRE);
+    expect(creado.comoSeConocio).toHaveLength(LONGITUD_MAX_COMO_SE_CONOCIO);
+    expect(creado.telefono).toHaveLength(LONGITUD_MAX_TELEFONO);
+    expect(creado.email).toHaveLength(LONGITUD_MAX_EMAIL);
+
+    // Tampoco por la puerta de atrás de la edición.
+    await expect(
+      t.mutation(api.prospectos.actualizar, { id: creado.id, nombre: "x".repeat(LONGITUD_MAX_NOMBRE + 1) }),
+    ).rejects.toThrow(/nombre no puede superar/);
+    await expect(
+      t.mutation(api.prospectos.actualizar, { id: creado.id, telefono: "9".repeat(LONGITUD_MAX_TELEFONO + 1) }),
+    ).rejects.toThrow(/telefono no puede superar/);
   });
 });
 

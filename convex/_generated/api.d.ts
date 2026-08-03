@@ -19,6 +19,7 @@ import type * as lib_seguimiento from "../lib/seguimiento.js";
 import type * as lib_usuario from "../lib/usuario.js";
 import type * as lib_validacion from "../lib/validacion.js";
 import type * as prospectos from "../prospectos.js";
+import type * as resumen from "../resumen.js";
 import type * as seed from "../seed.js";
 
 import type {
@@ -39,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   "lib/usuario": typeof lib_usuario;
   "lib/validacion": typeof lib_validacion;
   prospectos: typeof prospectos;
+  resumen: typeof resumen;
   seed: typeof seed;
 }>;
 

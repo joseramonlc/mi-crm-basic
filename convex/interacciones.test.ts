@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "./_generated/api";
 import { APP_TZ, ventanaDia } from "./lib/fecha";
 import { calcularFechaProximoSeguimiento } from "./lib/seguimiento";
-import { FUTURO_MARGEN_MS } from "./lib/validacion";
+import { FUTURO_MARGEN_MS, LONGITUD_MAX_TEXTO_INTERACCION } from "./lib/validacion";
 import schema from "./schema";
 
 const modules = import.meta.glob(["./**/*.{js,ts}", "!./**/*.test.ts", "!./**/*.d.ts"]);
@@ -161,6 +161,44 @@ describe("interacciones.crear · validación de fecha (reloj fijado)", () => {
     const data = await dataDeError(crear(t, prospectoId, { queOcurrio: "   " }));
     expect(data).toMatchObject({ code: "VALIDATION_ERROR", field: "queOcurrio" });
     expect(await t.run((ctx) => ctx.db.query("interacciones").collect())).toEqual([]);
+  });
+});
+
+describe("interacciones.crear · tope de los campos libres (JOS-24)", () => {
+  // Cierra el círculo del presupuesto de lectura del Resumen: ese test acota el peor
+  // caso ADMISIBLE, y "admisible" tiene que imponerlo el servidor, no la buena
+  // voluntad del cliente. Sin estos topes no existe un peor caso que medir.
+  const LARGO = "x".repeat(LONGITUD_MAX_TEXTO_INTERACCION + 1);
+  const TOPE = "x".repeat(LONGITUD_MAX_TEXTO_INTERACCION);
+
+  it("queOcurrio por encima del tope → VALIDATION_ERROR sin escrituras", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t);
+    const data = await dataDeError(crear(t, prospectoId, { queOcurrio: LARGO }));
+    expect(data).toMatchObject({ code: "VALIDATION_ERROR", field: "queOcurrio" });
+    expect(await t.run((ctx) => ctx.db.query("interacciones").collect())).toEqual([]);
+  });
+
+  it("siguientePasoAcordado por encima del tope → VALIDATION_ERROR sin escrituras", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t);
+    const data = await dataDeError(crear(t, prospectoId, { siguientePasoAcordado: LARGO }));
+    expect(data).toMatchObject({ code: "VALIDATION_ERROR", field: "siguientePasoAcordado" });
+    expect(await t.run((ctx) => ctx.db.query("interacciones").collect())).toEqual([]);
+  });
+
+  it("justo en el tope entra, y el trim se aplica ANTES de medir", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t);
+
+    // Con espacios alrededor supera el tope en bruto; tras el trim cabe justo.
+    const r = await crear(t, prospectoId, {
+      queOcurrio: `   ${TOPE}   `,
+      siguientePasoAcordado: `  ${TOPE}  `,
+    });
+
+    expect(r.interaccion.queOcurrio).toHaveLength(LONGITUD_MAX_TEXTO_INTERACCION);
+    expect(r.interaccion.siguientePasoAcordado).toHaveLength(LONGITUD_MAX_TEXTO_INTERACCION);
   });
 });
 

@@ -2,9 +2,21 @@ import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { APP_TZ, addCivilDays, dayKeyToday, parseDayKey, zonedMidnightToMs } from "./lib/fecha";
 import { calcularFechaProximoSeguimiento, type Etapa } from "./lib/seguimiento";
-import { LONGITUD_MAX_NOTAS, textoObligatorio } from "./lib/validacion";
+import {
+  LONGITUD_MAX_COMO_SE_CONOCIO,
+  LONGITUD_MAX_EMAIL,
+  LONGITUD_MAX_NOMBRE,
+  LONGITUD_MAX_NOTAS,
+  LONGITUD_MAX_TELEFONO,
+  LONGITUD_MAX_TEXTO_INTERACCION,
+  textoObligatorio,
+} from "./lib/validacion";
+import { MAX_RESUMEN_INTERACCIONES, MAX_RESUMEN_PROSPECTOS } from "./lib/constants";
 
 type Canal = "phone" | "whatsapp" | "mail" | "instagram" | "otro";
+
+/** Las 6 etapas, para repartir el escenario `resumen` y ejercitar todos los contadores. */
+const ETAPAS_RESUMEN: Etapa[] = ["new", "contacted", "presented", "evaluating", "joined", "discarded"];
 type Tipo = "call" | "message" | "meeting";
 type Resultado = "interested" | "thinking" | "not_interested" | "other";
 
@@ -22,6 +34,9 @@ interface Fixture {
   etapa: Etapa;
   canal: Canal;
   comoSeConocio: string;
+  /** Opcionales; solo el escenario `resumen` los usa, para sembrar el peor caso. */
+  telefono?: string;
+  email?: string;
   /** Días (calendario) desde el alta hasta el dayKey del seed. */
   altaHaceDias: number;
   /**
@@ -63,6 +78,8 @@ interface Fixture {
  * - pipeline:  reparto por las 6 etapas con vencidos, hoy y futuros (JOS-21)
  * - volumen:   600 en una etapa, por encima de MAX_PIPELINE, con notas largas —
  *              para medir truncamiento y latencia real (condición 2 del GO)
+ * - resumen:   1.201 prospectos + 501 interacciones, TODOS los campos libres al
+ *              tope: satura a la vez las dos lecturas del Resumen (JOS-24 §4.3)
  */
 export const seed = internalMutation({
   args: {
@@ -72,6 +89,7 @@ export const seed = internalMutation({
       v.literal("alDia"),
       v.literal("pipeline"),
       v.literal("volumen"),
+      v.literal("resumen"),
     ),
     usuarioId: v.string(),
     dayKey: v.optional(v.string()),
@@ -257,6 +275,46 @@ export const seed = internalMutation({
           ],
         };
       }),
+      // JOS-24: peor caso ADMISIBLE del Resumen, con las DOS lecturas saturadas a la
+      // vez — es la condición que exige §4.3 del plan (no vale medirlas por separado).
+      //   · 1.201 prospectos  = MAX_RESUMEN_PROSPECTOS + 1  → truncamiento de la lectura 1
+      //   ·   501 interacciones = MAX_RESUMEN_INTERACCIONES + 1 → truncamiento de la lectura 2
+      // Todos los campos libres van al tope que imponen las mutaciones (notas,
+      // queOcurrio y siguientePasoAcordado): el documento más grande que el servidor
+      // permite crear, no uno cómodo.
+      resumen: Array.from({ length: MAX_RESUMEN_PROSPECTOS + 1 }, (_, i) => {
+        const etapa = ETAPAS_RESUMEN[i % ETAPAS_RESUMEN.length];
+        // Las primeras 501 llevan interacción dentro de la ventana de 30 días,
+        // repartidas por día para que la serie del gráfico tenga relieve real.
+        const conInteraccion = i < MAX_RESUMEN_INTERACCIONES + 1;
+        // Nombre único al principio (para poder identificar filas en el dashboard)
+        // y relleno hasta el tope: el peor caso ADMISIBLE exige TODOS los campos
+        // libres al máximo, no solo `notas` (2ª auditoría del bocado A).
+        const etiqueta = `Prospecto ${String(i + 1).padStart(4, "0")} `;
+        return {
+          nombre: etiqueta + "x".repeat(LONGITUD_MAX_NOMBRE - etiqueta.length),
+          etapa,
+          canal: "whatsapp" as Canal,
+          comoSeConocio: "c".repeat(LONGITUD_MAX_COMO_SE_CONOCIO),
+          telefono: "9".repeat(LONGITUD_MAX_TELEFONO),
+          email: `${"x".repeat(LONGITUD_MAX_EMAIL - "@ejemplo.com".length)}@ejemplo.com`,
+          altaHaceDias: i % 30,
+          notas: "x".repeat(LONGITUD_MAX_NOTAS),
+          ...(conInteraccion
+            ? {
+                interacciones: [
+                  {
+                    haceDias: i % 30,
+                    tipo: "message" as Tipo,
+                    resultado: "thinking" as Resultado,
+                    queOcurrio: "x".repeat(LONGITUD_MAX_TEXTO_INTERACCION),
+                    siguientePaso: "x".repeat(LONGITUD_MAX_TEXTO_INTERACCION),
+                  },
+                ],
+              }
+            : {}),
+        };
+      }),
     };
 
     let insertados = 0;
@@ -276,6 +334,8 @@ export const seed = internalMutation({
         canalContactoPreferido: f.canal,
         etapaActual: f.etapa,
         fechaAlta,
+        ...(f.telefono !== undefined ? { telefono: f.telefono } : {}),
+        ...(f.email !== undefined ? { email: f.email } : {}),
         ...(f.notas !== undefined ? { notas: f.notas } : {}),
         ...(fechaUltimoContacto !== undefined ? { fechaUltimoContacto } : {}),
         ...(prox !== undefined ? { fechaProximoSeguimiento: prox } : {}),

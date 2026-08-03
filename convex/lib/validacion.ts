@@ -52,10 +52,95 @@ export function notasOpcional(valor: string | undefined): string | undefined {
   return limpio;
 }
 
-/** Email opcional normalizado; si queda contenido, exige formato algo@algo.algo. */
+/**
+ * Tope de los campos libres de una interacción (JOS-24). Mismo razonamiento que
+ * LONGITUD_MAX_NOTAS y misma cifra, por coherencia de producto.
+ *
+ * Hasta JOS-24 estos campos no estaban acotados y era inocuo: la única query que
+ * leía `interacciones` era `listarPorProspecto`, PAGINADA con `conLimites`
+ * (PAGINA_MAX_FILAS / PAGINA_MAX_BYTES), así que los topes de paginación acotaban
+ * los bytes. El Resumen introduce la primera lectura AGREGADA y SIN PAGINAR sobre
+ * esa tabla —`.take(MAX_RESUMEN_INTERACCIONES + 1)` de documentos completos—, con
+ * lo que reaparece en `interacciones` la misma vía de degradación por datos válidos
+ * del propio tenant que JOS-74 cerró en `prospectos`.
+ *
+ * Se acotan LOS DOS campos libres: topar solo `queOcurrio` dejaría el documento sin
+ * límite por `siguientePasoAcordado` y el peor caso seguiría sin existir.
+ */
+export const LONGITUD_MAX_TEXTO_INTERACCION = 2000;
+
+/** `queOcurrio` normalizado y acotado. La longitud se mide DESPUÉS del trim. */
+export function queOcurrioObligatorio(valor: string): string {
+  const limpio = textoObligatorio(valor, "queOcurrio");
+  if (limpio.length > LONGITUD_MAX_TEXTO_INTERACCION) {
+    throw validationError(
+      `queOcurrio no puede superar ${LONGITUD_MAX_TEXTO_INTERACCION} caracteres`,
+      "queOcurrio",
+    );
+  }
+  return limpio;
+}
+
+/** `siguientePasoAcordado` normalizado y acotado, con la misma medida tras el trim. */
+export function siguientePasoOpcional(valor: string | undefined): string | undefined {
+  const limpio = textoOpcional(valor);
+  if (limpio !== undefined && limpio.length > LONGITUD_MAX_TEXTO_INTERACCION) {
+    throw validationError(
+      `siguientePasoAcordado no puede superar ${LONGITUD_MAX_TEXTO_INTERACCION} caracteres`,
+      "siguientePasoAcordado",
+    );
+  }
+  return limpio;
+}
+
+/**
+ * Topes del resto de campos libres de `prospectos` (JOS-24, bloqueante de la 2ª
+ * auditoría del bocado A).
+ *
+ * JOS-74 acotó solo `notas` por ser el campo con diferencia más voluminoso, pero
+ * `nombre`, `comoSeConocio` y `telefono` seguían aceptando longitud arbitraria: el
+ * documento de prospecto NO era finito y, por tanto, el "peor caso admisible" medido
+ * para el Resumen era en realidad un peor caso *realista*. Con estos topes el
+ * documento queda acotado de verdad y la medición pasa a ser exhaustiva.
+ *
+ * `email` se validaba de FORMA pero no de longitud: la expresión regular acepta una
+ * cadena de cualquier tamaño mientras tenga arroba y punto. 254 es el máximo real de
+ * una dirección de correo.
+ */
+export const LONGITUD_MAX_NOMBRE = 80;
+export const LONGITUD_MAX_COMO_SE_CONOCIO = 120;
+export const LONGITUD_MAX_TELEFONO = 25;
+export const LONGITUD_MAX_EMAIL = 254;
+
+/** Comprobación de longitud sobre texto YA normalizado (la medida es tras el trim). */
+function acotar(limpio: string, max: number, field: string): string {
+  if (limpio.length > max) {
+    throw validationError(`${field} no puede superar ${max} caracteres`, field);
+  }
+  return limpio;
+}
+
+/** Campo obligatorio: trim, no vacío y dentro del tope. */
+export function textoObligatorioAcotado(valor: string, field: string, max: number): string {
+  return acotar(textoObligatorio(valor, field), max, field);
+}
+
+/** Campo opcional: trim, ausencia por vacío y, si queda contenido, dentro del tope. */
+export function textoOpcionalAcotado(valor: string | undefined, field: string, max: number): string | undefined {
+  const limpio = textoOpcional(valor);
+  return limpio === undefined ? undefined : acotar(limpio, max, field);
+}
+
+/**
+ * Email opcional normalizado; si queda contenido, exige longitud acotada y formato
+ * algo@algo.algo. La longitud se comprueba ANTES que el formato: no tiene sentido
+ * pasar por la expresión regular una cadena arbitrariamente grande.
+ */
 export function emailOpcional(valor: string | undefined): string | undefined {
   const limpio = textoOpcional(valor);
-  if (limpio !== undefined && !EMAIL_RE.test(limpio)) {
+  if (limpio === undefined) return undefined;
+  acotar(limpio, LONGITUD_MAX_EMAIL, "email");
+  if (!EMAIL_RE.test(limpio)) {
     throw validationError("Email no válido", "email");
   }
   return limpio;
