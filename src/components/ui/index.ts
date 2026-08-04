@@ -15,3 +15,4 @@ export * from "./Toast";
 export * from "./EmptyState";
 export * from "./FilterChip";
 export * from "./ProspectCard";
+export * from "./BarChart";

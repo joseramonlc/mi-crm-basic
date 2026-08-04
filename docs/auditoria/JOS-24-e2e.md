@@ -1,8 +1,17 @@
 # JOS-24 · Medición contra deployment real — guión
 
-> **Estado: PARCIALMENTE EJECUTADO.** Lo que no exige sesión autenticada ya está hecho y verificado (§1). La medición de latencia y consumo (§3) **no se puede completar todavía**: ver §2.
+> ## ✅ EJECUTADO POR COMPLETO el 2026-08-04
 >
-> Cubre el gate declarado en `JOS-24-plan.md` §4.3. Fecha de la parte ejecutada: `2026-08-03`.
+> §1 se ejecutó el 2026-08-03 (parte no autenticada). **§3 se ejecutó el 2026-08-04**, al cerrar el bocado B, tal como estableció el traslado del gate (`JOS-24-plan.md` §4.4-ter).
+>
+> **Los resultados NO están en este documento: están en [`JOS-24-bocado-B-gates.txt`](./JOS-24-bocado-B-gates.txt), sección "MEDICIÓN CONTRA DEPLOYMENT REAL"**, con horas de congelación, cifras, verificación de la restauración y las cinco comprobaciones de parcialidad.
+>
+> Resumen de una línea: **1.702 documentos (5,3 %) y 5.686.323 B (33,9 %), 231,5 ms en frío, sin errores de límite.** El recuento de documentos coincidió EXACTO con lo previsto; los bytes salieron un 3,67 % por encima. Margen 2,95×. No procede revisar las cotas.
+>
+> ⚠️ **Corrección al §3.3 de abajo:** la medición debe hacerse en **"Últimos 30 días"**, no en la vista por defecto. Con 7 días las interacciones no se truncan (el seed las reparte en 30 días, así que solo caen ~119 de 501) y no se cumpliría la condición de que **ambas lecturas truncan a la vez**. Detectado durante la ejecución.
+>
+> ⚠️ **§3.5 REESCRITO.** Antes proponía restaurar sembrando datos de ejemplo, que los **fabrica** en vez de recuperar los originales. La restauración correcta es `npx convex import --replace-all` desde el snapshot de §3.0-bis. **El comando descartado no se reproduce en ningún punto de este documento**, ni siquiera como contraejemplo: un guion operativo se copia y se pega.
+>
 > Deployment: `jose-lumbreras:crm-networker:dev` → `adamant-mockingbird-816.eu-west-1.convex.cloud`
 
 ---
@@ -57,13 +66,33 @@ npx concurrently -n next,convex -c blue,green "next dev --webpack" "convex dev"
 
 ⚠️ **Clerk en desarrollo solo carga en `localhost` / `127.0.0.1`**, no en la IP de WSL. Abrir siempre `http://localhost:3000`.
 
-### 3.1 Obtener el `tokenIdentifier`
+### 3.0-bis Congelar la app publicada y hacer el snapshot
 
-Con sesión iniciada y al menos un prospecto creado:
+**Sin este paso, §3.5 no tiene de dónde restaurar.** Primero se cierra la ventana de escritura y después se copia; en ese orden, o el snapshot podría no reflejar lo último escrito desde la web.
+
+Congelar la app publicada mientras dure la medición: mientras Railway apunte al mismo deployment de Convex, es una segunda vía de escritura que el `import --replace-all` se llevaría por delante.
 
 ```bash
-npx convex data prospectos     # el campo usuarioId de cualquier fila
+npx @railway/cli down -y                                  # ANOTAR LA HORA
+curl -s -o /dev/null -w "%{http_code}\n" <URL>/login      # debe dejar de ser 200
 ```
+
+La reactivación es el **§3.6**, al final del guion. La ventana queda así acotada por escrito entre dos horas anotadas, que es lo que permite afirmar que ninguna escritura ajena entró.
+
+Con la ventana ya cerrada, el snapshot. Va **fuera del repositorio** y fuera de Dropbox:
+
+```bash
+mkdir -p ~/crm-backups
+npx convex export --path ~/crm-backups/JOS-24-backup-pre-medicion.zip
+npx convex data prospectos      # anotar recuento + un _id propio y otro de otro inquilino
+npx convex data interacciones   # anotar recuento
+```
+
+### 3.1 Obtener el `tokenIdentifier`
+
+Sale del mismo `npx convex data prospectos` de §3.0-bis: es el campo `usuarioId`.
+
+⚠️ **Puede haber VARIOS inquilinos en el deployment de desarrollo** (el 2026-08-04 había tres). El seed borra los datos de UNO, así que hay que elegir el correcto: pedir a quien tenga la sesión abierta **el nombre de un prospecto que vea en pantalla** y buscar su fila. Sembrar el inquilino equivocado mide contra un tenant vacío y borra datos de otro.
 
 ### 3.2 Sembrar el peor caso
 
@@ -91,30 +120,78 @@ Ambas lecturas truncan **a la vez**, que es la condición que exige §4.3 del pl
 
 En el **dashboard de Convex → Functions → `resumen:resumen`**:
 
-| Métrica | Valor medido | Referencia |
+| Métrica | Valor medido (2026-08-04) | Referencia |
 |---|---|---|
-| Ejecución **en frío** (cache hit rate 0 %) | `______ ms` | JOS-21 midió 277 ms en su peor caso |
-| Ejecución **en caliente** (cache hit rate 100 %) | `______ ms` | |
-| **Documentos leídos** | `______` | límite 32.000 · peor caso previsto **1.702** (5,3 %) |
-| **Bytes leídos** | `______` | límite 16 MiB · peor caso previsto **5.485.256 B (32,7 %)** |
-| ¿Errores de límite excedido? | `SÍ / NO` | debe ser **NO** |
+| Ejecución **en frío** (cache hit rate 0 %) | **231,5 ms** | JOS-21 midió 277 ms en su peor caso |
+| Ejecución **en caliente** (cache hit rate 100 %) | **~0,03 ms** | |
+| **Documentos leídos** | **1.702** (5,3 %) | límite 32.000 · peor caso previsto **1.702** |
+| **Bytes leídos** | **5.686.323 B** (33,9 %) | límite 16 MiB · peor caso previsto **5.485.256 B (32,7 %)** |
+| ¿Errores de límite excedido? | **NO** | debe ser **NO** |
+
+⚠️ **Medir en "Últimos 30 días", no en la vista por defecto.** Con 7 días las interacciones no se truncan (el seed las reparte en 30 días: solo caen ~119 de 501) y no se cumple la condición de que **ambas lecturas truncan a la vez**. La vista de 7 días da 1.320 documentos y 4.005.141 B — no comparable con la referencia.
 
 Las dos cifras de referencia salen de la guarda de `convex/resumen.test.ts`, medida con `convex-test` **en memoria**. El objetivo de esta ejecución es contrastarlas contra el servidor real: si difieren de forma apreciable, manda el servidor y hay que revisar las cotas.
 
 ### 3.4 Comprobaciones de parcialidad (con el peor caso sembrado)
 
-| # | Qué comprobar | OK / KO |
+| # | Qué comprobar | Resultado 2026-08-04 |
 |---|---|---|
-| 1 | Los recuentos por etapa se declaran **parciales** (`prospectos.exacto === false`) | |
-| 2 | **"Nuevos prospectos"** también aparece marcado como parcial — es la métrica que la 2ª auditoría detectó sin marcar | |
-| 3 | Los totales (activos / incorporados / descartados) **no** se presentan como "totales" | |
-| 4 | La serie declara su parcialidad y los días anteriores a `diaCompletoDesde` **no** se dibujan como 0 | |
-| 5 | Los días **más recientes** del gráfico están completos (consecuencia del orden descendente) | |
+| 1 | Los recuentos por etapa se declaran **parciales** (`prospectos.exacto === false`) | ✅ las 6 etapas muestran `200+` |
+| 2 | **"Nuevos prospectos"** también aparece marcado como parcial — es la métrica que la 2ª auditoría detectó sin marcar | ✅ `1200+ prospectos nuevos` |
+| 3 | Los totales (activos / incorporados / descartados) **no** se presentan como "totales" | ✅ encabezado `Recuento parcial` |
+| 4 | La serie declara su parcialidad y los días anteriores a `diaCompletoDesde` **no** se dibujan como 0 | ✅ aviso *"Datos completos desde el 7 de julio…"* y la barra del 6 de julio sale **rayada** |
+| 5 | Los días **más recientes** del gráfico están completos (consecuencia del orden descendente) | ✅ del 7 de julio en adelante, barras normales |
 
-### 3.5 Limpieza
+Además, verificado en pantalla y no solo en test: el banner dice *"Estás viendo **1200** prospectos"*, sin separador de millar — norma española para cuatro cifras.
 
-Devolver el tenant a un escenario normal de trabajo:
+### 3.5 Restauración
+
+> ⚠️ **Corregido el 2026-08-04 (4ª auditoría).** Este apartado se llamaba *"Limpieza"* y proponía
+> restaurar **sembrando un escenario de datos de ejemplo**. Esa estrategia queda descartada: no
+> recupera los datos originales —los fabrica— y, ejecutada sobre un estado ya restaurado, lo
+> sobrescribiría. La ejecución real del 2026-08-04 no la usó; restauró con el snapshot.
+>
+> **El comando anterior no se reproduce aquí, ni siquiera como ejemplo de lo que no hay que hacer.**
+> Un guion operativo se copia y se pega: un comando destructivo a la vista es un riesgo aunque
+> lleve encima un cartel de advertencia.
+
+Restaurar **es importar el snapshot de §3.0-bis**, siempre y como primer paso. No está
+condicionado a ninguna comprobación previa:
 
 ```bash
-npx convex run seed:seed '{"scenario":"populated","usuarioId":"<tokenIdentifier>"}'
+npx convex import --replace-all -y ~/crm-backups/JOS-24-backup-pre-medicion.zip
 ```
+
+`--replace-all` y no `--replace`: devuelve el deployment al estado del snapshot **borrando
+además las tablas que el import no contenga**, de modo que nada sembrado por el escenario
+`resumen` sobreviva.
+
+Solo **después** se verifica. Las comprobaciones acreditan el resultado; no deciden qué hacer:
+
+```bash
+npx convex data prospectos      # ¿coincide con el recuento anotado en §3.0-bis?
+npx convex data interacciones
+```
+
+| # | Qué comprobar | OK / KO |
+|---|---|---|
+| 1 | Recuento de `prospectos` = el anotado antes de sembrar | |
+| 2 | Recuento de `interacciones` = el anotado antes de sembrar | |
+| 3 | **Contenido representativo**: el `_id` anotado vuelve con su mismo nombre, etapa y fechas | |
+| 4 | **Un `_id` de OTRO inquilino** también vuelve — delata un borrado que se haya ido de madre | |
+| 5 | `/resumen` y `/actividad` cargan y muestran datos coherentes | |
+
+Los puntos 3 y 4 son los que distinguen una restauración real de una coincidencia de cifras:
+doce documentos fabricados también suman doce.
+
+### 3.6 Reactivar la app publicada
+
+```bash
+npx @railway/cli deployment redeploy --from-source -y     # ANOTAR LA HORA
+npx @railway/cli deployment list                          # debe quedar en SUCCESS
+curl -s -o /dev/null -w "%{http_code}\n" <URL>/login      # debe volver a 200
+```
+
+`--from-source` reconstruye desde el último commit de `master`, que es lo desplegado. Las dos horas anotadas (§3.0-bis y esta) y los dos `curl` son la evidencia de aislamiento que va al fichero de gates.
+
+**Ejecución del 2026-08-04:** congelada 13:58:29 → reactivada 14:14:02 (HTTP 200 confirmado). Ventana de 15 min 33 s.
