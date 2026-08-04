@@ -1,0 +1,1200 @@
+diff --git a/src/app/(app)/resumen/error.test.tsx b/src/app/(app)/resumen/error.test.tsx
+new file mode 100644
+index 0000000..bf795b0
+--- /dev/null
++++ b/src/app/(app)/resumen/error.test.tsx
+@@ -0,0 +1,25 @@
++// @vitest-environment jsdom
++import * as React from "react";
++import { afterEach, describe, expect, it, vi } from "vitest";
++import { cleanup, fireEvent, render, screen } from "@testing-library/react";
++import ResumenError from "./error";
++
++// Mismo alcance verificable que el boundary de Actividad: SOLO el contrato del
++// fallback. La recuperación real de Next (reconstrucción del segmento) queda
++// como procedimiento exploratorio, fuera de la aceptación.
++afterEach(cleanup);
++
++describe("error.tsx (contrato del fallback)", () => {
++  it("pulsar 'Reintentar' invoca unstable_retry exactamente una vez", () => {
++    const retry = vi.fn();
++    const silencio = vi.spyOn(console, "error").mockImplementation(() => {});
++
++    render(<ResumenError error={new Error("boom")} unstable_retry={retry} />);
++    expect(screen.getByText("No se pudo cargar el resumen")).toBeDefined();
++
++    fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
++    expect(retry).toHaveBeenCalledTimes(1);
++
++    silencio.mockRestore();
++  });
++});
+diff --git a/src/app/(app)/resumen/error.tsx b/src/app/(app)/resumen/error.tsx
+new file mode 100644
+index 0000000..4fe88be
+--- /dev/null
++++ b/src/app/(app)/resumen/error.tsx
+@@ -0,0 +1,49 @@
++"use client";
++
++import * as React from "react";
++import { Button, Icon } from "@/components/ui";
++
++/**
++ * Error boundary del segmento /resumen (contrato Next 16: error + unstable_retry).
++ * "Reintentar" re-obtiene y re-renderiza el segmento; si la causa era transitoria
++ * (p. ej. red caída al suscribirse a Convex), la pantalla se recupera sola.
++ */
++export default function ResumenError({
++  error,
++  unstable_retry,
++}: {
++  error: Error & { digest?: string };
++  unstable_retry: () => void;
++}) {
++  React.useEffect(() => {
++    console.error(error);
++  }, [error]);
++
++  return (
++    <div className="flex flex-col items-center text-center gap-2" style={{ padding: "48px 24px", fontFamily: "var(--font-sans)" }}>
++      <div
++        style={{
++          width: 72,
++          height: 72,
++          borderRadius: "50%",
++          background: "var(--color-error-bg)",
++          display: "flex",
++          alignItems: "center",
++          justifyContent: "center",
++          marginBottom: 8,
++        }}
++      >
++        <Icon name="alert-circle" size={32} color="var(--color-error-text)" />
++      </div>
++      <h2 style={{ fontSize: 18, fontWeight: 600, color: "var(--color-neutral-900)" }}>No se pudo cargar el resumen</h2>
++      <p style={{ fontSize: 15, color: "var(--color-neutral-500)", maxWidth: 300, lineHeight: 1.5 }}>
++        Ha ocurrido un error inesperado. Puedes intentarlo de nuevo.
++      </p>
++      <div style={{ marginTop: 12 }}>
++        <Button variant="primary" onClick={() => unstable_retry()}>
++          Reintentar
++        </Button>
++      </div>
++    </div>
++  );
++}
+diff --git a/src/app/(app)/resumen/page.test.tsx b/src/app/(app)/resumen/page.test.tsx
+new file mode 100644
+index 0000000..ae360ae
+--- /dev/null
++++ b/src/app/(app)/resumen/page.test.tsx
+@@ -0,0 +1,417 @@
++// @vitest-environment jsdom
++import * as React from "react";
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
++import { addCivilDays, formatDayKey, parseDayKey } from "../../../../convex/lib/fecha";
++import {
++  BANNER_VISTA_PARCIAL,
++  CARGANDO,
++  SECCION_ACTIVIDAD,
++  SECCION_ETAPAS,
++  SECCION_PENDIENTES,
++  SECCION_TOTALES,
++  SECCION_TOTALES_PARCIAL,
++} from "./textos";
++import ResumenPage from "./page";
++
++// Como el resto de pantallas: no se monta un proveedor Convex real. `useDayKey`
++// se simula porque hay casos —la medianoche— que dependen de que el día cambie.
++const { useQueryMock, useDayKeyMock } = vi.hoisted(() => ({
++  useQueryMock: vi.fn(),
++  useDayKeyMock: vi.fn(),
++}));
++
++vi.mock("convex/react", () => ({ useQuery: useQueryMock }));
++vi.mock("@/lib/useDayKey", () => ({ useDayKey: useDayKeyMock }));
++
++type Etapa = "new" | "contacted" | "presented" | "evaluating" | "joined" | "discarded";
++
++const DAY_KEY = "2026-08-04";
++const DAY_KEY_SIGUIENTE = "2026-08-05";
++const DESDE_SEMANA = "2026-07-29";
++const DESDE_MES = "2026-07-06";
++
++const SEMANA = ["2026-07-29", "2026-07-30", "2026-07-31", "2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04"];
++
++/** 30 dayKeys correlativos; solo son identificadores válidos, no se afirma nada sobre ellos. */
++function treintaDias(): string[] {
++  const primero = parseDayKey(DESDE_MES);
++  return Array.from({ length: 30 }, (_, i) => formatDayKey(addCivilDays(primero, i)));
++}
++
++function serieDe(dias: string[], valores: number[] = []): Array<{ dayKey: string; valor: number }> {
++  return dias.map((dayKey, i) => ({ dayKey, valor: valores[i] ?? 0 }));
++}
++
++function payload(overrides: {
++  porEtapa?: Partial<Record<Etapa, number>>;
++  exactoProspectos?: boolean;
++  pendientes?: { vencidos: number; hoy: number };
++  nuevosEnPeriodo?: number;
++  exactoInteracciones?: boolean;
++  totalEnPeriodo?: number;
++  serie?: Array<{ dayKey: string; valor: number }>;
++  diaCompletoDesde?: string | null;
++  desde?: string;
++} = {}) {
++  const porEtapa = {
++    new: 0,
++    contacted: 0,
++    presented: 0,
++    evaluating: 0,
++    joined: 0,
++    discarded: 0,
++    ...overrides.porEtapa,
++  };
++  const leidos = Object.values(porEtapa).reduce((a, b) => a + b, 0);
++
++  return {
++    periodo: { desde: overrides.desde ?? DESDE_SEMANA, hastaIncluido: DAY_KEY },
++    prospectos: {
++      exacto: overrides.exactoProspectos ?? true,
++      porEtapa,
++      pendientes: overrides.pendientes ?? { vencidos: 0, hoy: 0 },
++      nuevosEnPeriodo: overrides.nuevosEnPeriodo ?? 0,
++      // Coherentes con porEtapa por construcción, como en el servidor.
++      totales: { activos: leidos - porEtapa.discarded, incorporados: porEtapa.joined, descartados: porEtapa.discarded },
++    },
++    interacciones: {
++      exacto: overrides.exactoInteracciones ?? true,
++      totalEnPeriodo: overrides.totalEnPeriodo ?? 0,
++      serie: overrides.serie ?? serieDe(SEMANA),
++      diaCompletoDesde: overrides.diaCompletoDesde ?? null,
++    },
++  };
++}
++
++/** Payload con contenido en todas las secciones, para los casos "normales". */
++function payloadPoblado(extra: Parameters<typeof payload>[0] = {}) {
++  return payload({
++    porEtapa: { new: 4, contacted: 3, presented: 2, evaluating: 1, joined: 1, discarded: 1 },
++    pendientes: { vencidos: 2, hoy: 3 },
++    nuevosEnPeriodo: 3,
++    totalEnPeriodo: 12,
++    serie: serieDe(SEMANA, [1, 0, 2, 3, 1, 4, 1]),
++    ...extra,
++  });
++}
++
++function seccion(nombre: string) {
++  return within(screen.getByRole("region", { name: nombre }));
++}
++
++beforeEach(() => {
++  useQueryMock.mockReset();
++  useDayKeyMock.mockReset();
++  useDayKeyMock.mockReturnValue(DAY_KEY);
++});
++
++afterEach(cleanup);
++
++describe("estados de la pantalla", () => {
++  it("mientras carga muestra el aviso y ninguna sección", () => {
++    useQueryMock.mockReturnValue(undefined);
++    render(<ResumenPage />);
++
++    expect(screen.getByRole("status").textContent).toBe(CARGANDO);
++    expect(screen.queryByRole("region", { name: SECCION_ETAPAS })).toBeNull();
++  });
++
++  it("sin ningún prospecto muestra el vacío con CTA de alta", () => {
++    useQueryMock.mockReturnValue(payload());
++    render(<ResumenPage />);
++
++    expect(screen.getByText("Aún no tienes prospectos")).toBeDefined();
++    expect(screen.getByRole("link", { name: "Añadir prospecto" }).getAttribute("href")).toBe("/prospectos/nuevo");
++    expect(screen.queryByRole("region", { name: SECCION_ETAPAS })).toBeNull();
++  });
++
++  it("con un solo prospecto ya NO se considera vacío (D1: cero contado = tenant vacío)", () => {
++    useQueryMock.mockReturnValue(payload({ porEtapa: { new: 1 } }));
++    render(<ResumenPage />);
++
++    expect(screen.queryByText("Aún no tienes prospectos")).toBeNull();
++    expect(screen.getByRole("region", { name: SECCION_ETAPAS })).toBeDefined();
++  });
++
++  it("con datos pinta las cinco secciones", () => {
++    useQueryMock.mockReturnValue(payloadPoblado());
++    render(<ResumenPage />);
++
++    expect(screen.getByRole("radiogroup", { name: "Período" })).toBeDefined();
++    for (const nombre of [SECCION_ETAPAS, SECCION_PENDIENTES, SECCION_ACTIVIDAD, SECCION_TOTALES]) {
++      expect(screen.getByRole("region", { name: nombre })).toBeDefined();
++    }
++  });
++
++  it("sin actividad en el período lo dice sin dramatismo, y el gráfico sigue ahí", () => {
++    useQueryMock.mockReturnValue(payload({ porEtapa: { new: 2 }, totalEnPeriodo: 0, nuevosEnPeriodo: 0 }));
++    render(<ResumenPage />);
++
++    const actividad = seccion(SECCION_ACTIVIDAD);
++    expect(actividad.getByText("Sin actividad registrada entre el 29 de julio y el 4 de agosto.")).toBeDefined();
++    expect(actividad.getByRole("list", { name: "Interacciones por día" })).toBeDefined();
++  });
++});
++
++describe("el selector de período afecta solo a la sección 4", () => {
++  it("las secciones 2, 3 y 5 no varían al cambiar de período", () => {
++    // Referencias ESTABLES por período, como las devuelve el useQuery real: se
++    // construyen una vez, no en cada llamada.
++    const semana = payloadPoblado();
++    const mes = payloadPoblado({ totalEnPeriodo: 40, serie: serieDe(treintaDias()), desde: DESDE_MES });
++    useQueryMock.mockImplementation((_query: unknown, args: { periodo: string }) => (args.periodo === "semana" ? semana : mes));
++    render(<ResumenPage />);
++
++    const antes = [SECCION_ETAPAS, SECCION_PENDIENTES, SECCION_TOTALES].map(
++      (n) => screen.getByRole("region", { name: n }).textContent,
++    );
++    const actividadAntes = screen.getByRole("region", { name: SECCION_ACTIVIDAD }).textContent;
++
++    fireEvent.click(screen.getByRole("radio", { name: "Últimos 30 días" }));
++
++    const despues = [SECCION_ETAPAS, SECCION_PENDIENTES, SECCION_TOTALES].map(
++      (n) => screen.getByRole("region", { name: n }).textContent,
++    );
++    expect(despues).toEqual(antes);
++    expect(screen.getByRole("region", { name: SECCION_ACTIVIDAD }).textContent).not.toBe(actividadAntes);
++  });
++});
++
++describe("parcialidad por métrica (§5.2)", () => {
++  it("con prospectos truncados, NINGUNA de sus siete métricas aparece sin marca", () => {
++    useQueryMock.mockReturnValue(
++      payloadPoblado({ exactoProspectos: false, porEtapa: { new: 500, contacted: 400, presented: 200, evaluating: 60, joined: 30, discarded: 10 } }),
++    );
++    render(<ResumenPage />);
++
++    // 1-6: los seis recuentos por etapa.
++    const etapas = seccion(SECCION_ETAPAS);
++    for (const valor of ["500+", "400+", "200+", "60+", "30+", "10+"]) {
++      expect(etapas.getByText(valor)).toBeDefined();
++    }
++
++    // 7-8: pendientes (total y desglose).
++    const pendientes = seccion(SECCION_PENDIENTES);
++    expect(pendientes.getByText("5+")).toBeDefined();
++    expect(pendientes.getByText("2+ vencidos · 3+ para hoy")).toBeDefined();
++
++    // 9: nuevos del período, dentro de la sección 4.
++    expect(seccion(SECCION_ACTIVIDAD).getByText(/3\+ prospectos nuevos/)).toBeDefined();
++
++    // 10-12: los totales, que además dejan de llamarse "totales".
++    const totales = seccion(SECCION_TOTALES_PARCIAL);
++    expect(totales.getByText("1190+")).toBeDefined();
++    expect(totales.getByText("30+")).toBeDefined();
++    expect(totales.getByText("10+")).toBeDefined();
++    expect(screen.queryByRole("region", { name: SECCION_TOTALES })).toBeNull();
++
++    // Y el banner que explica de dónde sale el corte.
++    expect(screen.getByText(BANNER_VISTA_PARCIAL)).toBeDefined();
++  });
++
++  it("caso mixto: nuevos marcado e interacciones sin marcar, en la misma sección", () => {
++    useQueryMock.mockReturnValue(payloadPoblado({ exactoProspectos: false, exactoInteracciones: true }));
++    render(<ResumenPage />);
++
++    expect(seccion(SECCION_ACTIVIDAD).getByText("12 interacciones y 3+ prospectos nuevos entre el 29 de julio y el 4 de agosto.")).toBeDefined();
++  });
++
++  it("caso inverso: interacciones marcadas y nuevos sin marcar", () => {
++    useQueryMock.mockReturnValue(
++      payloadPoblado({ exactoProspectos: true, exactoInteracciones: false, totalEnPeriodo: 500, diaCompletoDesde: "2026-08-02" }),
++    );
++    render(<ResumenPage />);
++
++    expect(seccion(SECCION_ACTIVIDAD).getByText(/^500\+ interacciones y 3 prospectos nuevos/)).toBeDefined();
++  });
++
++  it("las dos lecturas truncadas a la vez marcan las dos cifras", () => {
++    useQueryMock.mockReturnValue(
++      payloadPoblado({ exactoProspectos: false, exactoInteracciones: false, totalEnPeriodo: 500, diaCompletoDesde: "2026-08-02" }),
++    );
++    render(<ResumenPage />);
++
++    expect(seccion(SECCION_ACTIVIDAD).getByText(/^500\+ interacciones y 3\+ prospectos nuevos/)).toBeDefined();
++  });
++
++  it("las cifras siguen la norma española: separador de millar solo a partir de cinco dígitos", () => {
++    // La cota del Resumen (1.200) es justo de cuatro dígitos, así que esta es la
++    // frontera que de verdad se ve en pantalla. En español —norma de la RAE, que
++    // Intl aplica— los números de cuatro cifras van SIN separador.
++    useQueryMock.mockReturnValue(payload({ porEtapa: { new: 1200 } }));
++    const { rerender } = render(<ResumenPage />);
++    expect(seccion(SECCION_ETAPAS).getByText("1200")).toBeDefined();
++
++    useQueryMock.mockReturnValue(payload({ porEtapa: { new: 1200 }, exactoProspectos: false }));
++    rerender(<ResumenPage />);
++    expect(seccion(SECCION_ETAPAS).getByText("1200+")).toBeDefined();
++
++    // A partir de cinco dígitos sí lo lleva.
++    useQueryMock.mockReturnValue(payload({ porEtapa: { new: 10000 } }));
++    rerender(<ResumenPage />);
++    expect(seccion(SECCION_ETAPAS).getByText("10.000")).toBeDefined();
++  });
++});
++
++describe("serie parcial: sin datos nunca es cero", () => {
++  it("los días anteriores a diaCompletoDesde se declaran sin datos, no como 0", () => {
++    useQueryMock.mockReturnValue(
++      payloadPoblado({
++        exactoInteracciones: false,
++        totalEnPeriodo: 500,
++        diaCompletoDesde: "2026-08-02",
++        serie: serieDe(SEMANA, [0, 0, 0, 0, 1, 4, 1]),
++      }),
++    );
++    render(<ResumenPage />);
++
++    // 31 de julio es anterior al primer día completo: no se midió.
++    expect(screen.getByText("viernes, 31 de julio: sin datos")).toBeDefined();
++    // 2 de agosto sí, y ahí un 1 es un 1.
++    expect(screen.getByText("domingo, 2 de agosto: 1 interacción")).toBeDefined();
++    expect(screen.getByText(/Datos completos desde el 2 de agosto/)).toBeDefined();
++  });
++
++  it("un 0 real y un día sin datos producen textos distintos en la misma serie", () => {
++    useQueryMock.mockReturnValue(
++      payloadPoblado({
++        exactoInteracciones: false,
++        totalEnPeriodo: 500,
++        diaCompletoDesde: "2026-08-02",
++        serie: serieDe(SEMANA, [0, 0, 0, 0, 0, 4, 1]),
++      }),
++    );
++    render(<ResumenPage />);
++
++    expect(screen.getByText("viernes, 31 de julio: sin datos")).toBeDefined();
++    expect(screen.getByText("domingo, 2 de agosto: sin interacciones")).toBeDefined();
++  });
++
++  it("sin ningún día completo, las 30 barras son sin datos y la serie se declara no fiable", () => {
++    const dias = treintaDias();
++    useQueryMock.mockReturnValue(
++      payloadPoblado({
++        exactoInteracciones: false,
++        totalEnPeriodo: 500,
++        diaCompletoDesde: null,
++        // Valores presentes en el payload: si se pintaran, mentirían.
++        serie: serieDe(dias, dias.map((_, i) => (i % 3 === 0 ? 2 : 0))),
++        desde: DESDE_MES,
++      }),
++    );
++    render(<ResumenPage />);
++
++    expect(screen.getAllByText(/: sin datos$/)).toHaveLength(30);
++    expect(screen.queryByText(/sin interacciones$/)).toBeNull();
++    expect(screen.getByText(/no muestra datos fiables/)).toBeDefined();
++  });
++});
++
++describe("retención de datos entre recargas (D3)", () => {
++  it("al PULSAR el selector, las secciones 2, 3 y 5 no parpadean mientras viaja la consulta", () => {
++    // Transición real: la consulta de "semana" ya tiene dato y la de "mes" aún
++    // no. Pulsar el pill cambia los argumentos y useQuery pasa a devolver
++    // undefined — que es exactamente el instante que la retención cubre.
++    const semana = payloadPoblado();
++    useQueryMock.mockImplementation((_query: unknown, args: { periodo: string }) => (args.periodo === "semana" ? semana : undefined));
++    render(<ResumenPage />);
++    expect(seccion(SECCION_PENDIENTES).getByText("5")).toBeDefined();
++
++    fireEvent.click(screen.getByRole("radio", { name: "Últimos 30 días" }));
++
++    expect(screen.queryByRole("status")).toBeNull();
++    expect(seccion(SECCION_PENDIENTES).getByText("5")).toBeDefined();
++    expect(seccion(SECCION_ETAPAS).getAllByText("4")).toHaveLength(1);
++    expect(screen.getByRole("region", { name: SECCION_ACTIVIDAD }).getAttribute("aria-busy")).toBe("true");
++  });
++
++  it("cruzada la medianoche NO se retiene nada: los pendientes de ayer serían falsos", () => {
++    useQueryMock.mockReturnValue(payloadPoblado());
++    const { rerender } = render(<ResumenPage />);
++    expect(seccion(SECCION_PENDIENTES).getByText("5")).toBeDefined();
++
++    useDayKeyMock.mockReturnValue(DAY_KEY_SIGUIENTE);
++    useQueryMock.mockReturnValue(undefined);
++    rerender(<ResumenPage />);
++
++    expect(screen.getByRole("status").textContent).toBe(CARGANDO);
++    expect(screen.queryByRole("region", { name: SECCION_PENDIENTES })).toBeNull();
++  });
++});
++
++describe("accesibilidad y navegación", () => {
++  it("los siete valores del gráfico están disponibles sin visión", () => {
++    useQueryMock.mockReturnValue(payloadPoblado());
++    render(<ResumenPage />);
++
++    expect(screen.getByText("miércoles, 29 de julio: 1 interacción")).toBeDefined();
++    expect(screen.getByText("jueves, 30 de julio: sin interacciones")).toBeDefined();
++    expect(screen.getByText("viernes, 31 de julio: 2 interacciones")).toBeDefined();
++    expect(screen.getByText("sábado, 1 de agosto: 3 interacciones")).toBeDefined();
++    expect(screen.getByText("domingo, 2 de agosto: 1 interacción")).toBeDefined();
++    expect(screen.getByText("lunes, 3 de agosto: 4 interacciones")).toBeDefined();
++    expect(screen.getByText("martes, 4 de agosto: 1 interacción")).toBeDefined();
++  });
++
++  it("el enlace a Actividad Diaria navega y no escribe nada", () => {
++    useQueryMock.mockReturnValue(payloadPoblado());
++    render(<ResumenPage />);
++
++    const enlace = seccion(SECCION_PENDIENTES).getByRole("link", { name: "Ver en Actividad Diaria →" });
++    expect(enlace.getAttribute("href")).toBe("/actividad");
++    // La pantalla es de solo lectura: no hay botones de acción en ninguna sección.
++    expect(seccion(SECCION_PENDIENTES).queryByRole("button")).toBeNull();
++  });
++
++  it("sin seguimientos pendientes lo dice en texto, no con un cero desnudo", () => {
++    useQueryMock.mockReturnValue(payload({ porEtapa: { new: 2 }, pendientes: { vencidos: 0, hoy: 0 } }));
++    render(<ResumenPage />);
++
++    expect(seccion(SECCION_PENDIENTES).getByText("No tienes seguimientos pendientes.")).toBeDefined();
++  });
++});
++
++describe("una lectura truncada NUNCA afirma una ausencia", () => {
++  it("con ceros observados pero lectura parcial, NO dice que no haya pendientes", () => {
++    // Los 1.200 leídos no tienen ningún seguimiento vencido ni para hoy, pero
++    // quedan prospectos sin leer: afirmar "no tienes pendientes" sería mentir.
++    useQueryMock.mockReturnValue(
++      payloadPoblado({ exactoProspectos: false, pendientes: { vencidos: 0, hoy: 0 } }),
++    );
++    render(<ResumenPage />);
++
++    const pendientes = seccion(SECCION_PENDIENTES);
++    expect(pendientes.queryByText("No tienes seguimientos pendientes.")).toBeNull();
++    expect(pendientes.getByText("0+ vencidos · 0+ para hoy")).toBeDefined();
++  });
++
++  it("con lectura exacta y ceros reales, sí puede afirmarlo", () => {
++    useQueryMock.mockReturnValue(payloadPoblado({ exactoProspectos: true, pendientes: { vencidos: 0, hoy: 0 } }));
++    render(<ResumenPage />);
++
++    expect(seccion(SECCION_PENDIENTES).getByText("No tienes seguimientos pendientes.")).toBeDefined();
++  });
++
++  it("con prospectos truncados y cero altas observadas, NO declara 'sin actividad'", () => {
++    // Las interacciones sí son exactas (0 de verdad), pero las altas del período
++    // salen de la lectura truncada: puede haber prospectos nuevos sin leer.
++    useQueryMock.mockReturnValue(
++      payloadPoblado({ exactoProspectos: false, exactoInteracciones: true, totalEnPeriodo: 0, nuevosEnPeriodo: 0 }),
++    );
++    render(<ResumenPage />);
++
++    const actividad = seccion(SECCION_ACTIVIDAD);
++    expect(actividad.queryByText(/Sin actividad registrada/)).toBeNull();
++    expect(actividad.getByText(/^0 interacciones y 0\+ prospectos nuevos/)).toBeDefined();
++  });
++
++  it("con las dos lecturas exactas y todo a cero, sí declara 'sin actividad'", () => {
++    useQueryMock.mockReturnValue(
++      payloadPoblado({ exactoProspectos: true, exactoInteracciones: true, totalEnPeriodo: 0, nuevosEnPeriodo: 0 }),
++    );
++    render(<ResumenPage />);
++
++    expect(seccion(SECCION_ACTIVIDAD).getByText(/^Sin actividad registrada/)).toBeDefined();
++  });
++});
+diff --git a/src/app/(app)/resumen/page.tsx b/src/app/(app)/resumen/page.tsx
+new file mode 100644
+index 0000000..2acffed
+--- /dev/null
++++ b/src/app/(app)/resumen/page.tsx
+@@ -0,0 +1,337 @@
++"use client";
++
++import * as React from "react";
++import Link from "next/link";
++import { useQuery } from "convex/react";
++import type { FunctionReturnType } from "convex/server";
++import { api } from "../../../../convex/_generated/api";
++import { BarChart, Card, EmptyState, Icon, PillSelect, StageBadge, buttonStyle } from "@/components/ui";
++import { OPCIONES_ETAPA } from "@/lib/etiquetas";
++import { useDayKey } from "@/lib/useDayKey";
++import {
++  BANNER_VISTA_PARCIAL,
++  CARGANDO,
++  GRAFICO_ARIA,
++  OPCIONES_PERIODO,
++  PENDIENTES_ENLACE,
++  PENDIENTES_HOY,
++  PENDIENTES_VENCIDOS,
++  PERIODO_LABEL,
++  SECCION_ACTIVIDAD,
++  SECCION_ETAPAS,
++  SECCION_PENDIENTES,
++  SECCION_TOTALES,
++  SECCION_TOTALES_PARCIAL,
++  SIN_PENDIENTES,
++  TITULO,
++  TOTAL_ACTIVOS,
++  TOTAL_DESCARTADOS,
++  TOTAL_INCORPORADOS,
++  VACIO_CTA,
++  VACIO_DESCRIPCION,
++  VACIO_TITULO,
++  avisoSerie,
++  cifra,
++  etiquetaBarra,
++  fraseActividad,
++  fraseSinActividad,
++  inicialDiaSemana,
++  type Periodo,
++} from "./textos";
++
++type Datos = FunctionReturnType<typeof api.resumen.resumen>;
++
++/** Cifras con figuras tabulares, como el resto del sistema (design.md §1). */
++const NUMERICO: React.CSSProperties = {
++  fontFamily: "var(--font-numeric)",
++  fontFeatureSettings: "var(--num-features)",
++};
++
++export default function ResumenPage() {
++  const dayKey = useDayKey();
++  const [periodo, setPeriodo] = React.useState<Periodo>("semana");
++  const datos = useQuery(api.resumen.resumen, { dayKey, periodo });
++  const mostrable = useRetenidoDelDia(datos, dayKey);
++
++  return (
++    <div className="mx-auto w-full max-w-2xl px-4 py-6 md:px-6 md:py-8" style={{ fontFamily: "var(--font-sans)" }}>
++      <h1
++        style={{
++          fontSize: "var(--text-h2-size)",
++          fontWeight: "var(--text-h2-weight)" as React.CSSProperties["fontWeight"],
++          letterSpacing: "var(--text-h2-ls)",
++          color: "var(--color-neutral-900)",
++          marginBottom: 16,
++        }}
++      >
++        {TITULO}
++      </h1>
++      <Contenido datos={mostrable} actualizando={datos === undefined} periodo={periodo} onPeriodo={setPeriodo} />
++    </div>
++  );
++}
++
++/**
++ * Último resultado entregado, PERO solo dentro del mismo día (plan §D3).
++ *
++ * Al cambiar de período `useQuery` devuelve `undefined` mientras viaja la nueva
++ * consulta. Sin retención, la pantalla entera parpadearía a "Cargando…" y el
++ * selector afectaría a las cinco secciones, que es lo contrario de lo
++ * especificado: las secciones 2, 3 y 5 no dependen del período (lo garantiza el
++ * backend, `convex/resumen.ts:100-117`), así que lo retenido SIGUE siendo verdad.
++ *
++ * ⚠️ Cruzada la MEDIANOCHE no lo es: los pendientes se calculan con
++ * `ventanaDia(dayKey)`, y los de ayer serían datos falsos, no datos viejos. Por
++ * eso la retención va anclada al dayKey y se descarta al cambiar de día:
++ * preferimos un instante de "Cargando…" a un instante de cifras falsas.
++ */
++function useRetenidoDelDia(datos: Datos | undefined, dayKey: string): Datos | undefined {
++  // Ref y NO estado: guardar el último payload no debe provocar un render. Con
++  // estado, una query que devolviera un objeto nuevo en cada render entraría en
++  // bucle (guardar → renderizar → guardar). `useQuery` de Convex memoiza el
++  // resultado y no lo haría, pero la retención no puede depender de esa gentileza.
++  const retenido = React.useRef<{ dayKey: string; datos: Datos } | null>(null);
++
++  React.useEffect(() => {
++    if (datos !== undefined) retenido.current = { dayKey, datos };
++  }, [datos, dayKey]);
++
++  if (datos !== undefined) return datos;
++  // Leer la ref en render es deliberado: es justo el valor del commit anterior,
++  // y sin él la pantalla parpadearía entera en cada cambio de período.
++  // eslint-disable-next-line react-hooks/refs
++  return retenido.current !== null && retenido.current.dayKey === dayKey ? retenido.current.datos : undefined;
++}
++
++function Contenido({
++  datos,
++  actualizando,
++  periodo,
++  onPeriodo,
++}: {
++  datos: Datos | undefined;
++  actualizando: boolean;
++  periodo: Periodo;
++  onPeriodo: (p: Periodo) => void;
++}) {
++  // Tres estados excluyentes: carga / CRM vacío / resumen.
++  if (datos === undefined) {
++    return (
++      <p role="status" style={{ padding: "48px 0", textAlign: "center", color: "var(--color-neutral-500)", fontSize: 15 }}>
++        {CARGANDO}
++      </p>
++    );
++  }
++
++  // CRM vacío, derivado sin campo extra del servidor (plan §D1): la lectura es
++  // una pasada SIN filtro sobre el tenant, así que cero prospectos contados
++  // implica que no hubo truncamiento y que no existe ninguno. El caso truncado
++  // daría 1.200, nunca 0.
++  if (datos.prospectos.totales.activos + datos.prospectos.totales.descartados === 0) {
++    return <EmptyState icon="users" title={VACIO_TITULO} description={VACIO_DESCRIPCION} ctaLabel={VACIO_CTA} ctaHref="/prospectos/nuevo" />;
++  }
++
++  return (
++    <div className="flex flex-col gap-6">
++      <PillSelect label={PERIODO_LABEL} options={OPCIONES_PERIODO} value={periodo} onChange={onPeriodo} />
++      {!datos.prospectos.exacto && <BannerVistaParcial />}
++      <SeccionEtapas porEtapa={datos.prospectos.porEtapa} exacto={datos.prospectos.exacto} />
++      <SeccionPendientes pendientes={datos.prospectos.pendientes} exacto={datos.prospectos.exacto} />
++      <SeccionActividad datos={datos} actualizando={actualizando} />
++      <SeccionTotales totales={datos.prospectos.totales} exacto={datos.prospectos.exacto} />
++    </div>
++  );
++}
++
++function SeccionEtapas({ porEtapa, exacto }: { porEtapa: Datos["prospectos"]["porEtapa"]; exacto: boolean }) {
++  // Proporción relativa a la etapa más poblada, como el diseño aprobado. Mínimo
++  // 1 para no dividir por cero cuando todas están vacías.
++  const max = Math.max(1, ...OPCIONES_ETAPA.map(({ value }) => porEtapa[value]));
++
++  return (
++    <Seccion titulo={SECCION_ETAPAS}>
++      <Card>
++        <ul style={{ display: "flex", flexDirection: "column", gap: 14, margin: 0, padding: 0, listStyle: "none" }}>
++          {OPCIONES_ETAPA.map(({ value }) => (
++            <li key={value} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
++              {/* Etiqueta y cifra arriba, barra debajo a todo el ancho: en 375 px
++                  ninguna etiqueta se corta, ni la más larga del sistema. */}
++              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
++                <StageBadge stage={value} />
++                <span style={{ ...NUMERICO, fontSize: 15, fontWeight: 600, color: "var(--color-neutral-900)" }}>
++                  {cifra(porEtapa[value], exacto)}
++                </span>
++              </div>
++              <div style={{ height: 8, borderRadius: 4, background: "var(--color-neutral-100)", overflow: "hidden" }}>
++                <div
++                  style={{
++                    height: "100%",
++                    width: `${(porEtapa[value] / max) * 100}%`,
++                    background: `var(--color-stage-${value}-dot)`,
++                    borderRadius: 4,
++                  }}
++                />
++              </div>
++            </li>
++          ))}
++        </ul>
++      </Card>
++    </Seccion>
++  );
++}
++
++function SeccionPendientes({ pendientes, exacto }: { pendientes: Datos["prospectos"]["pendientes"]; exacto: boolean }) {
++  const total = pendientes.vencidos + pendientes.hoy;
++
++  return (
++    <Seccion titulo={SECCION_PENDIENTES}>
++      <Card>
++        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
++          <div>
++            <div style={{ ...NUMERICO, fontSize: 32, fontWeight: 700, lineHeight: 1.1, color: "var(--color-neutral-900)" }}>
++              {cifra(total, exacto)}
++            </div>
++            <div style={{ fontSize: 14, color: "var(--color-neutral-500)", marginTop: 4 }}>
++              {/* "No tienes pendientes" es una afirmación de AUSENCIA, y solo se
++                  puede hacer habiendo leído todo: con la lectura truncada, los
++                  ceros son de los 1.200 leídos y puede haber pendientes entre los
++                  que no se leyeron. Sin la guarda de `exacto`, esta rama se
++                  saltaba la regla de §5.2 justo en el caso más engañoso. */}
++              {total === 0 && exacto
++                ? SIN_PENDIENTES
++                : `${cifra(pendientes.vencidos, exacto)} ${PENDIENTES_VENCIDOS} · ${cifra(pendientes.hoy, exacto)} ${PENDIENTES_HOY}`}
++            </div>
++          </div>
++          {/* Navegación, no acción: el Resumen es de solo lectura y no escribe nada. */}
++          <Link href="/actividad" style={{ ...buttonStyle({ variant: "ghost" }), alignSelf: "flex-start", paddingLeft: 0 }}>
++            {PENDIENTES_ENLACE}
++          </Link>
++        </div>
++      </Card>
++    </Seccion>
++  );
++}
++
++function SeccionActividad({ datos, actualizando }: { datos: Datos; actualizando: boolean }) {
++  const { interacciones, prospectos, periodo } = datos;
++  const { exacto, diaCompletoDesde, serie, totalEnPeriodo } = interacciones;
++
++  /**
++   * ÚNICA definición de "sin datos" de la pantalla (plan §D6). Las tres ramas:
++   *   exacto           → nada sin datos, no hubo truncamiento
++   *   diaCompletoDesde → sin datos los días anteriores a esa fecha
++   *   null + !exacto   → NINGÚN día quedó completo: todos son sin datos
++   * La comparación lexicográfica es exacta en YYYY-MM-DD (igual que el handler).
++   */
++  const sinDatos = (dayKey: string) => !exacto && (diaCompletoDesde === null || dayKey < diaCompletoDesde);
++
++  const barras = serie.map((punto) => ({ ...punto, sinDatos: sinDatos(punto.dayKey) }));
++  const aviso = avisoSerie(exacto, diaCompletoDesde);
++  /**
++   * "Sin actividad" afirma una AUSENCIA, así que exige haber leído las DOS
++   * lecturas enteras. Los dos flags van explícitos aunque `totalEnPeriodo === 0`
++   * ya implique `interacciones.exacto`: la regla que se quiere hacer visible es
++   * "solo se afirma ausencia con lectura completa", no una deducción sobre las
++   * cotas. Sin la guarda de `prospectos.exacto` esta rama ocultaba altas que
++   * pudieran existir fuera del subconjunto leído.
++   */
++  const sinActividad = exacto && prospectos.exacto && totalEnPeriodo === 0 && prospectos.nuevosEnPeriodo === 0;
++
++  return (
++    <Seccion titulo={SECCION_ACTIVIDAD} ariaBusy={actualizando}>
++      <Card>
++        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
++          <BarChart
++            datos={barras}
++            ariaLabel={GRAFICO_ARIA}
++            etiqueta={(d) => etiquetaBarra(d.dayKey, d.valor, d.sinDatos ?? false)}
++            // En 30 días los rótulos serían ilegibles: el rango va en la frase.
++            rotulo={(d, _indice, total) => (total <= 7 ? inicialDiaSemana(d.dayKey) : null)}
++          />
++          <p style={{ fontSize: 14, color: "var(--color-neutral-700)", lineHeight: 1.5 }}>
++            {sinActividad
++              ? fraseSinActividad(periodo.desde, periodo.hastaIncluido)
++              : fraseActividad({
++                  interacciones: totalEnPeriodo,
++                  interaccionesExactas: exacto,
++                  // Viene de la OTRA lectura y lleva SU flag: la sección puede
++                  // mostrar una métrica marcada junto a otra sin marcar.
++                  nuevos: prospectos.nuevosEnPeriodo,
++                  nuevosExactos: prospectos.exacto,
++                  desde: periodo.desde,
++                  hastaIncluido: periodo.hastaIncluido,
++                })}
++          </p>
++          {aviso !== null && <Aviso texto={aviso} />}
++        </div>
++      </Card>
++    </Seccion>
++  );
++}
++
++function SeccionTotales({ totales, exacto }: { totales: Datos["prospectos"]["totales"]; exacto: boolean }) {
++  const columnas: Array<[string, number]> = [
++    [TOTAL_ACTIVOS, totales.activos],
++    [TOTAL_INCORPORADOS, totales.incorporados],
++    [TOTAL_DESCARTADOS, totales.descartados],
++  ];
++
++  return (
++    // Con lectura truncada el encabezado deja de decir "totales": no lo son.
++    <Seccion titulo={exacto ? SECCION_TOTALES : SECCION_TOTALES_PARCIAL}>
++      <Card>
++        <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
++          {columnas.map(([etiqueta, valor]) => (
++            <div key={etiqueta} style={{ flex: 1, textAlign: "center" }}>
++              <div style={{ ...NUMERICO, fontSize: 22, fontWeight: 700, color: "var(--color-primary-600)" }}>{cifra(valor, exacto)}</div>
++              <div style={{ fontSize: 12, color: "var(--color-neutral-500)", marginTop: 3 }}>{etiqueta}</div>
++            </div>
++          ))}
++        </div>
++      </Card>
++    </Seccion>
++  );
++}
++
++function Seccion({ titulo, ariaBusy, children }: { titulo: string; ariaBusy?: boolean; children: React.ReactNode }) {
++  return (
++    <section aria-label={titulo} aria-busy={ariaBusy} className="flex flex-col gap-3">
++      <h2
++        style={{
++          fontSize: "var(--text-h3-size)",
++          fontWeight: "var(--text-h3-weight)" as React.CSSProperties["fontWeight"],
++          color: "var(--color-neutral-900)",
++        }}
++      >
++        {titulo}
++      </h2>
++      {children}
++    </section>
++  );
++}
++
++/** Mismo tratamiento visual que el banner de vista parcial del Pipeline. */
++function Aviso({ texto }: { texto: string }) {
++  return (
++    <p
++      style={{
++        display: "flex",
++        alignItems: "center",
++        gap: 8,
++        padding: "10px 12px",
++        borderRadius: "var(--radius-md)",
++        background: "var(--color-warning-bg)",
++        color: "var(--color-warning-text)",
++        fontSize: 13,
++        fontWeight: 500,
++      }}
++    >
++      <Icon name="info" size={15} style={{ flex: "none" }} />
++      {texto}
++    </p>
++  );
++}
++
++function BannerVistaParcial() {
++  return <Aviso texto={BANNER_VISTA_PARCIAL} />;
++}
+diff --git a/src/app/(app)/resumen/textos.ts b/src/app/(app)/resumen/textos.ts
+new file mode 100644
+index 0000000..81c9401
+--- /dev/null
++++ b/src/app/(app)/resumen/textos.ts
+@@ -0,0 +1,139 @@
++import { MAX_RESUMEN_PROSPECTOS } from "../../../../convex/lib/constants";
++import { APP_TZ, parseDayKey, zonedMidnightToMs } from "../../../../convex/lib/fecha";
++import { formatearFechaEs } from "@/lib/etiquetas";
++
++/* Copy y formateadores puros del Resumen (JOS-24 bocado B). */
++
++export const TITULO = "Resumen";
++export const CARGANDO = "Cargando resumen…";
++
++export const VACIO_TITULO = "Aún no tienes prospectos";
++export const VACIO_DESCRIPCION = "Añade tu primer prospecto para empezar a trabajar tu red.";
++/** Copy propio, no el de JOS-62: coherencia con las otras dos pantallas raíz (plan §D7). */
++export const VACIO_CTA = "Añadir prospecto";
++
++export const PERIODO_LABEL = "Período";
++export const OPCIONES_PERIODO = [
++  { value: "semana" as const, label: "Últimos 7 días" },
++  { value: "mes" as const, label: "Últimos 30 días" },
++];
++export type Periodo = (typeof OPCIONES_PERIODO)[number]["value"];
++
++export const SECCION_ETAPAS = "Distribución del pipeline";
++export const SECCION_PENDIENTES = "Seguimientos pendientes";
++export const SECCION_ACTIVIDAD = "Actividad";
++export const SECCION_TOTALES = "Totales";
++/** Con lectura truncada la sección 5 DEJA de decir "totales" (plan matriz §5.2). */
++export const SECCION_TOTALES_PARCIAL = "Recuento parcial";
++
++export const PENDIENTES_VENCIDOS = "vencidos";
++export const PENDIENTES_HOY = "para hoy";
++export const PENDIENTES_ENLACE = "Ver en Actividad Diaria →";
++export const SIN_PENDIENTES = "No tienes seguimientos pendientes.";
++
++export const TOTAL_ACTIVOS = "Activos";
++export const TOTAL_INCORPORADOS = "Incorporados";
++export const TOTAL_DESCARTADOS = "Descartados";
++
++export const GRAFICO_ARIA = "Interacciones por día";
++
++/**
++ * Aviso de truncamiento de prospectos. Explica de dónde sale el corte para que
++ * el "+" de cada cifra tenga significado; mismo lenguaje que el Pipeline.
++ */
++export const BANNER_VISTA_PARCIAL = `Estás viendo ${numero(MAX_RESUMEN_PROSPECTOS)} prospectos; hay más. Las cifras con «+» son mínimos.`;
++
++/** Cifras en formato español con separador de millar. */
++export function numero(n: number): string {
++  return new Intl.NumberFormat("es-ES").format(n);
++}
++
++/**
++ * ÚNICA vía de pintar un número en esta pantalla, y exige el flag de su métrica
++ * como argumento: olvidarlo es un error de tipos, no un descuido de revisión
++ * (plan §D2). El "+" es semánticamente exacto porque toda métrica de prospectos
++ * se calcula sobre el subconjunto leído y por tanto es una cota inferior.
++ */
++export function cifra(n: number, exacto: boolean): string {
++  return exacto ? numero(n) : `${numero(n)}+`;
++}
++
++function msDe(dayKey: string): number {
++  return zonedMidnightToMs(parseDayKey(dayKey), APP_TZ);
++}
++
++const FECHA_CORTA = new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "long", timeZone: APP_TZ });
++
++/** "29 de julio" — sin día de la semana, para rótulos de rango. */
++export function fechaCorta(dayKey: string): string {
++  return FECHA_CORTA.format(msDe(dayKey));
++}
++
++/** "entre el 29 de julio y el 4 de agosto" — rótulo del período mostrado. */
++export function rotuloPeriodo(desde: string, hastaIncluido: string): string {
++  return `entre el ${fechaCorta(desde)} y el ${fechaCorta(hastaIncluido)}`;
++}
++
++/** Inicial del día de la semana, para el eje de la vista de 7 días. */
++export function inicialDiaSemana(dayKey: string): string {
++  return new Intl.DateTimeFormat("es-ES", { weekday: "narrow", timeZone: APP_TZ }).format(msDe(dayKey)).toUpperCase();
++}
++
++/**
++ * Texto de cada barra para lectores de pantalla. Un día sin medir NUNCA dice
++ * "sin interacciones": eso afirmaría un 0 que nadie ha contado.
++ */
++export function etiquetaBarra(dayKey: string, valor: number, sinDatos: boolean): string {
++  const fecha = formatearFechaEs(msDe(dayKey));
++  if (sinDatos) return `${fecha}: sin datos`;
++  if (valor === 0) return `${fecha}: sin interacciones`;
++  return `${fecha}: ${numero(valor)} ${valor === 1 ? "interacción" : "interacciones"}`;
++}
++
++/**
++ * Frase resumen de la sección 4. Las dos cifras vienen de LECTURAS DISTINTAS y
++ * cada una lleva su propio flag: el caso mixto —una marcada y la otra no— es
++ * legítimo y es justo lo que la regla "por métrica" persigue (plan matriz §5.2).
++ *
++ * Con la métrica truncada el plural es siempre el correcto: "1+" significa
++ * "al menos una, probablemente más".
++ */
++export function fraseActividad(datos: {
++  interacciones: number;
++  interaccionesExactas: boolean;
++  nuevos: number;
++  nuevosExactos: boolean;
++  desde: string;
++  hastaIncluido: string;
++}): string {
++  const i = `${cifra(datos.interacciones, datos.interaccionesExactas)} ${
++    datos.interacciones === 1 && datos.interaccionesExactas ? "interacción" : "interacciones"
++  }`;
++  const n = `${cifra(datos.nuevos, datos.nuevosExactos)} ${
++    datos.nuevos === 1 && datos.nuevosExactos ? "prospecto nuevo" : "prospectos nuevos"
++  }`;
++  return `${i} y ${n} ${rotuloPeriodo(datos.desde, datos.hastaIncluido)}.`;
++}
++
++/**
++ * Estado "sin actividad reciente": no hubo NADA en el período, ni interacciones
++ * ni altas. Sustituye a la frase resumen, que ahí solo diría dos ceros. Tono
++ * sobrio a propósito (design.md §1: *"sin signos de exclamación de más"*).
++ */
++export function fraseSinActividad(desde: string, hastaIncluido: string): string {
++  return `Sin actividad registrada ${rotuloPeriodo(desde, hastaIncluido)}.`;
++}
++
++/**
++ * Aviso de parcialidad de la serie. Tres ramas, exhaustivas:
++ *   exacta                        → no hay nada que advertir
++ *   truncada con día completo     → los días previos a esa fecha no se midieron
++ *   truncada sin ningún día completo → la serie entera no es fiable
++ */
++export function avisoSerie(exacto: boolean, diaCompletoDesde: string | null): string | null {
++  if (exacto) return null;
++  if (diaCompletoDesde === null) {
++    return "No se pudo medir ningún día completo de este período: el gráfico no muestra datos fiables.";
++  }
++  return `Datos completos desde el ${fechaCorta(diaCompletoDesde)}; los días anteriores no se pudieron medir.`;
++}
+diff --git a/src/components/ui/BarChart.test.tsx b/src/components/ui/BarChart.test.tsx
+new file mode 100644
+index 0000000..66d1a0f
+--- /dev/null
++++ b/src/components/ui/BarChart.test.tsx
+@@ -0,0 +1,76 @@
++// @vitest-environment jsdom
++import * as React from "react";
++import { afterEach, describe, expect, it } from "vitest";
++import { cleanup, render, screen } from "@testing-library/react";
++import { BarChart, type BarChartDatum } from "./BarChart";
++
++afterEach(cleanup);
++
++const ETIQUETA = (d: BarChartDatum) => (d.sinDatos ? `${d.dayKey}: sin datos` : `${d.dayKey}: ${d.valor}`);
++
++/** `null` = día sin medir; un número = valor real (incluido el 0). */
++function serie(valores: Array<number | null>): BarChartDatum[] {
++  return valores.map((v, i) => ({
++    dayKey: `2026-08-${String(i + 1).padStart(2, "0")}`,
++    valor: v ?? 0,
++    sinDatos: v === null,
++  }));
++}
++
++/** La barra interior de cada columna; `null` cuando la columna no pinta ninguna. */
++function barras(): Array<HTMLElement | null> {
++  return screen.getAllByRole("listitem").map((li) => li.querySelector<HTMLElement>("div > div"));
++}
++
++describe("BarChart", () => {
++  it("expone el valor de cada barra como texto real, no solo como color", () => {
++    render(<BarChart datos={serie([3, 0, null])} etiqueta={ETIQUETA} ariaLabel="Interacciones por día" />);
++
++    expect(screen.getByText("2026-08-01: 3")).toBeDefined();
++    expect(screen.getByText("2026-08-02: 0")).toBeDefined();
++    expect(screen.getByText("2026-08-03: sin datos")).toBeDefined();
++    expect(screen.getByRole("list", { name: "Interacciones por día" })).toBeDefined();
++  });
++
++  it("un valor > 0 nunca se dibuja con altura 0, por pequeño que sea frente al máximo", () => {
++    // 1 frente a 1.000 daría 0,12 px: se eleva al mínimo visible.
++    render(<BarChart datos={serie([1, 1000])} etiqueta={ETIQUETA} ariaLabel="g" altura={120} />);
++
++    const [pequena, grande] = barras();
++    expect(pequena?.style.height).toBe("3px");
++    expect(grande?.style.height).toBe("120px");
++  });
++
++  it("un 0 real lleva tope de línea base; un día sin datos no pinta barra alguna", () => {
++    render(<BarChart datos={serie([0, null])} etiqueta={ETIQUETA} ariaLabel="g" />);
++
++    const [cero, ausente] = barras();
++    expect(cero?.style.height).toBe("2px");
++    expect(ausente).toBeNull();
++  });
++
++  it("la serie entera a cero no rompe la escala (no divide por cero)", () => {
++    render(<BarChart datos={serie([0, 0, 0])} etiqueta={ETIQUETA} ariaLabel="g" />);
++
++    for (const barra of barras()) {
++      expect(barra?.style.height).toBe("2px");
++    }
++  });
++
++  it("los días sin datos no participan en la escala", () => {
++    // El 999 no se midió: no puede fijar el máximo y aplastar al 2, que sí.
++    render(<BarChart datos={serie([2, null])} etiqueta={ETIQUETA} ariaLabel="g" altura={120} />);
++
++    expect(barras()[0]?.style.height).toBe("120px");
++  });
++
++  it("el rótulo del eje se omite cuando la función lo devuelve null", () => {
++    const { rerender } = render(
++      <BarChart datos={serie([1, 2])} etiqueta={ETIQUETA} ariaLabel="g" rotulo={() => null} />,
++    );
++    expect(screen.queryByText("L")).toBeNull();
++
++    rerender(<BarChart datos={serie([1, 2])} etiqueta={ETIQUETA} ariaLabel="g" rotulo={() => "L"} />);
++    expect(screen.getAllByText("L")).toHaveLength(2);
++  });
++});
+diff --git a/src/components/ui/BarChart.tsx b/src/components/ui/BarChart.tsx
+new file mode 100644
+index 0000000..b1171ad
+--- /dev/null
++++ b/src/components/ui/BarChart.tsx
+@@ -0,0 +1,106 @@
++import * as React from "react";
++
++export interface BarChartDatum {
++  dayKey: string;
++  valor: number;
++  /**
++   * El día NO se midió. No es un 0: es una ausencia, y se dibuja distinto.
++   * Quien lo decide es la pantalla (predicado único de JOS-24 §D6); este
++   * componente solo lo pinta.
++   */
++  sinDatos?: boolean;
++}
++
++export interface BarChartProps {
++  datos: BarChartDatum[];
++  /** Texto para lectores de pantalla de cada barra. Se renderiza como texto real. */
++  etiqueta: (d: BarChartDatum) => string;
++  /** Rótulo visible bajo la barra; `null` para no rotularla. */
++  rotulo?: (d: BarChartDatum, indice: number, total: number) => string | null;
++  /** Nombre accesible de la lista de barras. */
++  ariaLabel: string;
++  /** Alto del área de barras en px. @default 120 */
++  altura?: number;
++}
++
++/** Grosor mínimo de una barra con valor > 0: un 1 no puede parecer un 0. */
++const MINIMO_VISIBLE = 3;
++/** Tope que marca la línea base en un 0 REAL — lo que lo distingue de "sin datos". */
++const GROSOR_CERO = 2;
++
++const RAYADO = `repeating-linear-gradient(45deg, transparent, transparent 3px, var(--color-neutral-200) 3px, var(--color-neutral-200) 5px)`;
++
++/**
++ * Gráfico de barras sin librería, sin ejes, sin interactividad y sin tooltips
++ * (JOS-62: *"simple, nada técnico — el usuario es un networker, no un analista"*).
++ *
++ * Flex con `min-width: 0` en cada barra y **sin `overflow-x`**: 30 barras entran
++ * en 375 px sin provocar scroll horizontal. Nada de anchos fijos ni de SVG
++ * dimensionado, que es por donde volvería el desbordamiento.
++ *
++ * Presentacional puro: no conoce Convex, ni parcialidad, ni fechas.
++ */
++export function BarChart({ datos, etiqueta, rotulo, ariaLabel, altura = 120 }: BarChartProps) {
++  // Los días sin medir no participan en la escala: un valor que no conocemos no
++  // puede fijar el máximo. Mínimo 1 para no dividir por cero con la serie a cero.
++  const max = Math.max(1, ...datos.filter((d) => !d.sinDatos).map((d) => d.valor));
++
++  return (
++    <ul
++      aria-label={ariaLabel}
++      style={{
++        display: "flex",
++        alignItems: "flex-end",
++        gap: 2,
++        margin: 0,
++        padding: 0,
++        listStyle: "none",
++        width: "100%",
++      }}
++    >
++      {datos.map((d, indice) => {
++        const texto = rotulo?.(d, indice, datos.length) ?? null;
++        return (
++          <li key={d.dayKey} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
++            <span className="sr-only">{etiqueta(d)}</span>
++            <div
++              style={{
++                height: altura,
++                display: "flex",
++                alignItems: "flex-end",
++                borderRadius: "var(--radius-sm)",
++                background: d.sinDatos ? RAYADO : "var(--color-neutral-100)",
++              }}
++            >
++              {!d.sinDatos && (
++                <div
++                  style={{
++                    width: "100%",
++                    height: d.valor > 0 ? Math.max(MINIMO_VISIBLE, (d.valor / max) * altura) : GROSOR_CERO,
++                    borderRadius: "var(--radius-sm)",
++                    background: d.valor > 0 ? "var(--color-primary-500)" : "var(--color-neutral-300)",
++                  }}
++                />
++              )}
++            </div>
++            {texto !== null && (
++              <span
++                aria-hidden="true"
++                style={{
++                  fontSize: 10,
++                  lineHeight: 1.2,
++                  textAlign: "center",
++                  color: "var(--color-neutral-500)",
++                  overflow: "hidden",
++                  whiteSpace: "nowrap",
++                }}
++              >
++                {texto}
++              </span>
++            )}
++          </li>
++        );
++      })}
++    </ul>
++  );
++}
+diff --git a/src/components/ui/index.ts b/src/components/ui/index.ts
+index d38992e..24c0b65 100644
+--- a/src/components/ui/index.ts
++++ b/src/components/ui/index.ts
+@@ -15,3 +15,4 @@ export * from "./Toast";
+ export * from "./EmptyState";
+ export * from "./FilterChip";
+ export * from "./ProspectCard";
++export * from "./BarChart";

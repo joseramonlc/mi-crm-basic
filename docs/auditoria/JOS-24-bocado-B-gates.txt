@@ -1,0 +1,485 @@
+GATES — JOS-24 · Pantalla Resumen (Dashboard) — BOCADO B (interfaz)
+Rama: joseramonlc/jos-24-bocado-b-pantalla-resumen
+Base: origin/master 38a23cf (verificado con git fetch --prune antes de crear la rama)
+Fecha: 2026-08-04
+Plan: docs/auditoria/JOS-24-bocado-B-plan.md rev. 6 (corrige la 4ª auditoría, la del
+      código; el GO del plan fue sobre la rev. 5, en la 3ª auditoría)
+      Plan matriz: docs/auditoria/JOS-24-plan.md rev. 4 §5
+
+ESTADO: gates locales EJECUTADOS Y EN VERDE (repetidos tras corregir la 4ª
+        auditoría, la del código: ver "CORRECCIONES DE LA 4ª AUDITORÍA").
+        Medición contra deployment real EJECUTADA el 2026-08-04 — ver la sección
+        "MEDICIÓN CONTRA DEPLOYMENT REAL".
+
+        Las correcciones de la 4ª auditoría son de PRESENTACIÓN (dos condiciones
+        de la UI) y no tocan la query ni el consumo, así que la medición sigue
+        siendo válida: se midió el mismo backend, con las mismas cotas y el mismo
+        volumen de lectura.
+
+
+===== ALCANCE DE ESTE BOCADO =====
+
+SOLO INTERFAZ. Ni un fichero de convex/ ha sido tocado: ni la query, ni el
+esquema, ni las constantes.
+
+Ficheros del bocado (8 nuevos + 1 modificado en una línea):
+
+  src/app/(app)/resumen/page.tsx          nuevo
+  src/app/(app)/resumen/textos.ts         nuevo
+  src/app/(app)/resumen/error.tsx         nuevo
+  src/app/(app)/resumen/page.test.tsx     nuevo
+  src/app/(app)/resumen/error.test.tsx    nuevo
+  src/components/ui/BarChart.tsx          nuevo
+  src/components/ui/BarChart.test.tsx     nuevo
+  src/components/ui/index.ts              modificado (+1 línea: un export *)
+  docs/auditoria/JOS-24-bocado-B-plan.md  nuevo (documentación)
+
+Es EXACTAMENTE la lista del plan matriz §1. No se añadió textos.test.ts (D5,
+retirada por decisión de producto): sus 9 combinaciones puras se cubren
+enumeradas sobre el DOM.
+
+
+===== npx tsc --noEmit =====
+
+convex/interacciones.test.ts(11,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+convex/prospectos.api.test.ts(10,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+convex/prospectos.test.ts(20,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+convex/resumen.test.ts(18,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+convex/seed.test.ts(8,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+EXIT_TSC=2
+
+DECLARACIÓN: son los MISMOS 5 errores preexistentes que documentó el bocado A,
+ni uno más. Este bocado no añade ficheros de test en convex/, así que el número
+NO debía crecer y no ha crecido. Los 5 son `import.meta.glob`, el mecanismo que
+exige convex-test; la causa raíz (los tipos de Vite fuera del tsconfig raíz)
+sigue fuera de alcance.
+
+Ninguno de los 8 ficheros nuevos aporta error de tipos.
+
+⚠️ EXIT_TSC=2 es el código de salida esperado por esos 5 errores preexistentes.
+Se imprime a propósito: ver la nota sobre verdes falsos al final.
+
+
+===== npm run lint =====
+
+> crm-networker@0.1.0 lint
+> eslint
+
+EXIT_LINT=0
+
+(sin hallazgos)
+
+Nota: page.tsx lleva UN `eslint-disable-next-line react-hooks/refs` justificado
+en el propio código, sobre la lectura de la ref de retención durante el render
+(plan §D3). Es deliberado y es lo que evita el parpadeo global de la pantalla al
+cambiar de período.
+
+
+===== npm run build =====
+
+> crm-networker@0.1.0 build
+> next build
+
+▲ Next.js 16.2.10 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 27.5s
+  Running TypeScript ...
+  Finished TypeScript in 54s ...
+  Collecting page data using 7 workers ...
+  Generating static pages using 7 workers (0/10) ...
+✓ Generating static pages using 7 workers (10/10) in 4.1s
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ○ /actividad
+├ ○ /login
+├ ○ /prospectos
+├ ƒ /prospectos/[id]
+├ ƒ /prospectos/[id]/interacciones/nueva
+├ ○ /prospectos/nuevo
+├ ○ /recuperar
+├ ○ /registro
+└ ○ /resumen
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+EXIT_BUILD=0
+
+⚠️ COMPROBACIÓN OBJETIVA DEL BOCADO: `/resumen` APARECE en la tabla de rutas.
+Es la inversa exacta de la del bocado A, cuyo gate acreditaba que NO aparecía.
+La pestaña "Resumen" de la barra de navegación deja hoy de llevar a un 404.
+
+El build NO se canalizó por `tail` (fue uno de los verdes falsos de la sesión
+anterior): se redirigió íntegro a fichero y se leyó desde ahí.
+
+
+===== npm test =====
+
+TIRADA VÁLIDA (tras corregir la 4ª auditoría y liberar memoria):
+
+  npx vitest run --maxWorkers=2
+
+ Test Files  39 passed (39)
+      Tests  406 passed (406)
+   Duration  727.04s
+
+EXIT_TEST=0
+
+CONTRASTE DE FICHEROS (obligatorio por el historial de verdes falsos):
+
+  ficheros de test en disco   : 39   (find src convex -name "*.test.ts*")
+  ficheros que vitest ejecutó : 39
+  → CUADRA. Ninguna suite se quedó sin arrancar.
+
+Antes de este bocado había 36 ficheros; los 3 nuevos son page.test.tsx,
+error.test.tsx y BarChart.test.tsx del Resumen.
+
+TESTS NUEVOS: 30 = 23 (page.test.tsx) + 1 (error.test.tsx) + 6 (BarChart).
+406 = 402 + los 4 añadidos al corregir la 4ª auditoría.
+
+⚠️ POR QUÉ --maxWorkers=2 Y NO `npm test` A SECAS: ver "TERCER MECANISMO DE
+VERDE FALSO" más abajo. No es una concesión para que pasen: con el paralelismo
+por defecto los ficheros arrancaban de menos, y ninguna de esas tiradas era
+utilizable ni a favor ni en contra.
+
+INVENTARIO, por bloque de page.test.tsx (23) + error (1) + BarChart (6):
+
+  estados de la pantalla (5)
+    - carga: aviso y ninguna sección
+    - sin ningún prospecto: vacío con CTA de alta
+    - con UN solo prospecto ya no se considera vacío  [D1]
+    - con datos pinta las cinco secciones
+    - sin actividad en el período lo dice sin dramatismo y el gráfico sigue ahí
+
+  el selector afecta solo a la sección 4 (1)
+    - se compara el textContent de las secciones 2, 3 y 5 antes y después de
+      pulsar el pill: idéntico. El de la sección 4: distinto.
+
+  parcialidad por métrica (5)
+    - con prospectos truncados NINGUNA de sus siete métricas aparece sin marca
+      (6 etapas + pendientes total + desglose + nuevos + 3 totales + el
+      encabezado que deja de decir "Totales" + el banner)
+    - caso mixto: nuevos marcado, interacciones sin marcar
+    - caso inverso: interacciones marcadas, nuevos sin marcar
+    - las dos lecturas truncadas a la vez
+    - norma española del separador de millar (ver hallazgo abajo)
+
+  serie parcial (3)
+    - los días anteriores a diaCompletoDesde se declaran "sin datos", no 0
+    - un 0 real y un día sin datos producen textos distintos en la misma serie
+    - sin ningún día completo, las 30 barras son "sin datos" y ni una dice
+      "sin interacciones"  [D6, mayor 2 de la 1ª auditoría]
+
+  retención de datos (2)
+    - al PULSAR el selector de 30 días, con la nueva consulta aún sin responder,
+      las secciones 2, 3 y 5 siguen en pantalla y la 4 queda con aria-busy
+      [reescrito por el menor 1 de la 4ª auditoría: antes no pulsaba nada]
+    - cruzada la medianoche NO se retiene nada: aparece "Cargando resumen…" y
+      la sección de pendientes desaparece  [D3, mayor 1 de la 1ª auditoría]
+
+  una lectura truncada NUNCA afirma una ausencia (4)  [4ª auditoría]
+    - ceros observados con lectura parcial → NO dice "no tienes pendientes",
+      muestra "0+ vencidos · 0+ para hoy"        [mayor 1]
+    - lectura exacta con ceros reales → sí puede afirmarlo  [mayor 1, cara B]
+    - prospectos truncados con cero altas → NO declara "sin actividad",
+      muestra "0 interacciones y 0+ prospectos nuevos"      [mayor 2]
+    - las dos lecturas exactas y todo a cero → sí lo declara [mayor 2, cara B]
+
+  accesibilidad y navegación (3)
+    - los siete valores del gráfico están disponibles sin visión
+    - el enlace a Actividad Diaria navega (href=/actividad) y la sección no
+      contiene ningún botón: la pantalla es de solo lectura
+    - sin seguimientos pendientes lo dice en texto
+
+  BarChart aislado (6)
+    - cada barra expone su valor como texto real
+    - un valor > 0 nunca se dibuja con altura 0 (1 frente a 1.000 → 3px)
+    - un 0 real lleva tope de línea base; un día sin datos no pinta barra
+    - la serie entera a cero no rompe la escala
+    - los días sin datos no participan en la escala
+    - el rótulo del eje se omite cuando la función devuelve null
+
+
+===== DOS HALLAZGOS DURANTE LA IMPLEMENTACIÓN =====
+
+1) BUCLE INFINITO DE RENDER en la primera versión de la retención (D3).
+
+   La primera implementación guardaba el último payload con useState. Si la
+   query devuelve un objeto NUEVO en cada render, cada guardado provoca otro
+   render: guardar → renderizar → guardar. Se manifestó al ejecutar los tests
+   como un proceso de vitest a 82% de CPU y 3,1 GB de memoria, que hubo que
+   matar.
+
+   En producción no habría ocurrido: useQuery de Convex memoiza el resultado y
+   devuelve la misma referencia mientras el dato no cambia. Pero una retención
+   que sólo funciona si el proveedor es amable es frágil.
+
+   CORREGIDO: la retención pasa a useRef. Escribir una ref no provoca render,
+   así que el bucle es imposible por construcción, venga como venga el dato.
+   El test que lo destapó se corrigió además para usar referencias estables,
+   que es como se comporta el useQuery real.
+
+2) EL SEPARADOR DE MILLAR ESPAÑOL NO APLICA A CUATRO CIFRAS.
+
+   Dos tests fallaron esperando "1.200" y "1.190+". La expectativa era MÍA y
+   era incorrecta: en español los números de cuatro cifras se escriben SIN
+   separador (norma de la RAE), y así lo implementa Intl:
+
+     999 → 999      1190 → 1190      1200 → 1200
+     9999 → 9999    10000 → 10.000   1200000 → 1.200.000
+
+   El código era correcto; se corrigieron los tests. Importa porque la cota del
+   Resumen (MAX_RESUMEN_PROSPECTOS = 1200) es justo de cuatro dígitos: es la
+   cifra que el usuario verá en el banner de vista parcial, y se escribe "1200".
+   El test cubre ahora la frontera real de la regla (1200 y 10.000).
+
+
+===== CORRECCIONES DE LA 4ª AUDITORÍA (la del código) =====
+
+Veredicto: NO-GO, 2 mayores y 2 menores. Los cuatro aceptados y corregidos.
+
+MAYOR 1 — page.tsx: con prospectos.exacto === false y vencidos/hoy a 0, la
+pantalla afirmaba "No tienes seguimientos pendientes".
+
+  ANTES:  {total === 0 ? SIN_PENDIENTES : …}
+  AHORA:  {total === 0 && exacto ? SIN_PENDIENTES : …}
+
+MAYOR 2 — page.tsx: sinActividad no exigía prospectos.exacto, así que podía
+declarar "Sin actividad registrada" ocultando altas fuera del subconjunto leído.
+
+  ANTES:  totalEnPeriodo === 0 && prospectos.nuevosEnPeriodo === 0
+  AHORA:  exacto && prospectos.exacto && totalEnPeriodo === 0 &&
+          prospectos.nuevosEnPeriodo === 0
+
+  Mi comentario original justificaba omitir el flag porque "totalEnPeriodo === 0
+  ya implica lectura exacta". Es cierto PARA LAS INTERACCIONES y no dice nada de
+  los prospectos. El razonamiento era correcto y la conclusión, incompleta.
+
+LOS DOS MAYORES SON EL MISMO FALLO: una rama especial que, por dar un texto más
+amable, esquiva cifra() y afirma una AUSENCIA sobre datos parciales. La regla de
+§5.2 no admite excepciones aunque el número observado sea cero — un cero
+observado sobre una lectura truncada no es una ausencia, es un mínimo.
+
+  Tests nuevos (4), que fijan las dos caras de cada uno:
+    - con ceros observados pero lectura parcial, NO dice que no haya pendientes
+      (y muestra "0+ vencidos · 0+ para hoy")
+    - con lectura exacta y ceros reales, sí puede afirmarlo
+    - con prospectos truncados y cero altas, NO declara "sin actividad"
+      (y muestra "0 interacciones y 0+ prospectos nuevos")
+    - con las dos lecturas exactas y todo a cero, sí lo declara
+
+MENOR 1 — page.test.tsx: el test de retención no pulsaba el selector; solo
+forzaba undefined y re-renderizaba, con lo que probaba el ESTADO y no la
+TRANSICIÓN. Reescrito: useQuery responde según los argumentos, se pulsa el pill
+de 30 días y se comprueba que las secciones 2, 3 y 5 siguen en pantalla.
+
+MENOR 2 — el plan seguía exigiendo "1.200"/"1.200+" mientras código, tests y
+gates acreditan "1200"/"1200+". Corregidas las 4 apariciones del plan.
+
+Tras las correcciones se repitieron los CUATRO gates, no solo los tests.
+
+
+===== TERCER MECANISMO DE VERDE FALSO (nuevo, documentar) =====
+
+Al repetir los gates aparecieron DOS tiradas inutilizables que a primera vista
+parecían casi correctas:
+
+  tirada 1:  Test Files  1 failed | 36 passed (37)   ← 37, no 39
+  tirada 2:  Test Files  38 passed (38)               ← 38, no 39
+
+Causa: "[vitest-pool]: Failed to start forks worker … Timeout waiting for worker
+to respond". Los workers no llegaban a arrancar por falta de memoria (la máquina
+tiene 3,7 GB y el servidor de `next dev` seguía levantado desde la medición).
+El fichero afectado CAMBIABA en cada tirada — EdicionDatos y FormHeader la
+primera vez, AppShell la segunda —, que es lo que descarta que fuera el código.
+En la tirada 1 arrastró además un test de Actividad a "Test timed out in 5000ms",
+un fichero que este bocado no toca.
+
+Dos cosas hacen esto especialmente peligroso:
+  · "36 passed (37)" se lee como verde de reojo.
+  · El harness informó "exit code 0" mientras EXIT_TEST valía 1.
+
+Solución aplicada: parar el dev server y bajar el paralelismo a --maxWorkers=2.
+La tirada válida da 39/39 y 406 tests. NO se relajó ninguna aserción ni se
+marcó nada como skip.
+
+REGLA PARA LA PRÓXIMA VEZ: en esta máquina, no ejecutar la suite con el servidor
+de desarrollo levantado, y contrastar SIEMPRE el número de ficheros contra el
+`find`. El recuento es lo único que distingue esta tirada de una buena.
+
+
+===== NOTA SOBRE VERDES FALSOS =====
+
+Cada gate se ejecutó imprimiendo su propio código de salida (EXIT_TSC, EXIT_LINT,
+EXIT_BUILD, EXIT_TEST) y volcando la salida íntegra a fichero, sin `tail` ni
+tuberías intermedias.
+
+Mereció la pena: al encadenar tsc y lint en un solo comando, el harness informó
+"exit code 0" mientras EXIT_TSC valía 2. El código de salida del comando
+compuesto era el del ÚLTIMO tramo, no el del conjunto. Sin los echo explícitos,
+ese 2 habría pasado inadvertido.
+
+Y el contraste de ficheros de test (39 en disco = 39 ejecutados) cubre el otro
+mecanismo conocido: vitest arrancando menos suites de las que hay.
+
+
+===== MEDICIÓN CONTRA DEPLOYMENT REAL =====
+
+Ejecutada el 2026-08-04. Deployment: jose-lumbreras:crm-networker:dev
+(adamant-mockingbird-816.eu-west-1.convex.cloud).
+
+--- CONDICIÓN 1 DE LA AUDITORÍA: aislamiento, con la ventana acotada ---
+
+  CONGELACIÓN   13:58:29 CEST   `railway down -y`
+                → despliegue 44474993 pasa a REMOVED
+                → https://mi-crm-basic-production-8b59.up.railway.app/login
+                  responde HTTP 404 (antes HTTP 200). COMPROBADO, no supuesto.
+
+  REACTIVACIÓN  14:12:49 CEST   `railway deployment redeploy --from-source -y`
+                → despliegue 4573ba23 en SUCCESS
+                → la misma URL responde HTTP 200 a las 14:14:02. COMPROBADO.
+
+  VENTANA TOTAL: 15 min 33 s. Durante ella, ninguna otra vía de escritura pudo
+  alcanzar la base de datos: la app publicada era la única y estaba retirada.
+
+--- CONDICIÓN 4: backup fuera del repositorio, verificado ---
+
+  `npx convex export --path ~/crm-backups/JOS-24-backup-pre-medicion.zip`
+  → 3.638 B. Contenido verificado ABRIENDO el zip, no dando por buena la salida:
+
+      README.md                              420 B
+      _tables/documents.jsonl                 69 B
+      interacciones/documents.jsonl        2.874 B   → 9 filas
+      interacciones/generated_schema.jsonl    10 B
+      prospectos/documents.jsonl           4.458 B   → 12 filas
+      prospectos/generated_schema.jsonl       10 B
+
+  Estado de partida: 12 prospectos, 9 interacciones, repartidos en TRES cuentas
+  distintas de este deployment de desarrollo (hallazgo de la sesión: no era un
+  solo inquilino como se suponía).
+
+--- CONDICIÓN 3: testigos de contenido, no solo recuentos ---
+
+  Anotados antes de sembrar:
+    "Raúl Ortega" _id k17aj3p1z81s2hyk2zcbmmry2d8bcedj  (cuenta que se sembró)
+    "Miguel"      _id k17dvfmcd8mm7pdn5jw32zxrw58b17jt  (OTRA cuenta)
+
+  El segundo es deliberado: si el borrado en cascada se desmandara más allá del
+  inquilino sembrado, ese documento lo delataría.
+
+--- SIEMBRA DEL PEOR CASO ---
+
+  `npx convex run seed:seed '{"scenario":"resumen","usuarioId":"…user_3Gp6HVz…"}'`
+  → {"dayKey":"2026-08-04","insertados":1201,"scenario":"resumen"}
+
+  Cuenta sembrada identificada por el product owner desde la pantalla (vio a
+  "Andrés Molina"), no elegida a ojo: sembrar la cuenta equivocada habría medido
+  contra un tenant vacío.
+
+--- LAS CIFRAS ---
+
+Obtenidas de `npx convex logs --success --jsonl` (campo usageStats), que da el
+dato por invocación y evita navegar el dashboard a mano.
+
+  PERÍODO 30 DÍAS — el peor caso, con LAS DOS LECTURAS TRUNCANDO A LA VEZ:
+
+    | Métrica                | Previsto (convex-test) | MEDIDO en servidor | Δ       |
+    |------------------------|------------------------|--------------------|---------|
+    | Documentos leídos      | 1.702                  | 1.702              | EXACTO  |
+    | Bytes leídos           | 5.485.256              | 5.686.323          | +3,67 % |
+    | % del límite de docs   | 5,3 %                  | 5,3 %              | —       |
+    | % del límite de 16 MiB | 32,7 %                 | 33,9 %             | +1,2 pp |
+    | Margen sobre el límite | 3,06×                  | 2,95×              | —       |
+    | Ejecución en frío      | ref. JOS-21: 277 ms    | 231,5 ms           | mejor   |
+    | Ejecución en caliente  | —                      | ~0,03 ms (caché)   | —       |
+    | Tiempo de handler      | —                      | 46,6 ms            | —       |
+    | Errores de límite      | debe ser NO            | NO                 | OK      |
+
+  1.702 = 1.201 prospectos (cota 1.200 + centinela) + 501 interacciones
+  (cota 500 + centinela). El modelo de lectura del plan era correcto al documento.
+
+  PERÍODO 7 DÍAS — no es el peor caso, se anota por contraste:
+
+    documentos 1.320 · bytes 4.005.141 · en frío 205,7 ms · sin truncar interacciones
+
+    El seed reparte las 501 interacciones en 30 días, así que en la ventana de 7
+    días solo caen 119 y la lectura NO se trunca. Detectado durante la medición:
+    de haber medido solo en "Últimos 7 días" se habría medido de menos y las
+    cifras no serían comparables con la referencia. La medición válida es la de
+    30 días.
+
+SALIDA CRUDA, para que las cifras de arriba sean reproducibles sin fiarse de mi
+tabla. Son las DOS únicas ejecuciones en frío y sin error de `resumen:resumen`
+que devolvió `npx convex logs --history 30 --success --jsonl`, literales:
+
+--- 7 días (no es el peor caso) ---
+{"kind":"Completion","udfType":"Query","componentPath":null,"identifier":"resumen:resumen","logLines":[],"timestamp":1785845161.4860404,"cachedResult":false,"caller":"SyncWorker","parentExecutionId":null,"executionTime":0.205705368,"userExecutionTime":0.040669195,"success":null,"error":null,"requestId":"286f9801a386a205","executionId":"00fec51b-9e77-4a82-9da1-fbc7cc37fa03","usageStats":{"databaseReadBytes":4005141,"databaseWriteBytes":0,"databaseIoReadBytes":4005141,"databaseIoWriteBytes":0,"databaseReadDocuments":1320,"storageReadBytes":0,"storageWriteBytes":0,"vectorIndexReadBytes":0,"vectorIndexWriteBytes":0,"textIndexQueryBytes":0,"textIndexWriteQueryBytes":0,"vectorIndexReadQueryBytes":0,"vectorIndexWriteQueryBytes":0,"networkEgressBytes":0,"memoryUsedMb":64},"returnBytes":690,"occInfo":null,"willRetry":false,"executionTimestamp":1785845161.2812996,"identityType":"user","environment":"isolate"}
+
+--- 30 días (EL PEOR CASO: las dos lecturas truncan a la vez) ---
+{"kind":"Completion","udfType":"Query","componentPath":null,"identifier":"resumen:resumen","logLines":[],"timestamp":1785845298.9820647,"cachedResult":false,"caller":"SyncWorker","parentExecutionId":null,"executionTime":0.231513616,"userExecutionTime":0.046636783,"success":null,"error":null,"requestId":"783605651c412e46","executionId":"e7826315-86d8-47ce-bc86-dbfbba07b2ec","usageStats":{"databaseReadBytes":5686323,"databaseWriteBytes":0,"databaseIoReadBytes":5686323,"databaseIoWriteBytes":0,"databaseReadDocuments":1702,"storageReadBytes":0,"storageWriteBytes":0,"vectorIndexReadBytes":0,"vectorIndexWriteBytes":0,"textIndexQueryBytes":0,"textIndexWriteQueryBytes":0,"vectorIndexReadQueryBytes":0,"vectorIndexWriteQueryBytes":0,"networkEgressBytes":0,"memoryUsedMb":64},"returnBytes":1551,"occInfo":null,"willRetry":false,"executionTimestamp":1785845298.7514184,"identityType":"user","environment":"isolate"}
+
+Los campos que sostienen la tabla son `usageStats.databaseReadDocuments`,
+`usageStats.databaseReadBytes`, `executionTime` (segundos) y `cachedResult`.
+Las ejecuciones con `cachedResult:true` se omiten aquí porque leen 0 documentos
+por definición; la de `error` UNAUTHENTICATED también, y es la guarda de sesión
+actuando antes de tocar la base de datos.
+
+VEREDICTO SOBRE EL PRESUPUESTO: el servidor confirma el plan. El recuento de
+documentos coincide exactamente; los bytes salen un 3,67 % por encima de la
+estimación en memoria —diferencia atribuible al coste por documento de los
+campos de sistema, que convex-test contabiliza algo distinto—, y el margen sigue
+siendo de casi 3×. No procede revisar las cotas.
+
+--- CONDICIÓN 2: restauración desde el snapshot, nunca `seed populated` ---
+
+  `npx convex import --replace-all -y ~/crm-backups/JOS-24-backup-pre-medicion.zip`
+  → "Added 21 documents": 12 prospectos + 9 interacciones.
+
+  Verificado DESPUÉS (las comprobaciones acreditan, no deciden):
+    recuento prospectos    : 12  = el de 6.1  OK
+    recuento interacciones :  9  = el de 6.1  OK
+    testigo "Raúl Ortega"  : mismo _id, misma etapa, mismas fechas  OK
+    testigo "Miguel"       : mismo _id, y su interacción ("quedamos en hablar" /
+                             "lo llamo el martes") también vuelve  OK
+
+  No coinciden solo las cantidades: son los mismos documentos, con los mismos
+  identificadores. Es la comprobación que la 2ª auditoría exigía y que un
+  `seed populated` no habría podido dar.
+
+--- COMPROBACIONES DE PARCIALIDAD EN PANTALLA (e2e §3.4) ---
+
+  1. Recuentos por etapa parciales          OK — las 6 etapas muestran "200+"
+  2. "Nuevos prospectos" marcado            OK — "1200+ prospectos nuevos"
+  3. Los totales dejan de ser "totales"     OK — encabezado "Recuento parcial"
+  4. La serie declara parcialidad y los
+     días previos a diaCompletoDesde NO se
+     dibujan como 0                         OK — aviso "Datos completos desde el
+                                            7 de julio…" y la barra del 6 de
+                                            julio aparece RAYADA, no a cero
+  5. Los días más recientes están completos OK — del 7 de julio en adelante,
+                                            barras normales
+
+  Además, verificado en pantalla real y no solo en test: el banner dice
+  "Estás viendo 1200 prospectos" SIN separador de millar, que es la norma
+  española para cuatro cifras (el hallazgo 2 de la sección anterior).
+
+--- OBSERVACIÓN ABIERTA PARA LA AUDITORÍA ---
+
+Con la lectura truncada, un pendiente a cero se muestra como "0+ para hoy".
+Es coherente con la regla (toda métrica de prospectos es cota inferior y "0" a
+secas afirmaría una certeza que no se tiene), pero "0+" se lee raro. Se deja
+planteado, sin cambiarlo: es comportamiento aprobado en el plan §D2.
+
+--- DERIVA DETECTADA, NO RESUELTA AQUÍ ---
+
+`convex/lib/constants.ts` documenta porcentajes ESTIMADOS del presupuesto que
+esta medición supera en precisión (32,7 % → 33,9 % real). Actualizar ese
+comentario tocaría convex/, que este bocado declaró no tocar. Se propone como
+cambio aparte, a decisión del product owner.
