@@ -18,6 +18,10 @@
   --layout-header: 56px;
   --layout-tabbar: 60px;
   --layout-fab: 56px;
+  /* Alto de la barra CTA fija de la ficha. Vive aquí, y no solo en la ficha,
+     porque el FAB del AppShell —que es ancestro de la página y no heredaría
+     una variable definida dentro de ella— necesita apoyarse encima (JOS-26). */
+  --layout-ficha-cta: 76px;
   --layout-mobile-base: 375px;
   --layout-tap-min: 44px;
 }

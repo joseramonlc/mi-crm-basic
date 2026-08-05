@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon } from "@/components/ui";
 import { NAV_ITEMS } from "./nav";
+import { alPulsarDestinoActivo } from "./scrollArriba";
 
 /** Bottom tab bar — mobile only. 60px, white, subtle top border, 3 root destinations. */
 export function TabBar() {
@@ -19,6 +20,8 @@ export function TabBar() {
           <Link
             key={item.href}
             href={item.href}
+            aria-current={active ? "page" : undefined}
+            onClick={active ? alPulsarDestinoActivo : undefined}
             style={{ color: active ? "var(--color-primary-600)" : "var(--color-neutral-500)" }}
             className="flex-1 relative flex flex-col items-center justify-center gap-0.5"
           >

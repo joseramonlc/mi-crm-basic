@@ -28,6 +28,20 @@ function tabBar(container: HTMLElement) {
   return container.querySelector("nav.fixed.bottom-0");
 }
 
+/** El FAB es el único enlace circular fijo (el CTA del Sidebar es rectangular). */
+function fab(container: HTMLElement) {
+  return container.querySelector<HTMLAnchorElement>("a.fixed.rounded-full");
+}
+
+function pintar(pathname: string) {
+  pathnameMock.mockReturnValue(pathname);
+  return render(
+    <AppShell>
+      <p>contenido</p>
+    </AppShell>,
+  );
+}
+
 describe("AppShell: TabBar oculta SOLO en la ficha (M4 bocado 1, P16)", () => {
   it.each(["/actividad", "/prospectos/nuevo", "/prospectos/p7/interacciones/nueva"])(
     "en %s la TabBar sigue presente y el main reserva su altura",
@@ -50,6 +64,57 @@ describe("AppShell: TabBar oculta SOLO en la ficha (M4 bocado 1, P16)", () => {
         <p>contenido</p>
       </AppShell>,
     );
+    expect(tabBar(container)).toBeNull();
+    expect(container.querySelector("main")!.className).not.toContain("pb-20");
+  });
+});
+
+describe("AppShell: dónde sale el FAB en móvil (JOS-26)", () => {
+  it.each(["/actividad", "/prospectos", "/resumen", "/prospectos/p7"])("sale en %s", (ruta) => {
+    const { container } = pintar(ruta);
+    expect(fab(container)).not.toBeNull();
+  });
+
+  it.each(["/prospectos/nuevo", "/prospectos/p7/interacciones/nueva"])(
+    "NO sale en %s: son las pantallas con formulario a medio rellenar",
+    (ruta) => {
+      const { container } = pintar(ruta);
+      expect(fab(container)).toBeNull();
+    },
+  );
+
+  it("apunta al alta de prospecto y es alcanzable sin visión", () => {
+    const { container } = pintar("/actividad");
+    expect(fab(container)!.getAttribute("href")).toBe("/prospectos/nuevo");
+    expect(fab(container)!.getAttribute("aria-label")).toBe("Añadir prospecto");
+  });
+});
+
+describe("AppShell: el FAB se apoya en lo que hay debajo (JOS-26)", () => {
+  it("en las rutas raíz se ancla sobre la TabBar", () => {
+    const { container } = pintar("/actividad");
+    expect(fab(container)!.style.bottom).toBe("calc(var(--layout-tabbar) + 16px)");
+  });
+
+  it("en la ficha se ancla sobre su barra CTA, NO sobre una TabBar que no existe", () => {
+    const { container } = pintar("/prospectos/p7");
+    expect(fab(container)!.style.bottom).toBe("calc(var(--layout-ficha-cta) + 16px)");
+  });
+});
+
+describe("AppShell: FAB y TabBar son contratos independientes", () => {
+  // La regresión que se vigila: que aparecer/desaparecer el FAB arrastre a la
+  // TabBar o a su padding rompería JOS-59 y el contrato de M4.
+  it("en /prospectos/nuevo no hay FAB, pero la TabBar y su padding siguen ahí", () => {
+    const { container } = pintar("/prospectos/nuevo");
+    expect(fab(container)).toBeNull();
+    expect(tabBar(container)).not.toBeNull();
+    expect(container.querySelector("main")!.className).toContain("pb-20");
+  });
+
+  it("en la ficha hay FAB, y aun así sigue sin TabBar ni padding", () => {
+    const { container } = pintar("/prospectos/p7");
+    expect(fab(container)).not.toBeNull();
     expect(tabBar(container)).toBeNull();
     expect(container.querySelector("main")!.className).not.toContain("pb-20");
   });
