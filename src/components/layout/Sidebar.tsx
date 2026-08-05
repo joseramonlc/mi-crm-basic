@@ -2,16 +2,16 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useClerk, useUser } from "@clerk/nextjs";
-import { Icon, Avatar, Button } from "@/components/ui";
+import { Icon, Avatar, buttonStyle } from "@/components/ui";
 import { NAV_ITEMS } from "./nav";
+import { alPulsarDestinoActivo } from "./scrollArriba";
 import { nombreDeUsuario } from "./usuario";
 
 /** Fixed 224px sidebar — desktop nav. Replaces the mobile tab bar + FAB (see design.md §2 Layout). */
 export function Sidebar() {
   const pathname = usePathname();
-  const router = useRouter();
   const { user } = useUser();
   const { signOut } = useClerk();
   const nombre = nombreDeUsuario(user);
@@ -29,10 +29,13 @@ export function Sidebar() {
           </span>
         </div>
 
+        {/* Enlace con aspecto de Button (patrón `buttonStyle`, como EmptyState):
+            navegar es cosa de un <a>, y así admite abrir en pestaña nueva. */}
         <div className="px-3 pt-2">
-          <Button fullWidth iconLeft={<Icon name="plus" size={18} />} onClick={() => router.push("/prospectos/nuevo")}>
+          <Link href="/prospectos/nuevo" style={buttonStyle({ fullWidth: true })}>
+            <Icon name="plus" size={18} />
             Añadir prospecto
-          </Button>
+          </Link>
         </div>
 
         <nav className="flex-1 px-3 pt-4 flex flex-col gap-1">
@@ -42,6 +45,8 @@ export function Sidebar() {
               <Link
                 key={item.href}
                 href={item.href}
+                aria-current={active ? "page" : undefined}
+                onClick={active ? alPulsarDestinoActivo : undefined}
                 style={{
                   fontFamily: "var(--font-sans)",
                   fontSize: 15,

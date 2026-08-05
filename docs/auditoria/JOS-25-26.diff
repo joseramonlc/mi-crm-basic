@@ -1,0 +1,602 @@
+diff --git a/src/app/(app)/prospectos/[id]/page.test.tsx b/src/app/(app)/prospectos/[id]/page.test.tsx
+index 28ae76f..1448787 100644
+--- a/src/app/(app)/prospectos/[id]/page.test.tsx
++++ b/src/app/(app)/prospectos/[id]/page.test.tsx
+@@ -267,7 +267,10 @@ describe("CTA fija y reserva de espacio (P6/P16, bloqueo de la rev. 2)", () => {
+   it("única fuente --ficha-cta: la definen la raíz, el padding del contenido y el toast", () => {
+     const { container } = render(<FichaProspectoPage />);
+     const raiz = container.firstElementChild as HTMLElement;
+-    expect(raiz.style.getPropertyValue("--ficha-cta")).toBe("76px");
++    // La medida ya no se escribe aquí: la raíz delega en el token compartido,
++    // del que también se apoya el FAB del AppShell (JOS-26). Sigue habiendo
++    // una sola fuente; lo que cambia es dónde vive.
++    expect(raiz.style.getPropertyValue("--ficha-cta")).toBe("var(--layout-ficha-cta)");
+     expect(raiz.style.getPropertyValue("--toast-bottom")).toBe("calc(var(--ficha-cta) + 16px)");
+     expect(container.querySelector('[class*="pb-[var(--ficha-cta)]"]')).not.toBeNull();
+   });
+diff --git a/src/app/(app)/prospectos/[id]/page.tsx b/src/app/(app)/prospectos/[id]/page.tsx
+index 0b09b76..dfb5277 100644
+--- a/src/app/(app)/prospectos/[id]/page.tsx
++++ b/src/app/(app)/prospectos/[id]/page.tsx
+@@ -139,9 +139,11 @@ export default function FichaProspectoPage() {
+     <div
+       style={{
+         fontFamily: "var(--font-sans)",
+-        // Única fuente del alto de la barra CTA fija (P6): la consumen la
+-        // propia barra, el padding reservado del contenido y el toast (P16.c).
+-        ["--ficha-cta" as string]: "76px",
++        // Alto de la barra CTA fija (P6): lo consumen la propia barra, el
++        // padding reservado del contenido y el toast (P16.c). La medida ya no
++        // se escribe aquí: vive en el token --layout-ficha-cta, porque el FAB
++        // del AppShell también se apoya en ella y está fuera de este árbol.
++        ["--ficha-cta" as string]: "var(--layout-ficha-cta)",
+         ["--toast-bottom" as string]: "calc(var(--ficha-cta) + 16px)",
+       }}
+     >
+diff --git a/src/components/layout/AppShell.test.tsx b/src/components/layout/AppShell.test.tsx
+index 1fa2839..28637c0 100644
+--- a/src/components/layout/AppShell.test.tsx
++++ b/src/components/layout/AppShell.test.tsx
+@@ -28,6 +28,20 @@ function tabBar(container: HTMLElement) {
+   return container.querySelector("nav.fixed.bottom-0");
+ }
+ 
++/** El FAB es el único enlace circular fijo (el CTA del Sidebar es rectangular). */
++function fab(container: HTMLElement) {
++  return container.querySelector<HTMLAnchorElement>("a.fixed.rounded-full");
++}
++
++function pintar(pathname: string) {
++  pathnameMock.mockReturnValue(pathname);
++  return render(
++    <AppShell>
++      <p>contenido</p>
++    </AppShell>,
++  );
++}
++
+ describe("AppShell: TabBar oculta SOLO en la ficha (M4 bocado 1, P16)", () => {
+   it.each(["/actividad", "/prospectos/nuevo", "/prospectos/p7/interacciones/nueva"])(
+     "en %s la TabBar sigue presente y el main reserva su altura",
+@@ -54,3 +68,54 @@ describe("AppShell: TabBar oculta SOLO en la ficha (M4 bocado 1, P16)", () => {
+     expect(container.querySelector("main")!.className).not.toContain("pb-20");
+   });
+ });
++
++describe("AppShell: dónde sale el FAB en móvil (JOS-26)", () => {
++  it.each(["/actividad", "/prospectos", "/resumen", "/prospectos/p7"])("sale en %s", (ruta) => {
++    const { container } = pintar(ruta);
++    expect(fab(container)).not.toBeNull();
++  });
++
++  it.each(["/prospectos/nuevo", "/prospectos/p7/interacciones/nueva"])(
++    "NO sale en %s: son las pantallas con formulario a medio rellenar",
++    (ruta) => {
++      const { container } = pintar(ruta);
++      expect(fab(container)).toBeNull();
++    },
++  );
++
++  it("apunta al alta de prospecto y es alcanzable sin visión", () => {
++    const { container } = pintar("/actividad");
++    expect(fab(container)!.getAttribute("href")).toBe("/prospectos/nuevo");
++    expect(fab(container)!.getAttribute("aria-label")).toBe("Añadir prospecto");
++  });
++});
++
++describe("AppShell: el FAB se apoya en lo que hay debajo (JOS-26)", () => {
++  it("en las rutas raíz se ancla sobre la TabBar", () => {
++    const { container } = pintar("/actividad");
++    expect(fab(container)!.style.bottom).toBe("calc(var(--layout-tabbar) + 16px)");
++  });
++
++  it("en la ficha se ancla sobre su barra CTA, NO sobre una TabBar que no existe", () => {
++    const { container } = pintar("/prospectos/p7");
++    expect(fab(container)!.style.bottom).toBe("calc(var(--layout-ficha-cta) + 16px)");
++  });
++});
++
++describe("AppShell: FAB y TabBar son contratos independientes", () => {
++  // La regresión que se vigila: que aparecer/desaparecer el FAB arrastre a la
++  // TabBar o a su padding rompería JOS-59 y el contrato de M4.
++  it("en /prospectos/nuevo no hay FAB, pero la TabBar y su padding siguen ahí", () => {
++    const { container } = pintar("/prospectos/nuevo");
++    expect(fab(container)).toBeNull();
++    expect(tabBar(container)).not.toBeNull();
++    expect(container.querySelector("main")!.className).toContain("pb-20");
++  });
++
++  it("en la ficha hay FAB, y aun así sigue sin TabBar ni padding", () => {
++    const { container } = pintar("/prospectos/p7");
++    expect(fab(container)).not.toBeNull();
++    expect(tabBar(container)).toBeNull();
++    expect(container.querySelector("main")!.className).not.toContain("pb-20");
++  });
++});
+diff --git a/src/components/layout/AppShell.tsx b/src/components/layout/AppShell.tsx
+index 4164eec..0ec39b3 100644
+--- a/src/components/layout/AppShell.tsx
++++ b/src/components/layout/AppShell.tsx
+@@ -6,28 +6,31 @@ import { useClerk, useUser } from "@clerk/nextjs";
+ import { Icon, Avatar } from "@/components/ui";
+ import { Sidebar } from "./Sidebar";
+ import { TabBar } from "./TabBar";
+-import { esFichaProspecto, isRootRoute } from "./nav";
++import { esFichaProspecto, isRootRoute, muestraFab } from "./nav";
+ import { nombreDeUsuario } from "./usuario";
+ import type { ReactNode } from "react";
+ 
+ /** Shell for every authenticated screen: desktop sidebar, mobile header + tab bar + FAB. */
+ export function AppShell({ children }: { children: ReactNode }) {
+   const pathname = usePathname();
+-  const showFab = isRootRoute(pathname);
+   // La ficha va sin navegación inferior (JOS-59; M4 bocado 1, P16) y sin el
+   // padding que reservaba su altura: el hueco de la barra CTA fija lo reserva
+   // la propia página. El resto de pantallas no cambia.
+-  const sinTabBar = esFichaProspecto(pathname);
++  //
++  // Ojo: TabBar y padding dependen SOLO de esto. La presencia del FAB nunca es
++  // motivo para quitarlos — son contratos distintos que aquí se cruzan.
++  const enFicha = esFichaProspecto(pathname);
++  const conFab = muestraFab(pathname);
+ 
+   return (
+     <div className="flex min-h-screen">
+       <Sidebar />
+       <div className="flex-1 min-w-0 flex flex-col">
+         <MobileHeader />
+-        <main className={sinTabBar ? "flex-1" : "flex-1 pb-20 md:pb-0"}>{children}</main>
++        <main className={enFicha ? "flex-1" : "flex-1 pb-20 md:pb-0"}>{children}</main>
+       </div>
+-      {!sinTabBar && <TabBar />}
+-      {showFab && (
++      {!enFicha && <TabBar />}
++      {conFab && (
+         <Link
+           href="/prospectos/nuevo"
+           aria-label="Añadir prospecto"
+@@ -37,7 +40,10 @@ export function AppShell({ children }: { children: ReactNode }) {
+             background: "var(--color-primary-500)",
+             boxShadow: "var(--shadow-2)",
+             color: "#fff",
+-            bottom: "calc(var(--layout-tabbar) + 16px)",
++            // El FAB se apoya en lo que realmente haya debajo: la TabBar en las
++            // rutas raíz y la barra CTA fija en la ficha, que no tiene TabBar.
++            // Anclarlo siempre a --layout-tabbar lo dejaría flotando sobre la CTA.
++            bottom: enFicha ? "calc(var(--layout-ficha-cta) + 16px)" : "calc(var(--layout-tabbar) + 16px)",
+           }}
+           className="md:hidden fixed right-4 rounded-full flex items-center justify-center z-30"
+         >
+diff --git a/src/components/layout/Sidebar.test.tsx b/src/components/layout/Sidebar.test.tsx
+new file mode 100644
+index 0000000..9608446
+--- /dev/null
++++ b/src/components/layout/Sidebar.test.tsx
+@@ -0,0 +1,78 @@
++// @vitest-environment jsdom
++import * as React from "react";
++import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
++import { cleanup, fireEvent, render, screen } from "@testing-library/react";
++import { Sidebar } from "./Sidebar";
++import { NAV_ITEMS } from "./nav";
++
++const { pathnameMock } = vi.hoisted(() => ({ pathnameMock: vi.fn() }));
++vi.mock("next/navigation", () => ({ usePathname: () => pathnameMock() }));
++vi.mock("next/image", () => ({
++  default: (props: Record<string, unknown>) => React.createElement("img", { ...props, alt: (props.alt as string) ?? "" }),
++}));
++vi.mock("@clerk/nextjs", () => ({
++  useUser: () => ({ user: { fullName: "Laura Giménez" } }),
++  useClerk: () => ({ signOut: vi.fn() }),
++}));
++
++// Mismo reparto que en TabBar.test.tsx: aquí se comprueba el cableado, no el efecto.
++const { alPulsarMock } = vi.hoisted(() => ({
++  alPulsarMock: vi.fn((e: { preventDefault: () => void }) => e.preventDefault()),
++}));
++vi.mock("./scrollArriba", () => ({ alPulsarDestinoActivo: alPulsarMock }));
++
++beforeAll(() => document.addEventListener("click", (e) => e.preventDefault()));
++
++afterEach(() => {
++  cleanup();
++  alPulsarMock.mockClear();
++});
++
++function pintar(pathname: string) {
++  pathnameMock.mockReturnValue(pathname);
++  return render(<Sidebar />);
++}
++
++const enlace = (nombre: string) => screen.getByRole("link", { name: nombre });
++
++describe("Sidebar: destinos de navegación (JOS-25)", () => {
++  it("renderiza los 3 con su href", () => {
++    pintar("/actividad");
++    for (const item of NAV_ITEMS) {
++      expect(enlace(item.label).getAttribute("href")).toBe(item.href);
++    }
++  });
++
++  it("marca el activo con aria-current y deja limpios los demás", () => {
++    pintar("/actividad");
++    expect(enlace("Inicio").getAttribute("aria-current")).toBe("page");
++    expect(enlace("Prospectos").getAttribute("aria-current")).toBeNull();
++  });
++
++  it("pulsar el destino activo llama al manejador; los demás no", () => {
++    pintar("/actividad");
++    fireEvent.click(enlace("Inicio"));
++    expect(alPulsarMock).toHaveBeenCalledOnce();
++
++    alPulsarMock.mockClear();
++    fireEvent.click(enlace("Resumen"));
++    expect(alPulsarMock).not.toHaveBeenCalled();
++  });
++});
++
++describe("Sidebar: añadir prospecto en escritorio (JOS-26)", () => {
++  it("es un ENLACE a /prospectos/nuevo, no un botón", () => {
++    pintar("/actividad");
++    const cta = enlace("Añadir prospecto");
++    expect(cta.getAttribute("href")).toBe("/prospectos/nuevo");
++    expect(cta.tagName).toBe("A");
++  });
++
++  it("está presente también fuera de las rutas raíz (ficha y formularios)", () => {
++    for (const ruta of ["/prospectos/p7", "/prospectos/nuevo", "/prospectos/p7/interacciones/nueva"]) {
++      pintar(ruta);
++      expect(enlace("Añadir prospecto").getAttribute("href")).toBe("/prospectos/nuevo");
++      cleanup();
++    }
++  });
++});
+diff --git a/src/components/layout/Sidebar.tsx b/src/components/layout/Sidebar.tsx
+index d8e32b9..ce0abc5 100644
+--- a/src/components/layout/Sidebar.tsx
++++ b/src/components/layout/Sidebar.tsx
+@@ -2,16 +2,16 @@
+ 
+ import Link from "next/link";
+ import Image from "next/image";
+-import { usePathname, useRouter } from "next/navigation";
++import { usePathname } from "next/navigation";
+ import { useClerk, useUser } from "@clerk/nextjs";
+-import { Icon, Avatar, Button } from "@/components/ui";
++import { Icon, Avatar, buttonStyle } from "@/components/ui";
+ import { NAV_ITEMS } from "./nav";
++import { alPulsarDestinoActivo } from "./scrollArriba";
+ import { nombreDeUsuario } from "./usuario";
+ 
+ /** Fixed 224px sidebar — desktop nav. Replaces the mobile tab bar + FAB (see design.md §2 Layout). */
+ export function Sidebar() {
+   const pathname = usePathname();
+-  const router = useRouter();
+   const { user } = useUser();
+   const { signOut } = useClerk();
+   const nombre = nombreDeUsuario(user);
+@@ -29,10 +29,13 @@ export function Sidebar() {
+           </span>
+         </div>
+ 
++        {/* Enlace con aspecto de Button (patrón `buttonStyle`, como EmptyState):
++            navegar es cosa de un <a>, y así admite abrir en pestaña nueva. */}
+         <div className="px-3 pt-2">
+-          <Button fullWidth iconLeft={<Icon name="plus" size={18} />} onClick={() => router.push("/prospectos/nuevo")}>
++          <Link href="/prospectos/nuevo" style={buttonStyle({ fullWidth: true })}>
++            <Icon name="plus" size={18} />
+             Añadir prospecto
+-          </Button>
++          </Link>
+         </div>
+ 
+         <nav className="flex-1 px-3 pt-4 flex flex-col gap-1">
+@@ -42,6 +45,8 @@ export function Sidebar() {
+               <Link
+                 key={item.href}
+                 href={item.href}
++                aria-current={active ? "page" : undefined}
++                onClick={active ? alPulsarDestinoActivo : undefined}
+                 style={{
+                   fontFamily: "var(--font-sans)",
+                   fontSize: 15,
+diff --git a/src/components/layout/TabBar.test.tsx b/src/components/layout/TabBar.test.tsx
+new file mode 100644
+index 0000000..eacaf56
+--- /dev/null
++++ b/src/components/layout/TabBar.test.tsx
+@@ -0,0 +1,63 @@
++// @vitest-environment jsdom
++import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
++import { cleanup, fireEvent, render, screen } from "@testing-library/react";
++import { TabBar } from "./TabBar";
++import { NAV_ITEMS } from "./nav";
++
++const { pathnameMock } = vi.hoisted(() => ({ pathnameMock: vi.fn() }));
++vi.mock("next/navigation", () => ({ usePathname: () => pathnameMock() }));
++
++// Aquí se comprueba que la barra CONECTA el manejador al destino activo y solo
++// a él. Lo que el manejador hace por dentro (cancelar y subir) lo fija
++// scrollArriba.test.ts. El mock cancela igual para que jsdom no intente navegar.
++const { alPulsarMock } = vi.hoisted(() => ({
++  alPulsarMock: vi.fn((e: { preventDefault: () => void }) => e.preventDefault()),
++}));
++vi.mock("./scrollArriba", () => ({ alPulsarDestinoActivo: alPulsarMock }));
++
++// jsdom no implementa la navegación: sin esto, pulsar un enlace NO interceptado
++// emite "Not implemented: navigation". No altera nada de lo que se mide.
++beforeAll(() => document.addEventListener("click", (e) => e.preventDefault()));
++
++afterEach(() => {
++  cleanup();
++  alPulsarMock.mockClear();
++});
++
++function pintar(pathname: string) {
++  pathnameMock.mockReturnValue(pathname);
++  return render(<TabBar />);
++}
++
++const enlace = (nombre: string) => screen.getByRole("link", { name: nombre });
++
++describe("TabBar: los 3 destinos raíz (JOS-25)", () => {
++  it("renderiza los 3 con su etiqueta y su href", () => {
++    pintar("/actividad");
++    for (const item of NAV_ITEMS) {
++      expect(enlace(item.label).getAttribute("href")).toBe(item.href);
++    }
++  });
++
++  it("marca el activo con aria-current y deja limpios los demás", () => {
++    pintar("/prospectos");
++    expect(enlace("Prospectos").getAttribute("aria-current")).toBe("page");
++    expect(enlace("Inicio").getAttribute("aria-current")).toBeNull();
++    expect(enlace("Resumen").getAttribute("aria-current")).toBeNull();
++  });
++});
++
++describe("TabBar: pulsar la sección ya activa vuelve arriba (JOS-25)", () => {
++  it("el destino activo lleva el manejador", () => {
++    pintar("/resumen");
++    fireEvent.click(enlace("Resumen"));
++    expect(alPulsarMock).toHaveBeenCalledOnce();
++  });
++
++  it("los destinos no activos navegan como siempre: no lo llevan", () => {
++    pintar("/resumen");
++    fireEvent.click(enlace("Inicio"));
++    fireEvent.click(enlace("Prospectos"));
++    expect(alPulsarMock).not.toHaveBeenCalled();
++  });
++});
+diff --git a/src/components/layout/TabBar.tsx b/src/components/layout/TabBar.tsx
+index 07b32a9..1397659 100644
+--- a/src/components/layout/TabBar.tsx
++++ b/src/components/layout/TabBar.tsx
+@@ -4,6 +4,7 @@ import Link from "next/link";
+ import { usePathname } from "next/navigation";
+ import { Icon } from "@/components/ui";
+ import { NAV_ITEMS } from "./nav";
++import { alPulsarDestinoActivo } from "./scrollArriba";
+ 
+ /** Bottom tab bar — mobile only. 60px, white, subtle top border, 3 root destinations. */
+ export function TabBar() {
+@@ -19,6 +20,8 @@ export function TabBar() {
+           <Link
+             key={item.href}
+             href={item.href}
++            aria-current={active ? "page" : undefined}
++            onClick={active ? alPulsarDestinoActivo : undefined}
+             style={{ color: active ? "var(--color-primary-600)" : "var(--color-neutral-500)" }}
+             className="flex-1 relative flex flex-col items-center justify-center gap-0.5"
+           >
+diff --git a/src/components/layout/nav.test.ts b/src/components/layout/nav.test.ts
+index ba4bfc0..688afa9 100644
+--- a/src/components/layout/nav.test.ts
++++ b/src/components/layout/nav.test.ts
+@@ -1,5 +1,5 @@
+ import { describe, expect, it } from "vitest";
+-import { esFichaProspecto, isRootRoute } from "./nav";
++import { esFichaProspecto, isRootRoute, muestraFab, NAV_ITEMS } from "./nav";
+ 
+ describe("esFichaProspecto (M4 bocado 1, P16)", () => {
+   it("casa la ficha: exactamente un segmento tras /prospectos distinto de 'nuevo'", () => {
+@@ -24,3 +24,24 @@ describe("esFichaProspecto (M4 bocado 1, P16)", () => {
+     expect(isRootRoute("/prospectos/j57abc123")).toBe(false);
+   });
+ });
++
++describe("muestraFab (JOS-26): dónde sale el '+' en móvil", () => {
++  it("sale en las 3 rutas raíz", () => {
++    for (const item of NAV_ITEMS) {
++      expect(muestraFab(item.href)).toBe(true);
++    }
++  });
++
++  it("sale en la ficha del prospecto", () => {
++    expect(muestraFab("/prospectos/j57abc123")).toBe(true);
++  });
++
++  it("NO sale en las dos pantallas de captura (decisión de producto 2026-08-05)", () => {
++    expect(muestraFab("/prospectos/nuevo")).toBe(false);
++    expect(muestraFab("/prospectos/j57abc123/interacciones/nueva")).toBe(false);
++  });
++
++  it("un id que empieza por 'nuevo' es ficha, y por tanto sí lleva '+'", () => {
++    expect(muestraFab("/prospectos/nuevo2")).toBe(true);
++  });
++});
+diff --git a/src/components/layout/nav.ts b/src/components/layout/nav.ts
+index 6250926..daaf2aa 100644
+--- a/src/components/layout/nav.ts
++++ b/src/components/layout/nav.ts
+@@ -9,6 +9,22 @@ export function isRootRoute(pathname: string) {
+   return NAV_ITEMS.some((item) => pathname === item.href);
+ }
+ 
++/**
++ * Dónde aparece el FAB de "añadir prospecto" en móvil (JOS-26): rutas raíz y
++ * ficha, sí; pantallas de captura, no.
++ *
++ * Las dos excluidas —alta de prospecto y registro de interacción— son las
++ * únicas con un formulario a medio rellenar: un botón que navega fuera de
++ * ellas es una vía directa a perder lo escrito, y son justo donde JOS-26
++ * advierte del solape con el teclado virtual. Decisión de producto del
++ * 2026-08-05 que acota el criterio original de la issue, registrada en ella.
++ *
++ * No hace falta enumerarlas: ninguna de las dos es raíz ni casa `esFichaProspecto`.
++ */
++export function muestraFab(pathname: string) {
++  return isRootRoute(pathname) || esFichaProspecto(pathname);
++}
++
+ /**
+  * Ficha del prospecto (M4, P16): exactamente un segmento tras /prospectos que
+  * no es el formulario de alta — la expresión excluye "nuevo" explícitamente
+diff --git a/src/components/layout/scrollArriba.test.ts b/src/components/layout/scrollArriba.test.ts
+new file mode 100644
+index 0000000..fba4790
+--- /dev/null
++++ b/src/components/layout/scrollArriba.test.ts
+@@ -0,0 +1,84 @@
++// @vitest-environment jsdom
++import { afterEach, describe, expect, it, vi } from "vitest";
++import { alPulsarDestinoActivo, scrollArriba } from "./scrollArriba";
++
++type Clic = Parameters<typeof alPulsarDestinoActivo>[0];
++type Modificador = "metaKey" | "ctrlKey" | "shiftKey" | "altKey";
++
++function clic(modificadores: Partial<Record<Modificador, boolean>> = {}) {
++  const preventDefault = vi.fn();
++  const evento = {
++    preventDefault,
++    metaKey: false,
++    ctrlKey: false,
++    shiftKey: false,
++    altKey: false,
++    ...modificadores,
++  } as unknown as Clic;
++  return { evento, preventDefault };
++}
++
++function espiarScrollTo() {
++  return vi.spyOn(window, "scrollTo").mockImplementation(() => {});
++}
++
++/** jsdom no trae `matchMedia`; instalarlo es la única forma de recorrer la rama. */
++function fingirMovimientoReducido(reduce: boolean) {
++  vi.stubGlobal("matchMedia", vi.fn((media: string) => ({ matches: reduce, media })));
++}
++
++afterEach(() => {
++  vi.restoreAllMocks();
++  vi.unstubAllGlobals();
++});
++
++describe("scrollArriba", () => {
++  it("sube al principio de la ventana", () => {
++    const scrollTo = espiarScrollTo();
++    scrollArriba();
++    expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: 0 }));
++  });
++
++  it("anima el movimiento por defecto", () => {
++    const scrollTo = espiarScrollTo();
++    fingirMovimientoReducido(false);
++    scrollArriba();
++    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
++  });
++
++  it("no anima si el sistema pide movimiento reducido", () => {
++    const scrollTo = espiarScrollTo();
++    fingirMovimientoReducido(true);
++    scrollArriba();
++    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "auto" });
++  });
++
++  it("sin matchMedia no lanza, y anima", () => {
++    const scrollTo = espiarScrollTo();
++    // Estado real de jsdom: window.matchMedia no existe.
++    expect(window.matchMedia).toBeUndefined();
++    expect(() => scrollArriba()).not.toThrow();
++    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
++  });
++});
++
++describe("alPulsarDestinoActivo", () => {
++  it("cancela la navegación y sube (pulsación simple)", () => {
++    const scrollTo = espiarScrollTo();
++    const { evento, preventDefault } = clic();
++    alPulsarDestinoActivo(evento);
++    expect(preventDefault).toHaveBeenCalledOnce();
++    expect(scrollTo).toHaveBeenCalledOnce();
++  });
++
++  it.each<Modificador>(["metaKey", "ctrlKey", "shiftKey", "altKey"])(
++    "con %s deja pasar el clic al navegador: ni cancela ni sube",
++    (modificador) => {
++      const scrollTo = espiarScrollTo();
++      const { evento, preventDefault } = clic({ [modificador]: true });
++      alPulsarDestinoActivo(evento);
++      expect(preventDefault).not.toHaveBeenCalled();
++      expect(scrollTo).not.toHaveBeenCalled();
++    },
++  );
++});
+diff --git a/src/components/layout/scrollArriba.ts b/src/components/layout/scrollArriba.ts
+new file mode 100644
+index 0000000..10bf574
+--- /dev/null
++++ b/src/components/layout/scrollArriba.ts
+@@ -0,0 +1,36 @@
++import type { MouseEvent } from "react";
++
++/**
++ * Vuelve al principio de la pantalla.
++ *
++ * Quien hace scroll es la ventana, no un contenedor interno: AppShell no
++ * declara `overflow` en ninguno de sus envoltorios, y tanto la Sidebar como la
++ * MobileHeader son `sticky` (no se desplazan con el contenido).
++ */
++export function scrollArriba() {
++  if (typeof window === "undefined") return;
++  window.scrollTo({ top: 0, behavior: prefiereMenosMovimiento() ? "auto" : "smooth" });
++}
++
++/** Sin `matchMedia` (jsdom, navegadores antiguos) se anima: es el comportamiento por defecto. */
++function prefiereMenosMovimiento() {
++  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
++}
++
++/**
++ * Pulsación sobre el destino de navegación que YA está activo (JOS-25): no se
++ * navega —no hay adónde— y se vuelve al principio del scroll.
++ *
++ * El `<Link>` de Next 16 NO sirve para esto por sí solo: su comportamiento por
++ * defecto es **conservar** la posición de scroll, no subir
++ * (`docs/01-app/03-api-reference/02-components/link.md`, `scroll`).
++ *
++ * Los clics con modificador se dejan pasar intactos: abrir el destino en otra
++ * pestaña es cosa del navegador. Solo se intercepta la pulsación simple, que
++ * es también la que produce el teclado al activar el enlace con Enter.
++ */
++export function alPulsarDestinoActivo(e: MouseEvent<HTMLAnchorElement>) {
++  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
++  e.preventDefault();
++  scrollArriba();
++}
+diff --git a/src/styles/tokens/spacing.css b/src/styles/tokens/spacing.css
+index e252370..f1e962c 100644
+--- a/src/styles/tokens/spacing.css
++++ b/src/styles/tokens/spacing.css
+@@ -18,6 +18,10 @@
+   --layout-header: 56px;
+   --layout-tabbar: 60px;
+   --layout-fab: 56px;
++  /* Alto de la barra CTA fija de la ficha. Vive aquí, y no solo en la ficha,
++     porque el FAB del AppShell —que es ancestro de la página y no heredaría
++     una variable definida dentro de ella— necesita apoyarse encima (JOS-26). */
++  --layout-ficha-cta: 76px;
+   --layout-mobile-base: 375px;
+   --layout-tap-min: 44px;
+ }

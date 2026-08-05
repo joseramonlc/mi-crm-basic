@@ -267,7 +267,10 @@ describe("CTA fija y reserva de espacio (P6/P16, bloqueo de la rev. 2)", () => {
   it("única fuente --ficha-cta: la definen la raíz, el padding del contenido y el toast", () => {
     const { container } = render(<FichaProspectoPage />);
     const raiz = container.firstElementChild as HTMLElement;
-    expect(raiz.style.getPropertyValue("--ficha-cta")).toBe("76px");
+    // La medida ya no se escribe aquí: la raíz delega en el token compartido,
+    // del que también se apoya el FAB del AppShell (JOS-26). Sigue habiendo
+    // una sola fuente; lo que cambia es dónde vive.
+    expect(raiz.style.getPropertyValue("--ficha-cta")).toBe("var(--layout-ficha-cta)");
     expect(raiz.style.getPropertyValue("--toast-bottom")).toBe("calc(var(--ficha-cta) + 16px)");
     expect(container.querySelector('[class*="pb-[var(--ficha-cta)]"]')).not.toBeNull();
   });

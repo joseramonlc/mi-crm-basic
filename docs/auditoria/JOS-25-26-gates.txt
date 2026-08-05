@@ -1,0 +1,70 @@
+GATES — JOS-25 + JOS-26 (M8, bocado único)
+Rama:  joseramonlc/jos-25-barra-de-navegacion-global-inferior-en-movil-lateral-en
+Base:  origin/master = cbe98c0
+Fecha: 2026-08-05
+Entorno: FS nativa WSL2 (/home/pepe/proyectos/mi-crm-basic) — primera tarea tras
+         la migración fuera de Dropbox//mnt/c.
+
+Los tres gates se ejecutaron redirigiendo a fichero y leyendo $? ANTES de
+cualquier tubería, para no repetir el falso verde del 2026-08-03 (un `| tail`
+devuelve el código de `tail`, no el del comando).
+
+────────────────────────────────────────────────────────────────────────
+1. TESTS  —  npm test
+────────────────────────────────────────────────────────────────────────
+EXIT_REAL = 0
+
+  Test Files  42 passed (42)
+       Tests  439 passed (439)
+    Duration  21.94s
+
+CONTRASTE DE RECUENTO (obligatorio en este proyecto):
+
+  $ find src convex -name '*.test.ts' -o -name '*.test.tsx' | wc -l
+  42
+
+  42 en disco = 42 arrancados.  Sin ficheros perdidos por el pool.
+
+  Referencia: antes de esta rama eran 39 ficheros / 406 tests.
+  Delta: +3 ficheros (scrollArriba, TabBar, Sidebar) y +33 tests.
+
+  Nota: la tirada completa se hizo SIN el servidor de desarrollo levantado.
+  No se observó ningún "Test timed out in 5000ms" ni ningún
+  "Failed to start forks worker". En la FS nativa la suite tarda ~22 s
+  frente a los ~9 min que costaba en /mnt/c.
+
+────────────────────────────────────────────────────────────────────────
+2. LINT  —  npm run lint
+────────────────────────────────────────────────────────────────────────
+EXIT_REAL = 0
+Sin avisos ni errores.
+
+────────────────────────────────────────────────────────────────────────
+3. BUILD  —  npm run build
+────────────────────────────────────────────────────────────────────────
+EXIT_REAL = 0
+
+Las 11 rutas siguen compilando, sin altas ni bajas respecto a master:
+
+  ┌ ○ /
+  ├ ○ /_not-found
+  ├ ○ /actividad
+  ├ ○ /login
+  ├ ○ /prospectos
+  ├ ƒ /prospectos/[id]
+  ├ ƒ /prospectos/[id]/interacciones/nueva
+  ├ ○ /prospectos/nuevo
+  ├ ○ /recuperar
+  ├ ○ /registro
+  └ ○ /resumen
+
+────────────────────────────────────────────────────────────────────────
+4. LO QUE ESTOS GATES NO ACREDITAN
+────────────────────────────────────────────────────────────────────────
+- No hay verificación en navegador real. El movimiento suave del scroll y la
+  posición del FAB sobre la barra CTA de la ficha están fijados por test
+  (valor de `bottom`), pero NADIE los ha visto con los ojos en un móvil.
+  El proyecto no tiene automatización de navegador: igual que en JOS-21 y
+  JOS-24, eso solo lo puede hacer una persona.
+- No se ha medido presupuesto de lectura porque esta rama no toca convex/:
+  cero queries, cero mutations, cero índices.

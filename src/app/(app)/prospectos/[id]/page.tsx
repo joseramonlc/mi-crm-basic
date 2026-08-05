@@ -139,9 +139,11 @@ export default function FichaProspectoPage() {
     <div
       style={{
         fontFamily: "var(--font-sans)",
-        // Única fuente del alto de la barra CTA fija (P6): la consumen la
-        // propia barra, el padding reservado del contenido y el toast (P16.c).
-        ["--ficha-cta" as string]: "76px",
+        // Alto de la barra CTA fija (P6): lo consumen la propia barra, el
+        // padding reservado del contenido y el toast (P16.c). La medida ya no
+        // se escribe aquí: vive en el token --layout-ficha-cta, porque el FAB
+        // del AppShell también se apoya en ella y está fuera de este árbol.
+        ["--ficha-cta" as string]: "var(--layout-ficha-cta)",
         ["--toast-bottom" as string]: "calc(var(--ficha-cta) + 16px)",
       }}
     >
