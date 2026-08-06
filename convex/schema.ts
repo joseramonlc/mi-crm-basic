@@ -13,9 +13,13 @@ import { v } from "convex/values";
  *   Necesita pensar=thinking, No interesado=not_interested, Otro=other.
  * - Nulos por AUSENCIA (v.optional), nunca `null`, para rangos de índice limpios.
  * - Fechas en ms epoch; `fechaProximoSeguimiento` siempre es una medianoche
- *   APP_TZ calculada por el motor (convex/lib/seguimiento.ts), nunca editable
- *   por el usuario. `fechaUltimoContacto` lo actualiza el sistema al registrar
- *   interacciones (JOS-11/JOS-14).
+ *   APP_TZ. Por defecto la calcula el motor (convex/lib/seguimiento.ts), pero
+ *   desde JOS-67 el usuario puede FIJARLA cuando ha acordado una cita con el
+ *   prospecto; en ese caso `seguimientoManual` queda a true y el motor deja de
+ *   sobrescribirla hasta que el acuerdo se consuma. La medianoche es invariante
+ *   en los dos casos: la fecha acordada se normaliza al validarla.
+ *   `fechaUltimoContacto` lo actualiza el sistema al registrar interacciones
+ *   (JOS-11/JOS-14).
  * - `usuarioId` es el `identity.tokenIdentifier` de la sesión (ADR 0001, JOS-66);
  *   lo deriva en servidor `convex/lib/usuario.ts` y ninguna función lo acepta
  *   del cliente. Es la clave de aislamiento: prefijo de todos los índices.
@@ -61,6 +65,10 @@ export default defineSchema({
     fechaAlta: v.number(),
     fechaUltimoContacto: v.optional(v.number()),
     fechaProximoSeguimiento: v.optional(v.number()),
+    // JOS-67: la fecha de arriba la fijó el usuario (cita acordada), no el motor.
+    // Ausente = false, así que los prospectos anteriores no necesitan migración.
+    // NO se indexa: solo se consulta tras leer el documento, nunca por rango.
+    seguimientoManual: v.optional(v.boolean()),
   })
     .index("by_usuario", ["usuarioId"])
     .index("by_usuario_seguimiento", ["usuarioId", "fechaProximoSeguimiento"])

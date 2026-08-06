@@ -21,6 +21,13 @@ export const prospectoPublicoValidator = v.object({
   fechaAlta: v.number(),
   fechaUltimoContacto: v.optional(v.number()),
   fechaProximoSeguimiento: v.optional(v.number()),
+  /**
+   * JOS-67. Va SOLO en esta proyección core (`obtener`, `listar`, mutations); las
+   * proyecciones agregadas de `actividadDiaria` y `pipeline` NO lo llevan a
+   * propósito: esas pantallas leen la fecha sin necesitar saber quién la puso, y
+   * la Ficha —única que distingue los dos estados (JOS-69)— usa `obtener`.
+   */
+  seguimientoManual: v.optional(v.boolean()),
 });
 export type ProspectoPublico = Infer<typeof prospectoPublicoValidator>;
 
@@ -48,6 +55,7 @@ export function toProspectoPublico(doc: Doc<"prospectos">): ProspectoPublico {
     fechaAlta: doc.fechaAlta,
     ...(doc.fechaUltimoContacto !== undefined ? { fechaUltimoContacto: doc.fechaUltimoContacto } : {}),
     ...(doc.fechaProximoSeguimiento !== undefined ? { fechaProximoSeguimiento: doc.fechaProximoSeguimiento } : {}),
+    ...(doc.seguimientoManual !== undefined ? { seguimientoManual: doc.seguimientoManual } : {}),
   };
 }
 

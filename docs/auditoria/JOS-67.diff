@@ -1,0 +1,1163 @@
+diff --git a/convex/interacciones.test.ts b/convex/interacciones.test.ts
+index a959377..02c7530 100644
+--- a/convex/interacciones.test.ts
++++ b/convex/interacciones.test.ts
+@@ -131,6 +131,46 @@ describe("interacciones.crear · efectos en el prospecto", () => {
+     const filas = await t.run((ctx) => ctx.db.query("interacciones").collect());
+     expect(filas.map((f) => f.usuarioId)).toEqual([TENANT_A]);
+   });
++
++  /* ── Consumo de la cita acordada (JOS-67) ───────────────────────────────── */
++
++  it("CONSUME el acuerdo: el contacto ya ocurrió, así que el motor vuelve a mandar", async () => {
++    const t = nuevoTest();
++    const acordada = ventanaDia("2026-07-26", APP_TZ).hoyInicio;
++    const prospectoId = await conProspecto(t, {
++      fechaProximoSeguimiento: acordada,
++      seguimientoManual: true,
++    });
++
++    const r = await crear(t, prospectoId);
++
++    expect(r.prospecto.seguimientoManual).toBeUndefined();
++    expect(r.prospecto.fechaProximoSeguimiento).not.toBe(acordada);
++    expect(r.prospecto.fechaProximoSeguimiento).toBe(calcularFechaProximoSeguimiento("contacted", AHORA));
++    const doc = await t.run((ctx) => ctx.db.get(prospectoId));
++    expect(doc).not.toHaveProperty("seguimientoManual");
++  });
++
++  it("en etapa terminal con acuerdo activo, la interacción lo consume y no deja fecha", async () => {
++    const t = nuevoTest();
++    const prospectoId = await conProspecto(t, {
++      etapaActual: "joined",
++      fechaProximoSeguimiento: ventanaDia("2026-07-26", APP_TZ).hoyInicio,
++      seguimientoManual: true,
++    });
++    const r = await crear(t, prospectoId);
++    expect(r.prospecto.fechaProximoSeguimiento).toBeUndefined();
++    expect(r.prospecto.seguimientoManual).toBeUndefined();
++  });
++
++  it("sin acuerdo, registrar una interacción no introduce el campo", async () => {
++    const t = nuevoTest();
++    const prospectoId = await conProspecto(t);
++    const r = await crear(t, prospectoId);
++    expect(r.prospecto.seguimientoManual).toBeUndefined();
++    const doc = await t.run((ctx) => ctx.db.get(prospectoId));
++    expect(doc).not.toHaveProperty("seguimientoManual");
++  });
+ });
+ 
+ describe("interacciones.crear · validación de fecha (reloj fijado)", () => {
+diff --git a/convex/interacciones.ts b/convex/interacciones.ts
+index 3f566ff..d6387f1 100644
+--- a/convex/interacciones.ts
++++ b/convex/interacciones.ts
+@@ -67,6 +67,10 @@ export const crear = mutation({
+       fechaUltimoContacto: fechaReferencia,
+       // undefined elimina el campo en etapas terminales.
+       fechaProximoSeguimiento: calcularFechaProximoSeguimiento(prospecto.etapaActual, fechaReferencia),
++      // JOS-67: el contacto YA ocurrió, así que el acuerdo se CONSUME y el motor
++      // vuelve a gobernar. Es el único de los tres puntos de invocación donde el
++      // acuerdo se pierde solo, sin que el usuario tenga que quitarlo.
++      seguimientoManual: undefined,
+     });
+ 
+     return {
+diff --git a/convex/lib/constants.ts b/convex/lib/constants.ts
+index 09f63d3..3970606 100644
+--- a/convex/lib/constants.ts
++++ b/convex/lib/constants.ts
+@@ -61,11 +61,19 @@ export const MAX_RESUMEN_PROSPECTOS = 6 * MAX_PIPELINE;
+  * EL VALOR LO FIJÓ LA MEDICIÓN, no una estimación (docs/auditoria/JOS-24-e2e.md). El
+  * Resumen es la primera pantalla que lee DOS tablas en la misma query, y ambas suman
+  * contra el mismo límite de 16 MiB. Con MAX_RESUMEN_PROSPECTOS atado por coherencia al
+- * Pipeline, esta cota es el único parámetro libre para conservar margen:
++ * Pipeline, esta cota es el único parámetro libre para conservar margen. Cifras
++ * ESTIMADAS con las que se eligió el valor:
+  *
+  *   1.000 → 42,5 % del límite (margen 2,3×)   500 → 29,8 % (margen 3,4×)   300 → 24,7 % (4,1×)
+  *
+  * Decisión de producto (2026-08-03): 500. Recupera margen para añadir campos al
+  * documento más adelante sin que la pantalla se declare parcial en uso realista.
++ *
++ * ⚠️ LO MEDIDO DESPUÉS CONTRA DEPLOYMENT REAL FUE PEOR que esa estimación: con 500 el
++ * consumo real es del 33,9 %, no del 29,8 % (docs/auditoria/JOS-24-e2e.md — 1.702
++ * documentos, 5.686.323 B, margen 2,95×). La decisión sigue siendo correcta y la
++ * pantalla tiene holgura de sobra, pero al replantear esta cota hay que partir del
++ * 33,9 %, no de la tabla de arriba. El peor caso ADMISIBLE lo vigila aparte el test
++ * "presupuesto de lectura" de convex/resumen.test.ts, que se remidió en JOS-67.
+  */
+ export const MAX_RESUMEN_INTERACCIONES = 500;
+diff --git a/convex/lib/proyecciones.ts b/convex/lib/proyecciones.ts
+index 629ac44..0a250f7 100644
+--- a/convex/lib/proyecciones.ts
++++ b/convex/lib/proyecciones.ts
+@@ -21,6 +21,13 @@ export const prospectoPublicoValidator = v.object({
+   fechaAlta: v.number(),
+   fechaUltimoContacto: v.optional(v.number()),
+   fechaProximoSeguimiento: v.optional(v.number()),
++  /**
++   * JOS-67. Va SOLO en esta proyección core (`obtener`, `listar`, mutations); las
++   * proyecciones agregadas de `actividadDiaria` y `pipeline` NO lo llevan a
++   * propósito: esas pantallas leen la fecha sin necesitar saber quién la puso, y
++   * la Ficha —única que distingue los dos estados (JOS-69)— usa `obtener`.
++   */
++  seguimientoManual: v.optional(v.boolean()),
+ });
+ export type ProspectoPublico = Infer<typeof prospectoPublicoValidator>;
+ 
+@@ -48,6 +55,7 @@ export function toProspectoPublico(doc: Doc<"prospectos">): ProspectoPublico {
+     fechaAlta: doc.fechaAlta,
+     ...(doc.fechaUltimoContacto !== undefined ? { fechaUltimoContacto: doc.fechaUltimoContacto } : {}),
+     ...(doc.fechaProximoSeguimiento !== undefined ? { fechaProximoSeguimiento: doc.fechaProximoSeguimiento } : {}),
++    ...(doc.seguimientoManual !== undefined ? { seguimientoManual: doc.seguimientoManual } : {}),
+   };
+ }
+ 
+diff --git a/convex/lib/seguimiento.test.ts b/convex/lib/seguimiento.test.ts
+index ed1830b..f0c8a73 100644
+--- a/convex/lib/seguimiento.test.ts
++++ b/convex/lib/seguimiento.test.ts
+@@ -1,6 +1,13 @@
+ import { describe, expect, it } from "vitest";
+ import { APP_TZ, zonedMidnightToMs } from "./fecha";
+-import { SEGUIMIENTO_DIAS, calcularFechaProximoSeguimiento, type Etapa } from "./seguimiento";
++import {
++  SEGUIMIENTO_DIAS,
++  acuerdoActivo,
++  calcularFechaProximoSeguimiento,
++  esTerminal,
++  seguimientoTrasCambioEtapa,
++  type Etapa,
++} from "./seguimiento";
+ 
+ const HORA = 3_600_000;
+ // Referencia: 12-jul-2026 a las 10:00 de Madrid (la hora del día no debe influir)
+@@ -39,3 +46,90 @@ describe("calcularFechaProximoSeguimiento", () => {
+     );
+   });
+ });
++
++describe("esTerminal", () => {
++  it.each<[Etapa, boolean]>([
++    ["new", false],
++    ["contacted", false],
++    ["presented", false],
++    ["evaluating", false],
++    ["joined", true],
++    ["discarded", true],
++  ])("%s → %s", (etapa, esperado) => {
++    expect(esTerminal(etapa)).toBe(esperado);
++  });
++});
++
++describe("acuerdoActivo (JOS-67)", () => {
++  const FECHA = zonedMidnightToMs({ y: 2026, m: 7, d: 26 }, APP_TZ);
++
++  it("exige booleano Y fecha", () => {
++    expect(acuerdoActivo({ seguimientoManual: true, fechaProximoSeguimiento: FECHA })).toBe(true);
++  });
++
++  it.each([
++    ["sin ningún campo", {}],
++    ["solo fecha (la puso el motor)", { fechaProximoSeguimiento: FECHA }],
++    ["booleano a false", { seguimientoManual: false, fechaProximoSeguimiento: FECHA }],
++    // Estado incoherente: no debería existir, pero si existiera no puede contar
++    // como acuerdo — dejaría el prospecto sin fecha y sin motor.
++    ["booleano true SIN fecha (incoherente)", { seguimientoManual: true }],
++  ])("%s → no es acuerdo activo", (_caso, estado) => {
++    expect(acuerdoActivo(estado)).toBe(false);
++  });
++});
++
++describe("seguimientoTrasCambioEtapa (JOS-67)", () => {
++  // Referencia: 12-jul-2026 a las 10:00 de Madrid.
++  const ACORDADA = zonedMidnightToMs({ y: 2026, m: 7, d: 26 }, APP_TZ); // +14 días
++
++  it("sin acuerdo: manda el motor y el booleano queda ausente", () => {
++    expect(seguimientoTrasCambioEtapa("contacted", REF, {})).toEqual({
++      fechaProximoSeguimiento: zonedMidnightToMs({ y: 2026, m: 7, d: 15 }, APP_TZ),
++      seguimientoManual: undefined,
++    });
++  });
++
++  it("con acuerdo activo: NO recalcula, la fecha acordada se mantiene", () => {
++    expect(
++      seguimientoTrasCambioEtapa("contacted", REF, {
++        fechaProximoSeguimiento: ACORDADA,
++        seguimientoManual: true,
++      }),
++    ).toEqual({ fechaProximoSeguimiento: ACORDADA, seguimientoManual: true });
++  });
++
++  it.each<Etapa>(["joined", "discarded"])(
++    "etapa terminal %s: borra la fecha Y el booleano, aunque el acuerdo estuviera activo",
++    (etapa) => {
++      expect(
++        seguimientoTrasCambioEtapa(etapa, REF, {
++          fechaProximoSeguimiento: ACORDADA,
++          seguimientoManual: true,
++        }),
++      ).toEqual({ fechaProximoSeguimiento: undefined, seguimientoManual: undefined });
++    },
++  );
++
++  it("terminal → activa con el booleano colgado: el motor recalcula, no se queda sin fecha", () => {
++    // Estado imposible de producir con esta API (el paso a terminal limpia los dos
++    // campos), pero si llegase de datos antiguos NO puede desactivar el motor: el
++    // prospecto se quedaría invisible en la Actividad Diaria para siempre.
++    expect(seguimientoTrasCambioEtapa("contacted", REF, { seguimientoManual: true })).toEqual({
++      fechaProximoSeguimiento: zonedMidnightToMs({ y: 2026, m: 7, d: 15 }, APP_TZ),
++      seguimientoManual: undefined,
++    });
++  });
++
++  it("seguimientoManual a false se trata como ausencia de acuerdo", () => {
++    expect(
++      seguimientoTrasCambioEtapa("new", REF, {
++        fechaProximoSeguimiento: ACORDADA,
++        seguimientoManual: false,
++      }),
++    ).toEqual({
++      fechaProximoSeguimiento: zonedMidnightToMs({ y: 2026, m: 7, d: 13 }, APP_TZ),
++      seguimientoManual: undefined,
++    });
++  });
++});
+diff --git a/convex/lib/seguimiento.ts b/convex/lib/seguimiento.ts
+index af471dd..2afa01c 100644
+--- a/convex/lib/seguimiento.ts
++++ b/convex/lib/seguimiento.ts
+@@ -16,3 +16,64 @@ export function calcularFechaProximoSeguimiento(etapa: Etapa, fechaReferenciaMs:
+   if (dias === null) return undefined;
+   return zonedMidnightToMs(addCivilDays(civilDate(fechaReferenciaMs, APP_TZ), dias), APP_TZ);
+ }
++
++/** Terminal = el motor no programa seguimiento (JOS-8): el prospecto sale de la Actividad Diaria. */
++export function esTerminal(etapa: Etapa): boolean {
++  return SEGUIMIENTO_DIAS[etapa] === null;
++}
++
++/* ── Precedencia de la fecha acordada (JOS-67) ────────────────────────────── */
++
++/** Los dos campos de seguimiento de un prospecto, tal y como se leen y se escriben. */
++export interface EstadoSeguimiento {
++  fechaProximoSeguimiento?: number;
++  seguimientoManual?: boolean;
++}
++
++/**
++ * ¿Hay un acuerdo vigente? Exige los DOS campos, no solo el booleano.
++ *
++ * Un documento con `seguimientoManual: true` y sin fecha es incoherente y no
++ * debería existir (el patch de etapa terminal limpia ambos), pero si llegase por
++ * datos antiguos o una escritura manual, tratarlo como acuerdo activo dejaría el
++ * prospecto SIN fecha y CON el motor desactivado: invisible en la Actividad
++ * Diaria para siempre. Con esta condición, lo anómalo cae a la rama del motor.
++ */
++export function acuerdoActivo(estado: EstadoSeguimiento): boolean {
++  return estado.seguimientoManual === true && estado.fechaProximoSeguimiento !== undefined;
++}
++
++/**
++ * Estado de seguimiento resultante de un CAMBIO DE ETAPA (invocación 3 de
++ * JOS-12, con la precedencia de JOS-67). Función pura: toda la regla vive aquí,
++ * no repartida por los handlers.
++ *
++ * `undefined` en cualquiera de los dos campos significa ELIMINARLO en el patch
++ * (convención de "nulos por ausencia" del esquema).
++ *
++ * Tres ramas, en este orden:
++ *  1. Etapa terminal → se descarta TODO, también el acuerdo. Borrar solo la
++ *     fecha y dejar el booleano colgado abriría esta trampa: al recuperar el
++ *     prospecto hacia una etapa activa, la regla "con acuerdo no recalcules"
++ *     lo dejaría sin fecha y sin motor, sin más salida que registrar una
++ *     interacción.
++ *  2. Acuerdo activo → la cita acordada con el prospecto GANA sobre la regla de
++ *     la etapa: la fecha no se mueve.
++ *  3. Resto → manda el motor, como hasta JOS-67.
++ */
++export function seguimientoTrasCambioEtapa(
++  etapa: Etapa,
++  fechaReferenciaMs: number,
++  actual: EstadoSeguimiento,
++): { fechaProximoSeguimiento: number | undefined; seguimientoManual: boolean | undefined } {
++  if (esTerminal(etapa)) {
++    return { fechaProximoSeguimiento: undefined, seguimientoManual: undefined };
++  }
++  if (acuerdoActivo(actual)) {
++    return { fechaProximoSeguimiento: actual.fechaProximoSeguimiento, seguimientoManual: true };
++  }
++  return {
++    fechaProximoSeguimiento: calcularFechaProximoSeguimiento(etapa, fechaReferenciaMs),
++    seguimientoManual: undefined,
++  };
++}
+diff --git a/convex/lib/validacion.ts b/convex/lib/validacion.ts
+index 2e9b291..2a93d38 100644
+--- a/convex/lib/validacion.ts
++++ b/convex/lib/validacion.ts
+@@ -1,5 +1,6 @@
+ import type { PaginationOptions } from "convex/server";
+ import { validationError } from "./errores";
++import { APP_TZ, civilDate, zonedMidnightToMs } from "./fecha";
+ 
+ /** Margen sobre el reloj del servidor para aceptar `fecha` (desfase de clientes). */
+ export const FUTURO_MARGEN_MS = 5 * 60 * 1000;
+@@ -157,6 +158,39 @@ export function validarFechaInteraccion(fecha: number, ahoraMs: number): void {
+   if (fecha > ahoraMs + FUTURO_MARGEN_MS) throw validationError("fecha no puede estar en el futuro", "fecha");
+ }
+ 
++/**
++ * Límite del rango representable por `Date` (±100.000.000 días desde epoch).
++ * Más allá, `civilDate`/`zonedMidnightToMs` reventarían con un Error crudo en
++ * vez de con el VALIDATION_ERROR que promete el contrato de la API.
++ */
++const FECHA_MAX_ABS_MS = 8.64e15;
++
++/**
++ * `fecha` de un contacto ACORDADO con el prospecto (JOS-67). Es la simétrica de
++ * `validarFechaInteraccion`: allí se rechaza el futuro porque el contacto ya
++ * ocurrió; aquí se rechaza el PASADO, porque una cita acordada siempre mira
++ * hacia adelante.
++ *
++ * Devuelve la fecha NORMALIZADA a medianoche de APP_TZ. El esquema declara que
++ * `fechaProximoSeguimiento` es siempre una medianoche, y ese invariante no puede
++ * quedar a merced de la hora que mande el cliente: si no se normalizase, el
++ * cálculo de "días vencido" (`diffCalendarDays`) pasaría a depender de ella.
++ *
++ * El suelo es la medianoche de HOY según el reloj del SERVIDOR (`ahoraMs`), de
++ * modo que el día de hoy se acepta entero. No se aplica FUTURO_MARGEN_MS: ese
++ * margen existe para tolerar relojes de cliente adelantados al registrar algo
++ * que YA ocurrió; aquí el riesgo es el contrario y el suelo ya es generoso.
++ */
++export function fechaAcordadaValidada(fecha: number, ahoraMs: number): number {
++  if (!Number.isFinite(fecha)) throw validationError("fecha debe ser un número finito (ms epoch)", "fecha");
++  if (Math.abs(fecha) > FECHA_MAX_ABS_MS) throw validationError("fecha fuera de rango", "fecha");
++  const acordada = zonedMidnightToMs(civilDate(fecha, APP_TZ), APP_TZ);
++  if (acordada < zonedMidnightToMs(civilDate(ahoraMs, APP_TZ), APP_TZ)) {
++    throw validationError("La fecha acordada no puede estar en el pasado", "fecha");
++  }
++  return acordada;
++}
++
+ /** `numItems` entero finito en [1, PAGINA_MAX_ITEMS] — un chequeo solo de rango dejaría pasar NaN. */
+ export function validarNumItems(numItems: number): void {
+   if (!Number.isInteger(numItems) || numItems < 1 || numItems > PAGINA_MAX_ITEMS) {
+diff --git a/convex/prospectos.api.test.ts b/convex/prospectos.api.test.ts
+index 71edae7..364c040 100644
+--- a/convex/prospectos.api.test.ts
++++ b/convex/prospectos.api.test.ts
+@@ -13,6 +13,9 @@ const DAY_KEY = "2026-07-12";
+ const { hoyInicio } = ventanaDia(DAY_KEY, APP_TZ);
+ const AHORA = hoyInicio + 12 * 3_600_000; // mediodía civil del 2026-07-12
+ 
++/** Cita acordada a 14 días (JOS-67): medianoche del 2026-07-26, ya normalizada. */
++const ACORDADA = ventanaDia("2026-07-26", APP_TZ).hoyInicio;
++
+ // Identidades de prueba: `tokenIdentifier` explícito (no se deja deducir a
+ // convex-test) porque es literalmente el `usuarioId` que persisten las filas.
+ const TENANT_A = "https://test.clerk|user_a";
+@@ -306,6 +309,221 @@ describe("prospectos.cambiarEtapa", () => {
+     const data = await dataDeError(t.mutation(api.prospectos.cambiarEtapa, { id: ajenoId, etapa: "contacted" }));
+     expect(data).toEqual({ code: "NOT_FOUND", message: "Prospecto no encontrado" });
+   });
++
++  /* ── Precedencia de la fecha acordada (JOS-67) ──────────────────────────── */
++
++  it("con acuerdo activo NO recalcula: la fecha acordada gana sobre la regla de etapa", async () => {
++    const t = nuevoTest();
++    const creado = await crear(t);
++    const acordada = await t.mutation(api.prospectos.fijarSeguimientoAcordado, {
++      id: creado.id,
++      fecha: ACORDADA,
++    });
++    const cambiado = await t.mutation(api.prospectos.cambiarEtapa, { id: creado.id, etapa: "presented" });
++    expect(cambiado.etapaActual).toBe("presented");
++    expect(cambiado.fechaProximoSeguimiento).toBe(acordada.fechaProximoSeguimiento);
++    expect(cambiado.seguimientoManual).toBe(true);
++    // Y NO es lo que habría dicho el motor.
++    expect(cambiado.fechaProximoSeguimiento).not.toBe(
++      calcularFechaProximoSeguimiento("presented", creado.fechaAlta),
++    );
++  });
++
++  it("a etapa terminal con acuerdo activo: se borran la fecha Y el booleano", async () => {
++    const t = nuevoTest();
++    const creado = await crear(t);
++    await t.mutation(api.prospectos.fijarSeguimientoAcordado, { id: creado.id, fecha: ACORDADA });
++    const cambiado = await t.mutation(api.prospectos.cambiarEtapa, { id: creado.id, etapa: "discarded" });
++    expect(cambiado.fechaProximoSeguimiento).toBeUndefined();
++    expect(cambiado.seguimientoManual).toBeUndefined();
++    const doc = await t.run((ctx) => ctx.db.get(creado.id));
++    expect(doc).not.toHaveProperty("fechaProximoSeguimiento");
++    expect(doc).not.toHaveProperty("seguimientoManual");
++  });
++
++  it("recuperar un prospecto descartado lo devuelve al motor, no lo deja huérfano", async () => {
++    // El escenario que justifica limpiar el booleano en terminales: si quedase
++    // colgado, este prospecto se quedaría sin fecha y sin motor para siempre.
++    const t = nuevoTest();
++    const creado = await crear(t);
++    await t.mutation(api.prospectos.fijarSeguimientoAcordado, { id: creado.id, fecha: ACORDADA });
++    await t.mutation(api.prospectos.cambiarEtapa, { id: creado.id, etapa: "discarded" });
++    const recuperado = await t.mutation(api.prospectos.cambiarEtapa, { id: creado.id, etapa: "contacted" });
++    expect(recuperado.fechaProximoSeguimiento).toBe(
++      calcularFechaProximoSeguimiento("contacted", creado.fechaAlta),
++    );
++    expect(recuperado.seguimientoManual).toBeUndefined();
++  });
++});
++
++describe("prospectos.fijarSeguimientoAcordado (JOS-67)", () => {
++  it("aborta sin identidad", async () => {
++    const t = nuevoTest();
++    const creado = await crear(t);
++    const sinSesion = convexTest(schema, modules);
++    const data = await dataDeError(
++      sinSesion.mutation(api.prospectos.fijarSeguimientoAcordado, { id: creado.id, fecha: ACORDADA }),
++    );
++    expect(data).toEqual({ code: "UNAUTHENTICATED", message: "Se requiere sesión" });
++  });
++
++  it("fija la fecha y marca el seguimiento como manual", async () => {
++    const t = nuevoTest();
++    const creado = await crear(t);
++    const p = await t.mutation(api.prospectos.fijarSeguimientoAcordado, { id: creado.id, fecha: ACORDADA });
++    expect(p.fechaProximoSeguimiento).toBe(ACORDADA);
++    expect(p.seguimientoManual).toBe(true);
++  });
++
++  it("normaliza a medianoche de APP_TZ: la hora que mande el cliente se descarta", async () => {
++    const t = nuevoTest();
++    const creado = await crear(t);
++    const p = await t.mutation(api.prospectos.fijarSeguimientoAcordado, {
++      id: creado.id,
++      fecha: ACORDADA + 17 * 3_600_000 + 43 * 60_000, // 17:43 de ese día
++    });
++    expect(p.fechaProximoSeguimiento).toBe(ACORDADA);
++  });
++
++  it("acepta HOY entero, no solo el futuro", async () => {
++    const t = nuevoTest();
++    const creado = await crear(t);
++    // AHORA es mediodía; la medianoche de hoy ya pasó y aun así se acepta.
++    const p = await t.mutation(api.prospectos.fijarSeguimientoAcordado, { id: creado.id, fecha: AHORA });
++    expect(p.fechaProximoSeguimiento).toBe(hoyInicio);
++  });
++
++  it("rechaza una fecha pasada", async () => {
++    const t = nuevoTest();
++    const creado = await crear(t);
++    const data = await dataDeError(
++      t.mutation(api.prospectos.fijarSeguimientoAcordado, { id: creado.id, fecha: hoyInicio - 1 }),
++    );
++    expect(data.code).toBe("VALIDATION_ERROR");
++    expect(data.field).toBe("fecha");
++    // No persiste nada: la mutation aborta la transacción entera.
++    const doc = await t.run((ctx) => ctx.db.get(creado.id));
++    expect(doc).not.toHaveProperty("seguimientoManual");
++  });
++
++  it.each([Number.NaN, Number.POSITIVE_INFINITY, 9e15])(
++    "rechaza %p como fecha",
++    async (fecha) => {
++      const t = nuevoTest();
++      const creado = await crear(t);
++      const data = await dataDeError(
++        t.mutation(api.prospectos.fijarSeguimientoAcordado, { id: creado.id, fecha }),
++      );
++      expect(data.code).toBe("VALIDATION_ERROR");
++      expect(data.field).toBe("fecha");
++    },
++  );
++
++  it.each(["joined", "discarded"] as const)(
++    "rechaza fijar en la etapa terminal %s: rompería el contrato de JOS-8",
++    async (etapa) => {
++      const t = nuevoTest();
++      const creado = await crear(t);
++      await t.mutation(api.prospectos.cambiarEtapa, { id: creado.id, etapa });
++      const data = await dataDeError(
++        t.mutation(api.prospectos.fijarSeguimientoAcordado, { id: creado.id, fecha: ACORDADA }),
++      );
++      expect(data.code).toBe("VALIDATION_ERROR");
++      expect(data.field).toBe("etapaActual");
++      // Sigue fuera de la Actividad Diaria.
++      const doc = await t.run((ctx) => ctx.db.get(creado.id));
++      expect(doc).not.toHaveProperty("fechaProximoSeguimiento");
++      expect(doc).not.toHaveProperty("seguimientoManual");
++    },
++  );
++
++  it("tenant: fijar en un prospecto ajeno → NOT_FOUND", async () => {
++    const t = nuevoTest();
++    const ajenoId = await t.run((ctx) =>
++      ctx.db.insert("prospectos", {
++        usuarioId: TENANT_B,
++        nombre: "Ajeno",
++        comoSeConocio: "Test",
++        canalContactoPreferido: "phone",
++        etapaActual: "new",
++        fechaAlta: AHORA,
++      }),
++    );
++    const data = await dataDeError(
++      t.mutation(api.prospectos.fijarSeguimientoAcordado, { id: ajenoId, fecha: ACORDADA }),
++    );
++    expect(data).toEqual({ code: "NOT_FOUND", message: "Prospecto no encontrado" });
++  });
++});
++
++describe("prospectos.quitarSeguimientoAcordado (JOS-67)", () => {
++  it("aborta sin identidad", async () => {
++    const t = nuevoTest();
++    const creado = await crear(t);
++    const sinSesion = convexTest(schema, modules);
++    const data = await dataDeError(
++      sinSesion.mutation(api.prospectos.quitarSeguimientoAcordado, { id: creado.id }),
++    );
++    expect(data).toEqual({ code: "UNAUTHENTICATED", message: "Se requiere sesión" });
++  });
++
++  it("RESTAURA la fecha del motor, no se limita a borrar la marca", async () => {
++    const t = nuevoTest();
++    const creado = await crear(t);
++    await t.mutation(api.prospectos.fijarSeguimientoAcordado, { id: creado.id, fecha: ACORDADA });
++    const p = await t.mutation(api.prospectos.quitarSeguimientoAcordado, { id: creado.id });
++    expect(p.seguimientoManual).toBeUndefined();
++    // Lo importante: la fecha ya NO es la acordada, sino la del motor.
++    expect(p.fechaProximoSeguimiento).not.toBe(ACORDADA);
++    expect(p.fechaProximoSeguimiento).toBe(calcularFechaProximoSeguimiento("new", creado.fechaAlta));
++    const doc = await t.run((ctx) => ctx.db.get(creado.id));
++    expect(doc).not.toHaveProperty("seguimientoManual");
++  });
++
++  it("recalcula desde fechaUltimoContacto cuando existe (caso 4 de JOS-8)", async () => {
++    const t = nuevoTest();
++    const creado = await crear(t);
++    const contacto = AHORA - 2 * 24 * 3_600_000;
++    await t.run((ctx) => ctx.db.patch(creado.id, { fechaUltimoContacto: contacto }));
++    await t.mutation(api.prospectos.fijarSeguimientoAcordado, { id: creado.id, fecha: ACORDADA });
++    const p = await t.mutation(api.prospectos.quitarSeguimientoAcordado, { id: creado.id });
++    expect(p.fechaProximoSeguimiento).toBe(calcularFechaProximoSeguimiento("new", contacto));
++  });
++
++  it("en etapa terminal deja la fecha ausente", async () => {
++    const t = nuevoTest();
++    const creado = await crear(t);
++    await t.mutation(api.prospectos.cambiarEtapa, { id: creado.id, etapa: "joined" });
++    const p = await t.mutation(api.prospectos.quitarSeguimientoAcordado, { id: creado.id });
++    expect(p.fechaProximoSeguimiento).toBeUndefined();
++    expect(p.seguimientoManual).toBeUndefined();
++  });
++
++  it("es idempotente sobre un prospecto que nunca tuvo acuerdo", async () => {
++    const t = nuevoTest();
++    const creado = await crear(t);
++    const p = await t.mutation(api.prospectos.quitarSeguimientoAcordado, { id: creado.id });
++    expect(p.fechaProximoSeguimiento).toBe(creado.fechaProximoSeguimiento);
++    expect(p.seguimientoManual).toBeUndefined();
++  });
++
++  it("tenant: quitar en un prospecto ajeno → NOT_FOUND", async () => {
++    const t = nuevoTest();
++    const ajenoId = await t.run((ctx) =>
++      ctx.db.insert("prospectos", {
++        usuarioId: TENANT_B,
++        nombre: "Ajeno",
++        comoSeConocio: "Test",
++        canalContactoPreferido: "phone",
++        etapaActual: "new",
++        fechaAlta: AHORA,
++      }),
++    );
++    const data = await dataDeError(
++      t.mutation(api.prospectos.quitarSeguimientoAcordado, { id: ajenoId }),
++    );
++    expect(data).toEqual({ code: "NOT_FOUND", message: "Prospecto no encontrado" });
++  });
+ });
+ 
+ describe("aislamiento del tenant en escrituras", () => {
+diff --git a/convex/prospectos.ts b/convex/prospectos.ts
+index eb63415..d8cb158 100644
+--- a/convex/prospectos.ts
++++ b/convex/prospectos.ts
+@@ -4,7 +4,7 @@ import { paginationOptsValidator, paginationResultValidator } from "convex/serve
+ import type { Doc, Id } from "./_generated/dataModel";
+ import { MAX_ACTIVIDAD, MAX_PIPELINE } from "./lib/constants";
+ import { APP_TZ, diffCalendarDays, ventanaDia } from "./lib/fecha";
+-import { SEGUIMIENTO_DIAS, calcularFechaProximoSeguimiento } from "./lib/seguimiento";
++import { calcularFechaProximoSeguimiento, esTerminal, seguimientoTrasCambioEtapa } from "./lib/seguimiento";
+ import { requireUsuario } from "./lib/usuario";
+ import { prospectoDelUsuario } from "./lib/acceso";
+ import { prospectoPublicoValidator, toProspectoPublico } from "./lib/proyecciones";
+@@ -14,11 +14,13 @@ import {
+   LONGITUD_MAX_TELEFONO,
+   conLimites,
+   emailOpcional,
++  fechaAcordadaValidada,
+   notasOpcional,
+   textoObligatorioAcotado,
+   textoOpcionalAcotado,
+   validarNumItems,
+ } from "./lib/validacion";
++import { validationError } from "./lib/errores";
+ import { canalContacto, etapaProspecto } from "./schema";
+ 
+ export interface ProspectoActividad {
+@@ -146,11 +148,6 @@ const grupoPipelineValidator = v.object({
+   truncado: v.boolean(),
+ });
+ 
+-/** Terminal = el motor no programa seguimiento (JOS-8): sin fechaProximoSeguimiento. */
+-function esTerminal(etapa: Doc<"prospectos">["etapaActual"]): boolean {
+-  return SEGUIMIENTO_DIAS[etapa] === null;
+-}
+-
+ /**
+  * Datos de la pantalla Pipeline (JOS-21): los 6 grupos por etapa ya formados.
+  *
+@@ -346,9 +343,11 @@ export const actualizar = mutation({
+ /**
+  * PATCH /prospectos/:id/etapa (JOS-13). Recalcula el seguimiento con la nueva
+  * etapa y la referencia fechaUltimoContacto ?? fechaAlta (caso 4 de JOS-8,
+- * invocación 3 de JOS-12). NO toca fechaUltimoContacto. En etapas terminales
+- * el motor devuelve `undefined` y el patch elimina el campo (sale de la
+- * Actividad Diaria).
++ * invocación 3 de JOS-12). NO toca fechaUltimoContacto.
++ *
++ * Desde JOS-67 la decisión completa (terminal / acuerdo activo / motor) vive en
++ * `seguimientoTrasCambioEtapa`; aquí solo se aplica su patch. En etapas
++ * terminales devuelve `undefined` en ambos campos y el patch los elimina.
+  */
+ export const cambiarEtapa = mutation({
+   args: { id: v.id("prospectos"), etapa: etapaProspecto },
+@@ -359,7 +358,68 @@ export const cambiarEtapa = mutation({
+     const referencia = doc.fechaUltimoContacto ?? doc.fechaAlta;
+     await ctx.db.patch(doc._id, {
+       etapaActual: etapa,
+-      fechaProximoSeguimiento: calcularFechaProximoSeguimiento(etapa, referencia),
++      ...seguimientoTrasCambioEtapa(etapa, referencia, doc),
++    });
++    return toProspectoPublico((await ctx.db.get(doc._id))!);
++  },
++});
++
++/**
++ * PATCH /prospectos/:id/seguimiento — FIJAR una cita acordada (JOS-67).
++ *
++ * Escribe la fecha en `fechaProximoSeguimiento` (el MISMO campo que usa el
++ * motor) y marca `seguimientoManual`. Así ninguna pantalla de lectura cambia:
++ * Actividad Diaria, Pipeline y Resumen siguen consultando por rango sobre
++ * `by_usuario_seguimiento` sin saber quién puso la fecha.
++ *
++ * Se rechaza en etapas terminales: allí el contrato de JOS-8 es "sin
++ * seguimiento", y aceptar una fecha devolvería a la Actividad Diaria un
++ * prospecto ya incorporado o descartado. La comprobación va ANTES de validar la
++ * fecha para que el error hable del problema de verdad.
++ */
++export const fijarSeguimientoAcordado = mutation({
++  args: { id: v.id("prospectos"), fecha: v.number() },
++  returns: prospectoPublicoValidator,
++  handler: async (ctx, { id, fecha }) => {
++    const usuarioId = await requireUsuario(ctx);
++    const doc = await prospectoDelUsuario(ctx, id, usuarioId);
++    if (esTerminal(doc.etapaActual)) {
++      throw validationError(
++        "No se puede fijar un contacto acordado en una etapa terminal",
++        "etapaActual",
++      );
++    }
++    await ctx.db.patch(doc._id, {
++      fechaProximoSeguimiento: fechaAcordadaValidada(fecha, Date.now()),
++      seguimientoManual: true,
++    });
++    return toProspectoPublico((await ctx.db.get(doc._id))!);
++  },
++});
++
++/**
++ * PATCH /prospectos/:id/seguimiento — QUITAR la cita acordada (JOS-67).
++ *
++ * No basta con borrar el booleano: hay que RECALCULAR con el motor y escribir el
++ * resultado. Si solo se limpiase la marca, la fecha fijada a mano seguiría ahí
++ * disfrazada de automática, y el usuario creería haber vuelto al cálculo del
++ * motor sin haberlo hecho.
++ *
++ * Misma referencia que el resto del motor: fechaUltimoContacto ?? fechaAlta
++ * (caso 4 de JOS-8). En etapa terminal el motor devuelve `undefined` y la fecha
++ * queda ausente. Idempotente: sobre un prospecto sin acuerdo solo reafirma la
++ * fecha que el motor ya habría calculado.
++ */
++export const quitarSeguimientoAcordado = mutation({
++  args: { id: v.id("prospectos") },
++  returns: prospectoPublicoValidator,
++  handler: async (ctx, { id }) => {
++    const usuarioId = await requireUsuario(ctx);
++    const doc = await prospectoDelUsuario(ctx, id, usuarioId);
++    const referencia = doc.fechaUltimoContacto ?? doc.fechaAlta;
++    await ctx.db.patch(doc._id, {
++      fechaProximoSeguimiento: calcularFechaProximoSeguimiento(doc.etapaActual, referencia),
++      seguimientoManual: undefined,
+     });
+     return toProspectoPublico((await ctx.db.get(doc._id))!);
+   },
+diff --git a/convex/resumen.test.ts b/convex/resumen.test.ts
+index 6a6f3e1..01715e6 100644
+--- a/convex/resumen.test.ts
++++ b/convex/resumen.test.ts
+@@ -425,6 +425,9 @@ describe("resumen · presupuesto de lectura", () => {
+     // Email en el tope y con formato válido: 254 = 242 + "@" + "ejemplo.com".
+     const EMAIL = `${"x".repeat(LONGITUD_MAX_EMAIL - "@ejemplo.com".length)}@ejemplo.com`;
+ 
++    // `seguimientoManual: true` forma parte del peor caso desde JOS-67: el campo
++    // es opcional, así que el documento MÁS grande que las mutaciones permiten
++    // crear es el que lo lleva presente, no el que lo omite.
+     await t.run(async (ctx) => {
+       const prospectoId = await ctx.db.insert("prospectos", {
+         usuarioId: TENANT_A,
+@@ -437,6 +440,7 @@ describe("resumen · presupuesto de lectura", () => {
+         notas: NOTAS,
+         fechaAlta: hoyInicio - 10 * DIA,
+         fechaProximoSeguimiento: hoyInicio,
++        seguimientoManual: true,
+       });
+       for (let i = 1; i < MAX_RESUMEN_PROSPECTOS + 1; i++) {
+         await ctx.db.insert("prospectos", {
+@@ -450,6 +454,7 @@ describe("resumen · presupuesto de lectura", () => {
+           notas: NOTAS,
+           fechaAlta: hoyInicio - 10 * DIA,
+           fechaProximoSeguimiento: hoyInicio,
++          seguimientoManual: true,
+         });
+       }
+       for (let i = 0; i < MAX_RESUMEN_INTERACCIONES + 1; i++) {
+@@ -482,21 +487,30 @@ describe("resumen · presupuesto de lectura", () => {
+     expect(totalDocs).toBeLessThan(32_000 / 4);
+ 
+     // BYTES: el Resumen es la primera pantalla que lee DOS tablas en la misma query,
+-    // y ambas suman contra el mismo límite. Medición 2026-08-03 con TODOS los campos
+-    // libres en su tope (docs/auditoria/JOS-24-e2e.md):
+-    //   prospectos    1.201 × 2.786 B = 3.345.986 B
+-    //   interacciones   501 × 4.270 B = 2.139.270 B
+-    //   total = 5.485.256 B = 32,7 % del límite → margen 3,06×
++    // y ambas suman contra el mismo límite.
+     //
+-    // La cifra SUBIÓ respecto a la primera medición (2.383 B/prospecto, 29,8 %) al
+-    // acotar nombre/comoSeConocio/telefono/email: antes se medía con valores
+-    // realistas y el documento no era finito, así que aquello era el peor caso
+-    // REALISTA. Ahora es el ADMISIBLE, y por eso es mayor. Subir es la señal de que
+-    // la medición pasó a ser exhaustiva, no de que algo empeorase.
++    // Medición 2026-08-06 (JOS-67), con TODOS los campos libres en su tope Y
++    // `seguimientoManual` presente:
++    //   prospectos    1.201 × 2.811 B = 3.376.011 B
++    //   interacciones   501 × 4.265 B = 2.136.765 B
++    //   total = 5.512.776 B = 32,9 % del límite → margen 3,04×
+     //
+-    // La guarda va a 1/3 del límite (5.592.405 B): quedan ~107 KB de holgura, un 2 %.
+-    // Es deliberadamente estrecha — cualquier campo nuevo en el documento de
+-    // prospecto la rompe y obliga a volver a medir, que es justo su función.
++    // Medición anterior (2026-08-03, antes de JOS-67): 2.786 B/prospecto, total
++    // 5.485.256 B = 32,7 %. El campo booleano nuevo cuesta +25 B por documento, que
++    // es exactamente lo que ocupa `,"seguimientoManual":true` en la serialización.
++    //
++    // Y antes de eso, la primera medición daba 2.383 B/prospecto (29,8 %) porque se
++    // hacía con valores realistas sobre un documento que aún no era finito: era el
++    // peor caso REALISTA, no el ADMISIBLE. Al acotar nombre/comoSeConocio/telefono/
++    // email la cifra subió, y esa subida fue señal de que la medición pasó a ser
++    // exhaustiva, no de que algo empeorase.
++    //
++    // La guarda va a 1/3 del límite (5.592.405 B). Holgura restante: 79.629 B, un
++    // 1,4 % — MÁS ESTRECHA que los ~107 KB de antes de JOS-67. Es deliberada:
++    // cualquier campo nuevo en el documento de prospecto la rompe y obliga a volver
++    // a medir, que es justo su función. Con este margen, en el documento de
++    // prospecto caben ~3 campos escalares más antes de tener que rebajar
++    // MAX_RESUMEN_INTERACCIONES.
+     //
+     // Rompe también si se sube cualquiera de las SIETE constantes implicadas: las dos
+     // cotas de lectura y los cinco topes de texto.
+diff --git a/convex/schema.ts b/convex/schema.ts
+index df2aa79..006bcee 100644
+--- a/convex/schema.ts
++++ b/convex/schema.ts
+@@ -13,9 +13,13 @@ import { v } from "convex/values";
+  *   Necesita pensar=thinking, No interesado=not_interested, Otro=other.
+  * - Nulos por AUSENCIA (v.optional), nunca `null`, para rangos de índice limpios.
+  * - Fechas en ms epoch; `fechaProximoSeguimiento` siempre es una medianoche
+- *   APP_TZ calculada por el motor (convex/lib/seguimiento.ts), nunca editable
+- *   por el usuario. `fechaUltimoContacto` lo actualiza el sistema al registrar
+- *   interacciones (JOS-11/JOS-14).
++ *   APP_TZ. Por defecto la calcula el motor (convex/lib/seguimiento.ts), pero
++ *   desde JOS-67 el usuario puede FIJARLA cuando ha acordado una cita con el
++ *   prospecto; en ese caso `seguimientoManual` queda a true y el motor deja de
++ *   sobrescribirla hasta que el acuerdo se consuma. La medianoche es invariante
++ *   en los dos casos: la fecha acordada se normaliza al validarla.
++ *   `fechaUltimoContacto` lo actualiza el sistema al registrar interacciones
++ *   (JOS-11/JOS-14).
+  * - `usuarioId` es el `identity.tokenIdentifier` de la sesión (ADR 0001, JOS-66);
+  *   lo deriva en servidor `convex/lib/usuario.ts` y ninguna función lo acepta
+  *   del cliente. Es la clave de aislamiento: prefijo de todos los índices.
+@@ -61,6 +65,10 @@ export default defineSchema({
+     fechaAlta: v.number(),
+     fechaUltimoContacto: v.optional(v.number()),
+     fechaProximoSeguimiento: v.optional(v.number()),
++    // JOS-67: la fecha de arriba la fijó el usuario (cita acordada), no el motor.
++    // Ausente = false, así que los prospectos anteriores no necesitan migración.
++    // NO se indexa: solo se consulta tras leer el documento, nunca por rango.
++    seguimientoManual: v.optional(v.boolean()),
+   })
+     .index("by_usuario", ["usuarioId"])
+     .index("by_usuario_seguimiento", ["usuarioId", "fechaProximoSeguimiento"])
+diff --git a/docs/auditoria/JOS-67-gates.txt b/docs/auditoria/JOS-67-gates.txt
+new file mode 100644
+index 0000000..aa7c103
+--- /dev/null
++++ b/docs/auditoria/JOS-67-gates.txt
+@@ -0,0 +1,134 @@
++GATES — JOS-67 (M11 · Fecha de Contacto Acordada, bocado A de 4)
++Rama:  joseramonlc/jos-67-fecha-de-contacto-acordada-modelo-de-datos-y-precedencia-en
++Base:  origin/master = 889e080
++Fecha: 2026-08-06
++Entorno: FS nativa WSL2 (/home/pepe/proyectos/mi-crm-basic)
++
++Los tres gates se ejecutaron redirigiendo a fichero y leyendo $? ANTES de
++cualquier tubería, para no repetir el falso verde del 2026-08-03 (un `| tail`
++devuelve el código de `tail`, no el del comando).
++
++────────────────────────────────────────────────────────────────────────
++1. TESTS  —  npm test
++────────────────────────────────────────────────────────────────────────
++EXIT_REAL = 0
++
++  Test Files  42 passed (42)
++       Tests  479 passed (479)
++    Duration  20.94s
++
++CONTRASTE DE RECUENTO (obligatorio en este proyecto):
++
++  $ find convex src -name '*.test.ts' -o -name '*.test.tsx' | wc -l
++  42
++
++  42 en disco = 42 arrancados.  Sin ficheros perdidos por el pool.
++
++  Referencia: antes de esta rama, 42 ficheros / 439 tests.
++  Delta: +0 ficheros (no se crea ninguno: los casos se añaden a los
++  existentes) y +40 tests.
++
++  Reparto de los 40 tests nuevos:
++    convex/lib/seguimiento.test.ts   +18  (esTerminal, acuerdoActivo y
++                                           seguimientoTrasCambioEtapa, puros)
++    convex/prospectos.api.test.ts    +19  (las dos mutations nuevas + la
++                                           precedencia en cambiarEtapa)
++    convex/interacciones.test.ts      +3  (consumo del acuerdo)
++
++────────────────────────────────────────────────────────────────────────
++2. LINT  —  npm run lint
++────────────────────────────────────────────────────────────────────────
++EXIT_REAL = 0
++Sin avisos ni errores.
++
++────────────────────────────────────────────────────────────────────────
++3. BUILD  —  npm run build
++────────────────────────────────────────────────────────────────────────
++EXIT_REAL = 0
++
++Las 11 rutas siguen compilando, sin altas ni bajas respecto a master:
++
++  ┌ ○ /
++  ├ ○ /_not-found
++  ├ ○ /actividad
++  ├ ○ /login
++  ├ ○ /prospectos
++  ├ ƒ /prospectos/[id]
++  ├ ƒ /prospectos/[id]/interacciones/nueva
++  ├ ○ /prospectos/nuevo
++  ├ ○ /recuperar
++  ├ ○ /registro
++  └ ○ /resumen
++
++────────────────────────────────────────────────────────────────────────
++4. PRESUPUESTO DE LECTURA  —  re-medido (lo exige el campo nuevo)
++────────────────────────────────────────────────────────────────────────
++El test "presupuesto de lectura" de convex/resumen.test.ts está calibrado con
++una guarda deliberadamente estrecha para que CUALQUIER campo nuevo en el
++documento de prospecto obligue a volver a medir. `seguimientoManual` es
++exactamente ese caso, así que se remidió con el campo PRESENTE en los fixtures
++(el peor caso admisible es con él, no sin él):
++
++  prospectos    1.201 × 2.811 B = 3.376.011 B
++  interacciones   501 × 4.265 B = 2.136.765 B
++  ──────────────────────────────────────────
++  total                           5.512.776 B  = 32,9 % de 16 MiB   margen 3,04×
++
++  Guarda (1/3 del límite):        5.592.405 B
++  Holgura restante:                  79.629 B  (1,4 %)
++
++  Antes de JOS-67: 2.786 B/prospecto, total 5.485.256 B (32,7 %),
++  holgura 107.149 B.
++
++  El coste del campo son +25 B por documento, que es exactamente lo que ocupa
++  `,"seguimientoManual":true` serializado. La estimación previa del plan (~30 KB
++  en total) se confirmó: el aumento real fue de 27.520 B.
++
++  ⚠️ AVISO PARA LA SIGUIENTE TAREA QUE AÑADA CAMPOS: con la holgura en 1,4 %,
++  en el documento de prospecto caben del orden de 3 campos escalares más antes
++  de tener que rebajar MAX_RESUMEN_INTERACCIONES.
++
++────────────────────────────────────────────────────────────────────────
++5. DEPLOYMENT REAL  —  lo que convex-test NO prueba
++────────────────────────────────────────────────────────────────────────
++  $ npx convex dev --once
++  ✔ Convex functions ready! (1.15s)          EXIT_REAL = 0
++
++  El cambio de esquema se PUBLICA de verdad contra
++  jose-lumbreras:crm-networker:dev. Es la comprobación que convex-test no puede
++  dar (valida contra el esquema en memoria, no contra el deployment).
++
++  Y las dos mutations nuevas están registradas y protegidas allí:
++
++  $ npx convex run prospectos:fijarSeguimientoAcordado '{"id":"k17da...","fecha":...}'
++    Uncaught ConvexError: {"code":"UNAUTHENTICATED","message":"Se requiere sesión"}
++      at requireUsuario (../../convex/lib/usuario.ts:16:19)
++      at async handler (../convex/prospectos.ts:385:23)
++
++  $ npx convex run prospectos:quitarSeguimientoAcordado '{"id":"k17da..."}'
++    Uncaught ConvexError: {"code":"UNAUTHENTICATED","message":"Se requiere sesión"}
++
++  El UNAUTHENTICATED es el resultado BUENO: prueba que la función existe, está
++  desplegada y aplica la guarda de sesión. Contraste: una función inexistente
++  no da ese error, el CLI responde con el listado de funciones disponibles.
++
++────────────────────────────────────────────────────────────────────────
++6. LO QUE ESTOS GATES NO ACREDITAN
++────────────────────────────────────────────────────────────────────────
++- NO hay recorrido e2e de COMPORTAMIENTO contra el deployment real. El plan
++  (§8.5) proponía hacerlo con `npx convex run`, y eso resultó IMPOSIBLE: las
++  dos mutations son públicas y exigen sesión, y el CLI de Convex no puede
++  suplantar a un usuario. La única vía sería la interfaz, que no existe hasta
++  JOS-69. La corrección se documenta aquí en vez de fingir el paso.
++
++  Consecuencia: el comportamiento está acreditado por 479 tests contra el
++  esquema real, más la publicación del esquema y el registro de funciones del
++  §5, pero NADIE ha fijado una cita acordada desde una sesión de verdad. Ese
++  recorrido corresponde a JOS-69, que es quien trae la pantalla.
++
++- NO hay verificación en navegador: este bocado no toca ninguna pantalla. El
++  campo viaja en la proyección pública pero ninguna interfaz lo lee todavía.
++
++- `npx tsc --noEmit` sigue dando 5 errores de `import.meta.glob` en ficheros de
++  test. Se comprobó con `git stash` que son IDÉNTICOS en master: son previos y
++  ajenos a esta rama. No se han tocado.
+diff --git a/docs/auditoria/JOS-67-plan.md b/docs/auditoria/JOS-67-plan.md
+new file mode 100644
+index 0000000..414f798
+--- /dev/null
++++ b/docs/auditoria/JOS-67-plan.md
+@@ -0,0 +1,204 @@
++# Plan · JOS-67 — Fecha de contacto acordada: modelo de datos y precedencia en el motor
++
++**Milestone:** M11 · Fecha de Contacto Acordada · **Bocado A de 4** (JOS-67; luego JOS-68, JOS-69, JOS-70)
++**Alcance:** solo backend. Ninguna pantalla cambia en este bocado.
++**Rama:** `joseramonlc/jos-67-fecha-de-contacto-acordada-modelo-de-datos-y-precedencia-en`
++
++**Revisión 2** — la rev. 1 recibió **GO condicionado** de auditoría, con dos condiciones mayores y tres menores. Todas incorporadas antes de escribir código:
++
++| Punto de la auditoría | Dónde se resuelve |
++| --- | --- |
++| Mayor 1 · fijar en etapa terminal rompería el contrato de JOS-8 | §3.4.a — se rechaza con `VALIDATION_ERROR`, con test |
++| Mayor 2 · «quitar» debe restaurar la fecha automática, no solo borrar la marca | §3.4.b — recalcula con el motor y lo escribe |
++| Riesgo no verificable · «acuerdo activo» debe ser un estado consistente | §3.5.b — `acuerdoActivo()` exige booleano **y** fecha; lo anómalo cae al motor |
++| Menor · las proyecciones agregadas no llevan el flag | §6.b — explicitado |
++| Menor · tests de «sin sesión» en las dos mutations nuevas | §6.b — añadidos |
++| Menor · la deuda de `constants.ts` en commit aparte | §6.b — commit separado |
++
++Resultados de la ejecución: `docs/auditoria/JOS-67-gates.txt`.
++
++---
++
++## 1. Contexto
++
++Hoy la fecha del próximo seguimiento la calcula **siempre** el motor a partir de la etapa (JOS-8). Cuando un prospecto acuerda explícitamente otra cosa —«llámame el jueves 15», «mejor en dos semanas porque me voy de viaje»— ese acuerdo solo queda como texto libre y **no dispara nada**: un prospecto en *Presentación realizada* reaparece en la Actividad Diaria a los 5 días aunque haya pedido dos semanas.
++
++JOS-67 añade el soporte de backend para que una fecha fijada a mano **tenga precedencia** sobre el motor. Es la base de las otras tres tareas de M11, que sin esto no tienen sobre qué apoyarse.
++
++**Por qué ahora:** el propio milestone avisa de que M11 debe ir **antes de M9 · QA**, porque JOS-28/29/30 prueban estos mismos flujos y habría que repetir parte del QA.
++
++**Resultado esperado:** el motor sigue gobernando por defecto; la fecha acordada solo manda cuando el usuario la fija, y se consume al registrar la siguiente interacción.
++
++---
++
++## 2. Estado verificado del código
++
++Comprobado leyendo el repo (no supuesto):
++
++| Comprobación | Resultado |
++| --- | --- |
++| Batería de tests de partida | **42 ficheros en disco, 42 ejecutados, 439 tests, exit 0** — sin verdes falsos |
++| Puntos de invocación del motor | Exactamente **3**, como dice la tarea: `prospectos.crear`, `interacciones.crear`, `prospectos.cambiarEtapa` |
++| «Ya contacté» (JOS-23) | **No es un cuarto punto**: `actividad/page.tsx:114` solo hace `router.push` al formulario de registrar interacción. Hereda el comportamiento sin trabajo extra |
++| Índice de la Actividad Diaria | `by_usuario_seguimiento` = `[usuarioId, fechaProximoSeguimiento]`. Escribir el acuerdo en ese mismo campo **no rompe el índice** y deja Actividad Diaria, Pipeline y Resumen sin tocar. La decisión de diseño de la tarea es correcta |
++| Migración de datos | **No hace falta**: booleano opcional, ausencia = `false`, convención de «nulos por ausencia» ya vigente en el esquema |
++
++---
++
++## 3. Decisiones de diseño
++
++### 3.1 El campo se llama `seguimientoManual` (no `seguimiento_manual`)
++
++La tarea lo escribe en snake_case, pero **todo el esquema usa camelCase** (`fechaProximoSeguimiento`, `canalContactoPreferido`, `siguientePasoAcordado`). Se respeta la convención del repo.
++
++### 3.2 La fecha acordada se normaliza a medianoche de `APP_TZ`
++
++`convex/schema.ts:15-16` declara como invariante que `fechaProximoSeguimiento` **siempre** es una medianoche de Europe/Madrid calculada por el motor. Si se guardase la fecha acordada con la hora que venga del cliente, ese invariante dejaría de ser cierto y el cálculo de «días vencido» (`diffCalendarDays`) empezaría a depender de la hora.
++
++Se normaliza reutilizando lo que ya existe en `convex/lib/fecha.ts`: `zonedMidnightToMs(civilDate(fecha, APP_TZ), APP_TZ)`.
++
++### 3.3 «No puede estar en el pasado» se decide con el reloj del servidor
++
++El mismo criterio que ya usa `validarFechaInteraccion` (`validacion.ts:154`), que compara contra `Date.now()` pasado desde el handler. El suelo es **la medianoche de hoy en APP_TZ**, de modo que *hoy* se acepta entero.
++
++No se aplica el margen `FUTURO_MARGEN_MS`: ese margen existe para tolerar relojes de cliente adelantados al registrar algo que **ya ocurrió**; aquí el riesgo es el contrario y el suelo ya es generoso (la medianoche, no el instante actual).
++
++### 3.4 Dos mutations, no una
++
++La tarea deja abierto «PATCH nuevo o extensión del PATCH existente». Se proponen **dos mutations explícitas**:
++
++- `fijarSeguimientoAcordado({ id, fecha })`
++- `quitarSeguimientoAcordado({ id })`
++
++**Motivo:** con una sola mutation y `fecha: v.optional(...)`, «no envío fecha» y «quiero quitar el acuerdo» serían indistinguibles. Además JOS-69 exige que quitar el acuerdo sea *«una acción visible, no escondida»* — dos mutations lo reflejan. No se toca `actualizar`, cuyo contrato («deja intactos etapa y fechas», test en `prospectos.api.test.ts:215`) sigue igual.
++
++#### 3.4.a Fijar en etapa terminal se RECHAZA *(condición mayor 1 de la auditoría)*
++
++En *Incorporado* y *Descartado* el contrato de JOS-8 es **«sin seguimiento»**. Si `fijarSeguimientoAcordado` aceptase una fecha ahí, ese prospecto **volvería a la Actividad Diaria** y contradiría al motor. La mutation comprueba la etapa **antes** de validar la fecha y lanza `VALIDATION_ERROR` (`field: "etapaActual"`). Con test.
++
++#### 3.4.b Quitar RESTAURA la fecha automática *(condición mayor 2 de la auditoría)*
++
++`quitarSeguimientoAcordado` **no se limita a borrar el booleano**: recalcula con `calcularFechaProximoSeguimiento(doc.etapaActual, doc.fechaUltimoContacto ?? doc.fechaAlta)` y escribe el resultado. En etapa terminal el motor devuelve `undefined` y la fecha queda ausente.
++
++Sin esto quedaría **una fecha manual disfrazada de automática**: el usuario cree haber vuelto al cálculo del motor y la fecha sigue siendo la que él fijó.
++
++### 3.5 ⚠️ Las etapas terminales deben limpiar **también** el booleano
++
++**Este es el punto más delicado del bocado y no está en la tarea.**
++
++La tarea dice que al pasar a *Incorporado* o *Descartado* se descarta el acuerdo y la fecha queda ausente. Si se borrase solo la fecha y el booleano quedase en `true`, se abriría esta trampa:
++
++1. Prospecto con acuerdo activo → pasa a *Descartado* → se borra la fecha, `seguimientoManual` sigue `true`.
++2. El usuario lo recupera y lo devuelve a *Contactado*.
++3. La regla dice «con acuerdo activo no recalcules» → **no se recalcula nada**.
++4. El prospecto se queda **sin fecha de seguimiento y con el motor desactivado**: nunca vuelve a aparecer en la Actividad Diaria, y la única salida es registrar una interacción.
++
++Por eso el patch de etapa terminal borra **los dos campos**. Va con test dedicado.
++
++### 3.5.b Un acuerdo solo está ACTIVO si están el booleano **y** la fecha
++
++*(Riesgo señalado por la auditoría como no verificable hasta ver el diff.)*
++
++La condición de precedencia es `seguimientoManual === true && fechaProximoSeguimiento !== undefined`, encapsulada en una función `acuerdoActivo()`. Un documento incoherente —booleano `true` sin fecha, que §3.5 hace imposible pero que podría llegar de datos antiguos o de una escritura manual— **no desactiva el motor**: cae a la rama de recálculo y de paso limpia el booleano. Va con test del caso anómalo.
++
++### 3.6 Reutilización: `esTerminal` se sube a `lib/seguimiento.ts`
++
++`prospectos.ts:150` tiene hoy una copia local de `esTerminal`. La nueva lógica de precedencia la necesita también, así que se mueve al motor (`lib/seguimiento.ts`) y `prospectos.ts` la importa. Una sola definición.
++
++---
++
++## 4. Comportamiento resultante
++
++| Punto de invocación | Con acuerdo activo | Sin acuerdo |
++| --- | --- | --- |
++| **Alta** (`prospectos.crear`) | No aplica — en el alta no hay acuerdo posible | Sin cambios |
++| **Registrar interacción** (`interacciones.crear`) | El contacto ya ocurrió: **se consume** el acuerdo (`seguimientoManual` se borra) y el motor recalcula | Sin cambios |
++| **Cambio de etapa** (`prospectos.cambiarEtapa`) | **NO recalcula**: el acuerdo gana sobre la regla de etapa | Recalcula como hoy |
++| **Cambio a etapa terminal** | Se descartan **fecha y booleano** (§3.5) | Se borra la fecha, como hoy |
++
++---
++
++## 5. Ficheros a modificar
++
++### Backend
++
++| Fichero | Cambio |
++| --- | --- |
++| `convex/schema.ts` | Campo `seguimientoManual: v.optional(v.boolean())` en `prospectos`. **Y corregir el comentario de las líneas 15-17**, que hoy afirma que `fechaProximoSeguimiento` «nunca» es editable por el usuario — esta tarea es justo la excepción |
++| `convex/lib/seguimiento.ts` | `esTerminal` (movida desde `prospectos.ts`) y una función pura nueva `seguimientoTrasCambioEtapa(etapa, fechaReferenciaMs, actual)` que devuelve el patch de los dos campos. La precedencia queda en **un solo sitio**, testeable sin base de datos. `calcularFechaProximoSeguimiento` **no se toca** |
++| `convex/lib/validacion.ts` | `fechaAcordadaValidada(fecha, ahoraMs): number` — número finito, normalización a medianoche APP_TZ, rechazo de fechas anteriores a hoy. Importa `fecha.ts` (sin ciclos: `fecha.ts` no importa nada) |
++| `convex/lib/proyecciones.ts` | `seguimientoManual` en `prospectoPublicoValidator` y en `toProspectoPublico`, para que la UI de JOS-68/69 pueda distinguir los dos estados |
++| `convex/prospectos.ts` | Las dos mutations nuevas (§3.4); `cambiarEtapa` pasa a usar el helper del motor; se elimina la copia local de `esTerminal` |
++| `convex/interacciones.ts` | En el patch del prospecto, añadir `seguimientoManual: undefined` para consumir el acuerdo |
++| `convex/lib/constants.ts` | **Deuda pendiente desde el 2026-08-04**: el comentario de `MAX_RESUMEN_INTERACCIONES` dice «500 → 29,8 %» cuando lo medido contra deployment real fue **33,9 %** (`docs/auditoria/JOS-24-e2e.md:9`). Quedó a la espera de «la próxima tarea que toque `convex/`», y esta lo es |
++
++### Tests
++
++| Fichero | Qué se añade |
++| --- | --- |
++| `convex/lib/seguimiento.test.ts` | La precedencia como función pura: con acuerdo no recalcula, sin acuerdo recalcula, etapa terminal borra los dos campos |
++| `convex/prospectos.api.test.ts` | Fijar acuerdo; quitarlo y volver al automático; rechazo de fecha pasada; normalización a medianoche; cambio de etapa con acuerdo activo (no mueve la fecha); etapa terminal con acuerdo activo (§3.5); tenant ajeno → `NOT_FOUND` en las dos mutations nuevas |
++| `convex/interacciones.test.ts` | Registrar interacción con acuerdo activo lo consume y recalcula |
++| `convex/resumen.test.ts` | Re-medición del presupuesto (§6) |
++
++---
++
++## 6. ⚠️ El test de presupuesto de lectura se va a activar — y es su función
++
++`convex/resumen.test.ts:414` mide el peor caso admisible del documento de prospecto y lo compara contra 1/3 del límite de 16 MiB. Su propio comentario avisa:
++
++> «La guarda va a 1/3 del límite (5.592.405 B): quedan ~107 KB de holgura, un 2 %. Es deliberadamente estrecha — **cualquier campo nuevo en el documento de prospecto la rompe y obliga a volver a medir**, que es justo su función.»
++
++Añadir `seguimientoManual` es exactamente ese caso. Lo que hay que hacer:
++
++1. Añadir `seguimientoManual: true` a los fixtures del test — el peor caso admisible es **con** el campo presente, no sin él.
++2. **Volver a medir ejecutando el test**, no estimando.
++3. Actualizar el comentario con la cifra nueva.
++
++**Estimación previa** (a confirmar con la medición real, que es la que manda): `,"seguimientoManual":true` son 25 B por documento × 1.201 documentos ≈ **30 KB** contra los ~107 KB de holgura. Debería entrar y dejar el total en ~32,9 %, pero **si la medición dice otra cosa, manda la medición** y habría que replantear la cota antes de seguir.
++
++---
++
++## 6.b Menores de la auditoría, incorporadas
++
++- **Las proyecciones agregadas NO llevan el flag.** `actividadDiaria` (`prospectos.ts:97`) y `pipeline` (`prospectos.ts:132`) tienen proyecciones propias y **se quedan como están**: solo la proyección pública core (`toProspectoPublico`, que usan `obtener`/`listar`/las mutations) incorpora `seguimientoManual`. JOS-68/69 leen la ficha vía `obtener`, así que les basta. Queda escrito para que no se lea como olvido.
++- **Tests de «sin sesión»** para las dos mutations nuevas, además de los de tenant ajeno.
++- **La corrección del comentario de `constants.ts` va en su propio commit**, separado del resto, para que el diff quede quirúrgico como pide la auditoría sin perder la deuda pendiente desde el 2026-08-04.
++
++---
++
++## 7. Fuera de alcance (deliberadamente)
++
++- **Cualquier pantalla.** El campo viaja en la API pero ninguna UI lo usa todavía.
++- **El argumento de fecha acordada en `interacciones.crear`.** Es de JOS-68, junto con su campo en el formulario. Aquí solo se implementa el **consumo** del acuerdo.
++- **El choque JOS-67 ↔ JOS-68** (registrar un contacto y fijar fecha nueva a la vez). La regla propuesta —*si el usuario escribe fecha nueva, esa manda; si lo deja vacío, se consume el acuerdo y el motor recalcula*— se decide y se implementa **en el plan de JOS-68**. Se deja anotado aquí para que la auditoría compruebe que este bocado no cierra esa puerta: no la cierra, porque el consumo y la fijación son escrituras independientes sobre los mismos dos campos.
++- `convex/seed.ts`. Ningún escenario necesita acuerdos activos hasta que haya pantalla que los muestre (JOS-69).
++
++---
++
++## 8. Verificación
++
++1. **`npm test`** — contrastar el recuento: deben seguir siendo **42 ficheros ejecutados** (no se crean ficheros de test nuevos, solo casos) y los tests deben subir de 439 a ~455. Un recuento de ficheros menor que 42 es verde falso, no éxito.
++2. **`npm run lint`** — sin avisos nuevos.
++3. **Medición del presupuesto** — anotar la cifra que devuelva el test de `resumen.test.ts` y compararla con la estimación de §6.
++4. **Publicación del esquema contra deployment real** — `npx convex dev` y confirmar que el campo nuevo se publica sin error. Es lo mismo que se hizo en JOS-21 con el índice nuevo: `convex-test` no prueba que el cambio de esquema sea válido de verdad.
++5. **Recorrido manual mínimo** (no necesita pantalla nueva; se hace con `npx convex run` sobre el deployment de desarrollo):
++   - Fijar un acuerdo a 14 días y comprobar en `npx convex data prospectos` que `fechaProximoSeguimiento` cae en medianoche y `seguimientoManual` es `true`.
++   - Cambiar la etapa y comprobar que **la fecha no se mueve**.
++   - Registrar una interacción y comprobar que el acuerdo desaparece y la fecha vuelve a la del motor.
++   - Intentar fijar una fecha de ayer y comprobar que se rechaza.
++   - Pasar a *Descartado* y comprobar que **los dos campos** quedan ausentes (§3.5).
++
++Arrancar el servidor con `npm run dev` normal: el `--webpack` ya no hace falta (comprobado hoy al cerrar JOS-6).
++
++---
++
++## 9. Después de este bocado
++
++| Bocado | Tarea | Depende de |
++| --- | --- | --- |
++| B | JOS-68 — campo de fecha en Registrar Interacción | A |
++| C | JOS-69 — fijar/quitar desde la Ficha, con los dos estados diferenciados | A |
++| D | JOS-70 — enlace «Añadir a mi calendario» | De nada (solo lee una fecha que ya existe) |
++
++Cada uno con su propio plan, su auditoría y su PR.
