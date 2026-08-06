@@ -13,6 +13,9 @@ const DAY_KEY = "2026-07-12";
 const { hoyInicio } = ventanaDia(DAY_KEY, APP_TZ);
 const AHORA = hoyInicio + 12 * 3_600_000; // mediodía civil del 2026-07-12
 
+/** Cita acordada a 14 días (JOS-67): medianoche del 2026-07-26, ya normalizada. */
+const ACORDADA = ventanaDia("2026-07-26", APP_TZ).hoyInicio;
+
 // Identidades de prueba: `tokenIdentifier` explícito (no se deja deducir a
 // convex-test) porque es literalmente el `usuarioId` que persisten las filas.
 const TENANT_A = "https://test.clerk|user_a";
@@ -304,6 +307,221 @@ describe("prospectos.cambiarEtapa", () => {
       }),
     );
     const data = await dataDeError(t.mutation(api.prospectos.cambiarEtapa, { id: ajenoId, etapa: "contacted" }));
+    expect(data).toEqual({ code: "NOT_FOUND", message: "Prospecto no encontrado" });
+  });
+
+  /* ── Precedencia de la fecha acordada (JOS-67) ──────────────────────────── */
+
+  it("con acuerdo activo NO recalcula: la fecha acordada gana sobre la regla de etapa", async () => {
+    const t = nuevoTest();
+    const creado = await crear(t);
+    const acordada = await t.mutation(api.prospectos.fijarSeguimientoAcordado, {
+      id: creado.id,
+      fecha: ACORDADA,
+    });
+    const cambiado = await t.mutation(api.prospectos.cambiarEtapa, { id: creado.id, etapa: "presented" });
+    expect(cambiado.etapaActual).toBe("presented");
+    expect(cambiado.fechaProximoSeguimiento).toBe(acordada.fechaProximoSeguimiento);
+    expect(cambiado.seguimientoManual).toBe(true);
+    // Y NO es lo que habría dicho el motor.
+    expect(cambiado.fechaProximoSeguimiento).not.toBe(
+      calcularFechaProximoSeguimiento("presented", creado.fechaAlta),
+    );
+  });
+
+  it("a etapa terminal con acuerdo activo: se borran la fecha Y el booleano", async () => {
+    const t = nuevoTest();
+    const creado = await crear(t);
+    await t.mutation(api.prospectos.fijarSeguimientoAcordado, { id: creado.id, fecha: ACORDADA });
+    const cambiado = await t.mutation(api.prospectos.cambiarEtapa, { id: creado.id, etapa: "discarded" });
+    expect(cambiado.fechaProximoSeguimiento).toBeUndefined();
+    expect(cambiado.seguimientoManual).toBeUndefined();
+    const doc = await t.run((ctx) => ctx.db.get(creado.id));
+    expect(doc).not.toHaveProperty("fechaProximoSeguimiento");
+    expect(doc).not.toHaveProperty("seguimientoManual");
+  });
+
+  it("recuperar un prospecto descartado lo devuelve al motor, no lo deja huérfano", async () => {
+    // El escenario que justifica limpiar el booleano en terminales: si quedase
+    // colgado, este prospecto se quedaría sin fecha y sin motor para siempre.
+    const t = nuevoTest();
+    const creado = await crear(t);
+    await t.mutation(api.prospectos.fijarSeguimientoAcordado, { id: creado.id, fecha: ACORDADA });
+    await t.mutation(api.prospectos.cambiarEtapa, { id: creado.id, etapa: "discarded" });
+    const recuperado = await t.mutation(api.prospectos.cambiarEtapa, { id: creado.id, etapa: "contacted" });
+    expect(recuperado.fechaProximoSeguimiento).toBe(
+      calcularFechaProximoSeguimiento("contacted", creado.fechaAlta),
+    );
+    expect(recuperado.seguimientoManual).toBeUndefined();
+  });
+});
+
+describe("prospectos.fijarSeguimientoAcordado (JOS-67)", () => {
+  it("aborta sin identidad", async () => {
+    const t = nuevoTest();
+    const creado = await crear(t);
+    const sinSesion = convexTest(schema, modules);
+    const data = await dataDeError(
+      sinSesion.mutation(api.prospectos.fijarSeguimientoAcordado, { id: creado.id, fecha: ACORDADA }),
+    );
+    expect(data).toEqual({ code: "UNAUTHENTICATED", message: "Se requiere sesión" });
+  });
+
+  it("fija la fecha y marca el seguimiento como manual", async () => {
+    const t = nuevoTest();
+    const creado = await crear(t);
+    const p = await t.mutation(api.prospectos.fijarSeguimientoAcordado, { id: creado.id, fecha: ACORDADA });
+    expect(p.fechaProximoSeguimiento).toBe(ACORDADA);
+    expect(p.seguimientoManual).toBe(true);
+  });
+
+  it("normaliza a medianoche de APP_TZ: la hora que mande el cliente se descarta", async () => {
+    const t = nuevoTest();
+    const creado = await crear(t);
+    const p = await t.mutation(api.prospectos.fijarSeguimientoAcordado, {
+      id: creado.id,
+      fecha: ACORDADA + 17 * 3_600_000 + 43 * 60_000, // 17:43 de ese día
+    });
+    expect(p.fechaProximoSeguimiento).toBe(ACORDADA);
+  });
+
+  it("acepta HOY entero, no solo el futuro", async () => {
+    const t = nuevoTest();
+    const creado = await crear(t);
+    // AHORA es mediodía; la medianoche de hoy ya pasó y aun así se acepta.
+    const p = await t.mutation(api.prospectos.fijarSeguimientoAcordado, { id: creado.id, fecha: AHORA });
+    expect(p.fechaProximoSeguimiento).toBe(hoyInicio);
+  });
+
+  it("rechaza una fecha pasada", async () => {
+    const t = nuevoTest();
+    const creado = await crear(t);
+    const data = await dataDeError(
+      t.mutation(api.prospectos.fijarSeguimientoAcordado, { id: creado.id, fecha: hoyInicio - 1 }),
+    );
+    expect(data.code).toBe("VALIDATION_ERROR");
+    expect(data.field).toBe("fecha");
+    // No persiste nada: la mutation aborta la transacción entera.
+    const doc = await t.run((ctx) => ctx.db.get(creado.id));
+    expect(doc).not.toHaveProperty("seguimientoManual");
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, 9e15])(
+    "rechaza %p como fecha",
+    async (fecha) => {
+      const t = nuevoTest();
+      const creado = await crear(t);
+      const data = await dataDeError(
+        t.mutation(api.prospectos.fijarSeguimientoAcordado, { id: creado.id, fecha }),
+      );
+      expect(data.code).toBe("VALIDATION_ERROR");
+      expect(data.field).toBe("fecha");
+    },
+  );
+
+  it.each(["joined", "discarded"] as const)(
+    "rechaza fijar en la etapa terminal %s: rompería el contrato de JOS-8",
+    async (etapa) => {
+      const t = nuevoTest();
+      const creado = await crear(t);
+      await t.mutation(api.prospectos.cambiarEtapa, { id: creado.id, etapa });
+      const data = await dataDeError(
+        t.mutation(api.prospectos.fijarSeguimientoAcordado, { id: creado.id, fecha: ACORDADA }),
+      );
+      expect(data.code).toBe("VALIDATION_ERROR");
+      expect(data.field).toBe("etapaActual");
+      // Sigue fuera de la Actividad Diaria.
+      const doc = await t.run((ctx) => ctx.db.get(creado.id));
+      expect(doc).not.toHaveProperty("fechaProximoSeguimiento");
+      expect(doc).not.toHaveProperty("seguimientoManual");
+    },
+  );
+
+  it("tenant: fijar en un prospecto ajeno → NOT_FOUND", async () => {
+    const t = nuevoTest();
+    const ajenoId = await t.run((ctx) =>
+      ctx.db.insert("prospectos", {
+        usuarioId: TENANT_B,
+        nombre: "Ajeno",
+        comoSeConocio: "Test",
+        canalContactoPreferido: "phone",
+        etapaActual: "new",
+        fechaAlta: AHORA,
+      }),
+    );
+    const data = await dataDeError(
+      t.mutation(api.prospectos.fijarSeguimientoAcordado, { id: ajenoId, fecha: ACORDADA }),
+    );
+    expect(data).toEqual({ code: "NOT_FOUND", message: "Prospecto no encontrado" });
+  });
+});
+
+describe("prospectos.quitarSeguimientoAcordado (JOS-67)", () => {
+  it("aborta sin identidad", async () => {
+    const t = nuevoTest();
+    const creado = await crear(t);
+    const sinSesion = convexTest(schema, modules);
+    const data = await dataDeError(
+      sinSesion.mutation(api.prospectos.quitarSeguimientoAcordado, { id: creado.id }),
+    );
+    expect(data).toEqual({ code: "UNAUTHENTICATED", message: "Se requiere sesión" });
+  });
+
+  it("RESTAURA la fecha del motor, no se limita a borrar la marca", async () => {
+    const t = nuevoTest();
+    const creado = await crear(t);
+    await t.mutation(api.prospectos.fijarSeguimientoAcordado, { id: creado.id, fecha: ACORDADA });
+    const p = await t.mutation(api.prospectos.quitarSeguimientoAcordado, { id: creado.id });
+    expect(p.seguimientoManual).toBeUndefined();
+    // Lo importante: la fecha ya NO es la acordada, sino la del motor.
+    expect(p.fechaProximoSeguimiento).not.toBe(ACORDADA);
+    expect(p.fechaProximoSeguimiento).toBe(calcularFechaProximoSeguimiento("new", creado.fechaAlta));
+    const doc = await t.run((ctx) => ctx.db.get(creado.id));
+    expect(doc).not.toHaveProperty("seguimientoManual");
+  });
+
+  it("recalcula desde fechaUltimoContacto cuando existe (caso 4 de JOS-8)", async () => {
+    const t = nuevoTest();
+    const creado = await crear(t);
+    const contacto = AHORA - 2 * 24 * 3_600_000;
+    await t.run((ctx) => ctx.db.patch(creado.id, { fechaUltimoContacto: contacto }));
+    await t.mutation(api.prospectos.fijarSeguimientoAcordado, { id: creado.id, fecha: ACORDADA });
+    const p = await t.mutation(api.prospectos.quitarSeguimientoAcordado, { id: creado.id });
+    expect(p.fechaProximoSeguimiento).toBe(calcularFechaProximoSeguimiento("new", contacto));
+  });
+
+  it("en etapa terminal deja la fecha ausente", async () => {
+    const t = nuevoTest();
+    const creado = await crear(t);
+    await t.mutation(api.prospectos.cambiarEtapa, { id: creado.id, etapa: "joined" });
+    const p = await t.mutation(api.prospectos.quitarSeguimientoAcordado, { id: creado.id });
+    expect(p.fechaProximoSeguimiento).toBeUndefined();
+    expect(p.seguimientoManual).toBeUndefined();
+  });
+
+  it("es idempotente sobre un prospecto que nunca tuvo acuerdo", async () => {
+    const t = nuevoTest();
+    const creado = await crear(t);
+    const p = await t.mutation(api.prospectos.quitarSeguimientoAcordado, { id: creado.id });
+    expect(p.fechaProximoSeguimiento).toBe(creado.fechaProximoSeguimiento);
+    expect(p.seguimientoManual).toBeUndefined();
+  });
+
+  it("tenant: quitar en un prospecto ajeno → NOT_FOUND", async () => {
+    const t = nuevoTest();
+    const ajenoId = await t.run((ctx) =>
+      ctx.db.insert("prospectos", {
+        usuarioId: TENANT_B,
+        nombre: "Ajeno",
+        comoSeConocio: "Test",
+        canalContactoPreferido: "phone",
+        etapaActual: "new",
+        fechaAlta: AHORA,
+      }),
+    );
+    const data = await dataDeError(
+      t.mutation(api.prospectos.quitarSeguimientoAcordado, { id: ajenoId }),
+    );
     expect(data).toEqual({ code: "NOT_FOUND", message: "Prospecto no encontrado" });
   });
 });

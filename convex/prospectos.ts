@@ -4,7 +4,7 @@ import { paginationOptsValidator, paginationResultValidator } from "convex/serve
 import type { Doc, Id } from "./_generated/dataModel";
 import { MAX_ACTIVIDAD, MAX_PIPELINE } from "./lib/constants";
 import { APP_TZ, diffCalendarDays, ventanaDia } from "./lib/fecha";
-import { SEGUIMIENTO_DIAS, calcularFechaProximoSeguimiento } from "./lib/seguimiento";
+import { calcularFechaProximoSeguimiento, esTerminal, seguimientoTrasCambioEtapa } from "./lib/seguimiento";
 import { requireUsuario } from "./lib/usuario";
 import { prospectoDelUsuario } from "./lib/acceso";
 import { prospectoPublicoValidator, toProspectoPublico } from "./lib/proyecciones";
@@ -14,11 +14,13 @@ import {
   LONGITUD_MAX_TELEFONO,
   conLimites,
   emailOpcional,
+  fechaAcordadaValidada,
   notasOpcional,
   textoObligatorioAcotado,
   textoOpcionalAcotado,
   validarNumItems,
 } from "./lib/validacion";
+import { validationError } from "./lib/errores";
 import { canalContacto, etapaProspecto } from "./schema";
 
 export interface ProspectoActividad {
@@ -145,11 +147,6 @@ const grupoPipelineValidator = v.object({
   total: v.number(),
   truncado: v.boolean(),
 });
-
-/** Terminal = el motor no programa seguimiento (JOS-8): sin fechaProximoSeguimiento. */
-function esTerminal(etapa: Doc<"prospectos">["etapaActual"]): boolean {
-  return SEGUIMIENTO_DIAS[etapa] === null;
-}
 
 /**
  * Datos de la pantalla Pipeline (JOS-21): los 6 grupos por etapa ya formados.
@@ -346,9 +343,11 @@ export const actualizar = mutation({
 /**
  * PATCH /prospectos/:id/etapa (JOS-13). Recalcula el seguimiento con la nueva
  * etapa y la referencia fechaUltimoContacto ?? fechaAlta (caso 4 de JOS-8,
- * invocación 3 de JOS-12). NO toca fechaUltimoContacto. En etapas terminales
- * el motor devuelve `undefined` y el patch elimina el campo (sale de la
- * Actividad Diaria).
+ * invocación 3 de JOS-12). NO toca fechaUltimoContacto.
+ *
+ * Desde JOS-67 la decisión completa (terminal / acuerdo activo / motor) vive en
+ * `seguimientoTrasCambioEtapa`; aquí solo se aplica su patch. En etapas
+ * terminales devuelve `undefined` en ambos campos y el patch los elimina.
  */
 export const cambiarEtapa = mutation({
   args: { id: v.id("prospectos"), etapa: etapaProspecto },
@@ -359,7 +358,68 @@ export const cambiarEtapa = mutation({
     const referencia = doc.fechaUltimoContacto ?? doc.fechaAlta;
     await ctx.db.patch(doc._id, {
       etapaActual: etapa,
-      fechaProximoSeguimiento: calcularFechaProximoSeguimiento(etapa, referencia),
+      ...seguimientoTrasCambioEtapa(etapa, referencia, doc),
+    });
+    return toProspectoPublico((await ctx.db.get(doc._id))!);
+  },
+});
+
+/**
+ * PATCH /prospectos/:id/seguimiento — FIJAR una cita acordada (JOS-67).
+ *
+ * Escribe la fecha en `fechaProximoSeguimiento` (el MISMO campo que usa el
+ * motor) y marca `seguimientoManual`. Así ninguna pantalla de lectura cambia:
+ * Actividad Diaria, Pipeline y Resumen siguen consultando por rango sobre
+ * `by_usuario_seguimiento` sin saber quién puso la fecha.
+ *
+ * Se rechaza en etapas terminales: allí el contrato de JOS-8 es "sin
+ * seguimiento", y aceptar una fecha devolvería a la Actividad Diaria un
+ * prospecto ya incorporado o descartado. La comprobación va ANTES de validar la
+ * fecha para que el error hable del problema de verdad.
+ */
+export const fijarSeguimientoAcordado = mutation({
+  args: { id: v.id("prospectos"), fecha: v.number() },
+  returns: prospectoPublicoValidator,
+  handler: async (ctx, { id, fecha }) => {
+    const usuarioId = await requireUsuario(ctx);
+    const doc = await prospectoDelUsuario(ctx, id, usuarioId);
+    if (esTerminal(doc.etapaActual)) {
+      throw validationError(
+        "No se puede fijar un contacto acordado en una etapa terminal",
+        "etapaActual",
+      );
+    }
+    await ctx.db.patch(doc._id, {
+      fechaProximoSeguimiento: fechaAcordadaValidada(fecha, Date.now()),
+      seguimientoManual: true,
+    });
+    return toProspectoPublico((await ctx.db.get(doc._id))!);
+  },
+});
+
+/**
+ * PATCH /prospectos/:id/seguimiento — QUITAR la cita acordada (JOS-67).
+ *
+ * No basta con borrar el booleano: hay que RECALCULAR con el motor y escribir el
+ * resultado. Si solo se limpiase la marca, la fecha fijada a mano seguiría ahí
+ * disfrazada de automática, y el usuario creería haber vuelto al cálculo del
+ * motor sin haberlo hecho.
+ *
+ * Misma referencia que el resto del motor: fechaUltimoContacto ?? fechaAlta
+ * (caso 4 de JOS-8). En etapa terminal el motor devuelve `undefined` y la fecha
+ * queda ausente. Idempotente: sobre un prospecto sin acuerdo solo reafirma la
+ * fecha que el motor ya habría calculado.
+ */
+export const quitarSeguimientoAcordado = mutation({
+  args: { id: v.id("prospectos") },
+  returns: prospectoPublicoValidator,
+  handler: async (ctx, { id }) => {
+    const usuarioId = await requireUsuario(ctx);
+    const doc = await prospectoDelUsuario(ctx, id, usuarioId);
+    const referencia = doc.fechaUltimoContacto ?? doc.fechaAlta;
+    await ctx.db.patch(doc._id, {
+      fechaProximoSeguimiento: calcularFechaProximoSeguimiento(doc.etapaActual, referencia),
+      seguimientoManual: undefined,
     });
     return toProspectoPublico((await ctx.db.get(doc._id))!);
   },

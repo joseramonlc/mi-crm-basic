@@ -425,6 +425,9 @@ describe("resumen · presupuesto de lectura", () => {
     // Email en el tope y con formato válido: 254 = 242 + "@" + "ejemplo.com".
     const EMAIL = `${"x".repeat(LONGITUD_MAX_EMAIL - "@ejemplo.com".length)}@ejemplo.com`;
 
+    // `seguimientoManual: true` forma parte del peor caso desde JOS-67: el campo
+    // es opcional, así que el documento MÁS grande que las mutaciones permiten
+    // crear es el que lo lleva presente, no el que lo omite.
     await t.run(async (ctx) => {
       const prospectoId = await ctx.db.insert("prospectos", {
         usuarioId: TENANT_A,
@@ -437,6 +440,7 @@ describe("resumen · presupuesto de lectura", () => {
         notas: NOTAS,
         fechaAlta: hoyInicio - 10 * DIA,
         fechaProximoSeguimiento: hoyInicio,
+        seguimientoManual: true,
       });
       for (let i = 1; i < MAX_RESUMEN_PROSPECTOS + 1; i++) {
         await ctx.db.insert("prospectos", {
@@ -450,6 +454,7 @@ describe("resumen · presupuesto de lectura", () => {
           notas: NOTAS,
           fechaAlta: hoyInicio - 10 * DIA,
           fechaProximoSeguimiento: hoyInicio,
+          seguimientoManual: true,
         });
       }
       for (let i = 0; i < MAX_RESUMEN_INTERACCIONES + 1; i++) {
@@ -482,21 +487,30 @@ describe("resumen · presupuesto de lectura", () => {
     expect(totalDocs).toBeLessThan(32_000 / 4);
 
     // BYTES: el Resumen es la primera pantalla que lee DOS tablas en la misma query,
-    // y ambas suman contra el mismo límite. Medición 2026-08-03 con TODOS los campos
-    // libres en su tope (docs/auditoria/JOS-24-e2e.md):
-    //   prospectos    1.201 × 2.786 B = 3.345.986 B
-    //   interacciones   501 × 4.270 B = 2.139.270 B
-    //   total = 5.485.256 B = 32,7 % del límite → margen 3,06×
+    // y ambas suman contra el mismo límite.
     //
-    // La cifra SUBIÓ respecto a la primera medición (2.383 B/prospecto, 29,8 %) al
-    // acotar nombre/comoSeConocio/telefono/email: antes se medía con valores
-    // realistas y el documento no era finito, así que aquello era el peor caso
-    // REALISTA. Ahora es el ADMISIBLE, y por eso es mayor. Subir es la señal de que
-    // la medición pasó a ser exhaustiva, no de que algo empeorase.
+    // Medición 2026-08-06 (JOS-67), con TODOS los campos libres en su tope Y
+    // `seguimientoManual` presente:
+    //   prospectos    1.201 × 2.811 B = 3.376.011 B
+    //   interacciones   501 × 4.265 B = 2.136.765 B
+    //   total = 5.512.776 B = 32,9 % del límite → margen 3,04×
     //
-    // La guarda va a 1/3 del límite (5.592.405 B): quedan ~107 KB de holgura, un 2 %.
-    // Es deliberadamente estrecha — cualquier campo nuevo en el documento de
-    // prospecto la rompe y obliga a volver a medir, que es justo su función.
+    // Medición anterior (2026-08-03, antes de JOS-67): 2.786 B/prospecto, total
+    // 5.485.256 B = 32,7 %. El campo booleano nuevo cuesta +25 B por documento, que
+    // es exactamente lo que ocupa `,"seguimientoManual":true` en la serialización.
+    //
+    // Y antes de eso, la primera medición daba 2.383 B/prospecto (29,8 %) porque se
+    // hacía con valores realistas sobre un documento que aún no era finito: era el
+    // peor caso REALISTA, no el ADMISIBLE. Al acotar nombre/comoSeConocio/telefono/
+    // email la cifra subió, y esa subida fue señal de que la medición pasó a ser
+    // exhaustiva, no de que algo empeorase.
+    //
+    // La guarda va a 1/3 del límite (5.592.405 B). Holgura restante: 79.629 B, un
+    // 1,4 % — MÁS ESTRECHA que los ~107 KB de antes de JOS-67. Es deliberada:
+    // cualquier campo nuevo en el documento de prospecto la rompe y obliga a volver
+    // a medir, que es justo su función. Con este margen, en el documento de
+    // prospecto caben ~3 campos escalares más antes de tener que rebajar
+    // MAX_RESUMEN_INTERACCIONES.
     //
     // Rompe también si se sube cualquiera de las SIETE constantes implicadas: las dos
     // cotas de lectura y los cinco topes de texto.

@@ -1,5 +1,6 @@
 import type { PaginationOptions } from "convex/server";
 import { validationError } from "./errores";
+import { APP_TZ, civilDate, zonedMidnightToMs } from "./fecha";
 
 /** Margen sobre el reloj del servidor para aceptar `fecha` (desfase de clientes). */
 export const FUTURO_MARGEN_MS = 5 * 60 * 1000;
@@ -155,6 +156,39 @@ export function validarFechaInteraccion(fecha: number, ahoraMs: number): void {
   if (!Number.isFinite(fecha)) throw validationError("fecha debe ser un número finito (ms epoch)", "fecha");
   if (fecha < 0) throw validationError("fecha no puede ser negativa", "fecha");
   if (fecha > ahoraMs + FUTURO_MARGEN_MS) throw validationError("fecha no puede estar en el futuro", "fecha");
+}
+
+/**
+ * Límite del rango representable por `Date` (±100.000.000 días desde epoch).
+ * Más allá, `civilDate`/`zonedMidnightToMs` reventarían con un Error crudo en
+ * vez de con el VALIDATION_ERROR que promete el contrato de la API.
+ */
+const FECHA_MAX_ABS_MS = 8.64e15;
+
+/**
+ * `fecha` de un contacto ACORDADO con el prospecto (JOS-67). Es la simétrica de
+ * `validarFechaInteraccion`: allí se rechaza el futuro porque el contacto ya
+ * ocurrió; aquí se rechaza el PASADO, porque una cita acordada siempre mira
+ * hacia adelante.
+ *
+ * Devuelve la fecha NORMALIZADA a medianoche de APP_TZ. El esquema declara que
+ * `fechaProximoSeguimiento` es siempre una medianoche, y ese invariante no puede
+ * quedar a merced de la hora que mande el cliente: si no se normalizase, el
+ * cálculo de "días vencido" (`diffCalendarDays`) pasaría a depender de ella.
+ *
+ * El suelo es la medianoche de HOY según el reloj del SERVIDOR (`ahoraMs`), de
+ * modo que el día de hoy se acepta entero. No se aplica FUTURO_MARGEN_MS: ese
+ * margen existe para tolerar relojes de cliente adelantados al registrar algo
+ * que YA ocurrió; aquí el riesgo es el contrario y el suelo ya es generoso.
+ */
+export function fechaAcordadaValidada(fecha: number, ahoraMs: number): number {
+  if (!Number.isFinite(fecha)) throw validationError("fecha debe ser un número finito (ms epoch)", "fecha");
+  if (Math.abs(fecha) > FECHA_MAX_ABS_MS) throw validationError("fecha fuera de rango", "fecha");
+  const acordada = zonedMidnightToMs(civilDate(fecha, APP_TZ), APP_TZ);
+  if (acordada < zonedMidnightToMs(civilDate(ahoraMs, APP_TZ), APP_TZ)) {
+    throw validationError("La fecha acordada no puede estar en el pasado", "fecha");
+  }
+  return acordada;
 }
 
 /** `numItems` entero finito en [1, PAGINA_MAX_ITEMS] — un chequeo solo de rango dejaría pasar NaN. */

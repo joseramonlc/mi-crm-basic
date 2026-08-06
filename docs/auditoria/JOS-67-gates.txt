@@ -1,0 +1,134 @@
+GATES — JOS-67 (M11 · Fecha de Contacto Acordada, bocado A de 4)
+Rama:  joseramonlc/jos-67-fecha-de-contacto-acordada-modelo-de-datos-y-precedencia-en
+Base:  origin/master = 889e080
+Fecha: 2026-08-06
+Entorno: FS nativa WSL2 (/home/pepe/proyectos/mi-crm-basic)
+
+Los tres gates se ejecutaron redirigiendo a fichero y leyendo $? ANTES de
+cualquier tubería, para no repetir el falso verde del 2026-08-03 (un `| tail`
+devuelve el código de `tail`, no el del comando).
+
+────────────────────────────────────────────────────────────────────────
+1. TESTS  —  npm test
+────────────────────────────────────────────────────────────────────────
+EXIT_REAL = 0
+
+  Test Files  42 passed (42)
+       Tests  479 passed (479)
+    Duration  20.94s
+
+CONTRASTE DE RECUENTO (obligatorio en este proyecto):
+
+  $ find convex src -name '*.test.ts' -o -name '*.test.tsx' | wc -l
+  42
+
+  42 en disco = 42 arrancados.  Sin ficheros perdidos por el pool.
+
+  Referencia: antes de esta rama, 42 ficheros / 439 tests.
+  Delta: +0 ficheros (no se crea ninguno: los casos se añaden a los
+  existentes) y +40 tests.
+
+  Reparto de los 40 tests nuevos:
+    convex/lib/seguimiento.test.ts   +18  (esTerminal, acuerdoActivo y
+                                           seguimientoTrasCambioEtapa, puros)
+    convex/prospectos.api.test.ts    +19  (las dos mutations nuevas + la
+                                           precedencia en cambiarEtapa)
+    convex/interacciones.test.ts      +3  (consumo del acuerdo)
+
+────────────────────────────────────────────────────────────────────────
+2. LINT  —  npm run lint
+────────────────────────────────────────────────────────────────────────
+EXIT_REAL = 0
+Sin avisos ni errores.
+
+────────────────────────────────────────────────────────────────────────
+3. BUILD  —  npm run build
+────────────────────────────────────────────────────────────────────────
+EXIT_REAL = 0
+
+Las 11 rutas siguen compilando, sin altas ni bajas respecto a master:
+
+  ┌ ○ /
+  ├ ○ /_not-found
+  ├ ○ /actividad
+  ├ ○ /login
+  ├ ○ /prospectos
+  ├ ƒ /prospectos/[id]
+  ├ ƒ /prospectos/[id]/interacciones/nueva
+  ├ ○ /prospectos/nuevo
+  ├ ○ /recuperar
+  ├ ○ /registro
+  └ ○ /resumen
+
+────────────────────────────────────────────────────────────────────────
+4. PRESUPUESTO DE LECTURA  —  re-medido (lo exige el campo nuevo)
+────────────────────────────────────────────────────────────────────────
+El test "presupuesto de lectura" de convex/resumen.test.ts está calibrado con
+una guarda deliberadamente estrecha para que CUALQUIER campo nuevo en el
+documento de prospecto obligue a volver a medir. `seguimientoManual` es
+exactamente ese caso, así que se remidió con el campo PRESENTE en los fixtures
+(el peor caso admisible es con él, no sin él):
+
+  prospectos    1.201 × 2.811 B = 3.376.011 B
+  interacciones   501 × 4.265 B = 2.136.765 B
+  ──────────────────────────────────────────
+  total                           5.512.776 B  = 32,9 % de 16 MiB   margen 3,04×
+
+  Guarda (1/3 del límite):        5.592.405 B
+  Holgura restante:                  79.629 B  (1,4 %)
+
+  Antes de JOS-67: 2.786 B/prospecto, total 5.485.256 B (32,7 %),
+  holgura 107.149 B.
+
+  El coste del campo son +25 B por documento, que es exactamente lo que ocupa
+  `,"seguimientoManual":true` serializado. La estimación previa del plan (~30 KB
+  en total) se confirmó: el aumento real fue de 27.520 B.
+
+  ⚠️ AVISO PARA LA SIGUIENTE TAREA QUE AÑADA CAMPOS: con la holgura en 1,4 %,
+  en el documento de prospecto caben del orden de 3 campos escalares más antes
+  de tener que rebajar MAX_RESUMEN_INTERACCIONES.
+
+────────────────────────────────────────────────────────────────────────
+5. DEPLOYMENT REAL  —  lo que convex-test NO prueba
+────────────────────────────────────────────────────────────────────────
+  $ npx convex dev --once
+  ✔ Convex functions ready! (1.15s)          EXIT_REAL = 0
+
+  El cambio de esquema se PUBLICA de verdad contra
+  jose-lumbreras:crm-networker:dev. Es la comprobación que convex-test no puede
+  dar (valida contra el esquema en memoria, no contra el deployment).
+
+  Y las dos mutations nuevas están registradas y protegidas allí:
+
+  $ npx convex run prospectos:fijarSeguimientoAcordado '{"id":"k17da...","fecha":...}'
+    Uncaught ConvexError: {"code":"UNAUTHENTICATED","message":"Se requiere sesión"}
+      at requireUsuario (../../convex/lib/usuario.ts:16:19)
+      at async handler (../convex/prospectos.ts:385:23)
+
+  $ npx convex run prospectos:quitarSeguimientoAcordado '{"id":"k17da..."}'
+    Uncaught ConvexError: {"code":"UNAUTHENTICATED","message":"Se requiere sesión"}
+
+  El UNAUTHENTICATED es el resultado BUENO: prueba que la función existe, está
+  desplegada y aplica la guarda de sesión. Contraste: una función inexistente
+  no da ese error, el CLI responde con el listado de funciones disponibles.
+
+────────────────────────────────────────────────────────────────────────
+6. LO QUE ESTOS GATES NO ACREDITAN
+────────────────────────────────────────────────────────────────────────
+- NO hay recorrido e2e de COMPORTAMIENTO contra el deployment real. El plan
+  (§8.5) proponía hacerlo con `npx convex run`, y eso resultó IMPOSIBLE: las
+  dos mutations son públicas y exigen sesión, y el CLI de Convex no puede
+  suplantar a un usuario. La única vía sería la interfaz, que no existe hasta
+  JOS-69. La corrección se documenta aquí en vez de fingir el paso.
+
+  Consecuencia: el comportamiento está acreditado por 479 tests contra el
+  esquema real, más la publicación del esquema y el registro de funciones del
+  §5, pero NADIE ha fijado una cita acordada desde una sesión de verdad. Ese
+  recorrido corresponde a JOS-69, que es quien trae la pantalla.
+
+- NO hay verificación en navegador: este bocado no toca ninguna pantalla. El
+  campo viaja en la proyección pública pero ninguna interfaz lo lee todavía.
+
+- `npx tsc --noEmit` sigue dando 5 errores de `import.meta.glob` en ficheros de
+  test. Se comprobó con `git stash` que son IDÉNTICOS en master: son previos y
+  ajenos a esta rama. No se han tocado.

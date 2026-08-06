@@ -131,6 +131,46 @@ describe("interacciones.crear · efectos en el prospecto", () => {
     const filas = await t.run((ctx) => ctx.db.query("interacciones").collect());
     expect(filas.map((f) => f.usuarioId)).toEqual([TENANT_A]);
   });
+
+  /* ── Consumo de la cita acordada (JOS-67) ───────────────────────────────── */
+
+  it("CONSUME el acuerdo: el contacto ya ocurrió, así que el motor vuelve a mandar", async () => {
+    const t = nuevoTest();
+    const acordada = ventanaDia("2026-07-26", APP_TZ).hoyInicio;
+    const prospectoId = await conProspecto(t, {
+      fechaProximoSeguimiento: acordada,
+      seguimientoManual: true,
+    });
+
+    const r = await crear(t, prospectoId);
+
+    expect(r.prospecto.seguimientoManual).toBeUndefined();
+    expect(r.prospecto.fechaProximoSeguimiento).not.toBe(acordada);
+    expect(r.prospecto.fechaProximoSeguimiento).toBe(calcularFechaProximoSeguimiento("contacted", AHORA));
+    const doc = await t.run((ctx) => ctx.db.get(prospectoId));
+    expect(doc).not.toHaveProperty("seguimientoManual");
+  });
+
+  it("en etapa terminal con acuerdo activo, la interacción lo consume y no deja fecha", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t, {
+      etapaActual: "joined",
+      fechaProximoSeguimiento: ventanaDia("2026-07-26", APP_TZ).hoyInicio,
+      seguimientoManual: true,
+    });
+    const r = await crear(t, prospectoId);
+    expect(r.prospecto.fechaProximoSeguimiento).toBeUndefined();
+    expect(r.prospecto.seguimientoManual).toBeUndefined();
+  });
+
+  it("sin acuerdo, registrar una interacción no introduce el campo", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t);
+    const r = await crear(t, prospectoId);
+    expect(r.prospecto.seguimientoManual).toBeUndefined();
+    const doc = await t.run((ctx) => ctx.db.get(prospectoId));
+    expect(doc).not.toHaveProperty("seguimientoManual");
+  });
 });
 
 describe("interacciones.crear · validación de fecha (reloj fijado)", () => {

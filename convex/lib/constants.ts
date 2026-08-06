@@ -61,11 +61,19 @@ export const MAX_RESUMEN_PROSPECTOS = 6 * MAX_PIPELINE;
  * EL VALOR LO FIJÓ LA MEDICIÓN, no una estimación (docs/auditoria/JOS-24-e2e.md). El
  * Resumen es la primera pantalla que lee DOS tablas en la misma query, y ambas suman
  * contra el mismo límite de 16 MiB. Con MAX_RESUMEN_PROSPECTOS atado por coherencia al
- * Pipeline, esta cota es el único parámetro libre para conservar margen:
+ * Pipeline, esta cota es el único parámetro libre para conservar margen. Cifras
+ * ESTIMADAS con las que se eligió el valor:
  *
  *   1.000 → 42,5 % del límite (margen 2,3×)   500 → 29,8 % (margen 3,4×)   300 → 24,7 % (4,1×)
  *
  * Decisión de producto (2026-08-03): 500. Recupera margen para añadir campos al
  * documento más adelante sin que la pantalla se declare parcial en uso realista.
+ *
+ * ⚠️ LO MEDIDO DESPUÉS CONTRA DEPLOYMENT REAL FUE PEOR que esa estimación: con 500 el
+ * consumo real es del 33,9 %, no del 29,8 % (docs/auditoria/JOS-24-e2e.md — 1.702
+ * documentos, 5.686.323 B, margen 2,95×). La decisión sigue siendo correcta y la
+ * pantalla tiene holgura de sobra, pero al replantear esta cota hay que partir del
+ * 33,9 %, no de la tabla de arriba. El peor caso ADMISIBLE lo vigila aparte el test
+ * "presupuesto de lectura" de convex/resumen.test.ts, que se remidió en JOS-67.
  */
 export const MAX_RESUMEN_INTERACCIONES = 500;

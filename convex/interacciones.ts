@@ -67,6 +67,10 @@ export const crear = mutation({
       fechaUltimoContacto: fechaReferencia,
       // undefined elimina el campo en etapas terminales.
       fechaProximoSeguimiento: calcularFechaProximoSeguimiento(prospecto.etapaActual, fechaReferencia),
+      // JOS-67: el contacto YA ocurrió, así que el acuerdo se CONSUME y el motor
+      // vuelve a gobernar. Es el único de los tres puntos de invocación donde el
+      // acuerdo se pierde solo, sin que el usuario tenga que quitarlo.
+      seguimientoManual: undefined,
     });
 
     return {
