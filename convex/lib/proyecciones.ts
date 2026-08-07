@@ -1,6 +1,7 @@
 import { v, type Infer } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
-import { canalContacto, etapaProspecto, tipoInteraccion, resultadoInteraccion } from "../schema";
+import { canalContacto, etapaProspecto, prioridadProspecto, tipoInteraccion, resultadoInteraccion } from "../schema";
+import { prioridadDe } from "./prioridad";
 
 /**
  * Proyecciones públicas de la API (M2): lo único que las funciones devuelven
@@ -28,6 +29,14 @@ export const prospectoPublicoValidator = v.object({
    * la Ficha —única que distingue los dos estados (JOS-69)— usa `obtener`.
    */
   seguimientoManual: v.optional(v.boolean()),
+  /**
+   * JOS-50. OBLIGATORIA a propósito, aunque en el documento sea opcional: la
+   * ausencia es un detalle de almacenamiento (evita la migración) y no debe
+   * cruzar la API. Si aquí fuera opcional, cada consumidor —las cuatro pantallas
+   * que vienen en M10— tendría que reimplementar "ausente = media", y esa regla
+   * acabaría duplicada por todo el cliente. El validador lo garantiza en runtime.
+   */
+  prioridad: prioridadProspecto,
 });
 export type ProspectoPublico = Infer<typeof prospectoPublicoValidator>;
 
@@ -56,6 +65,8 @@ export function toProspectoPublico(doc: Doc<"prospectos">): ProspectoPublico {
     ...(doc.fechaUltimoContacto !== undefined ? { fechaUltimoContacto: doc.fechaUltimoContacto } : {}),
     ...(doc.fechaProximoSeguimiento !== undefined ? { fechaProximoSeguimiento: doc.fechaProximoSeguimiento } : {}),
     ...(doc.seguimientoManual !== undefined ? { seguimientoManual: doc.seguimientoManual } : {}),
+    // Resuelta, no copiada: aquí muere la ausencia (JOS-50).
+    prioridad: prioridadDe(doc),
   };
 }
 

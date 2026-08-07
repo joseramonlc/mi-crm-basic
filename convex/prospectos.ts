@@ -21,7 +21,8 @@ import {
   validarNumItems,
 } from "./lib/validacion";
 import { validationError } from "./lib/errores";
-import { canalContacto, etapaProspecto } from "./schema";
+import { prioridadAPersistir } from "./lib/prioridad";
+import { canalContacto, etapaProspecto, prioridadProspecto } from "./schema";
 
 export interface ProspectoActividad {
   id: Id<"prospectos">;
@@ -245,6 +246,7 @@ export const crear = mutation({
     comoSeConocio: v.string(),
     canalContactoPreferido: canalContacto,
     notas: v.optional(v.string()),
+    prioridad: v.optional(prioridadProspecto),
   },
   returns: prospectoPublicoValidator,
   handler: async (ctx, args) => {
@@ -254,6 +256,9 @@ export const crear = mutation({
     const telefono = textoOpcionalAcotado(args.telefono, "telefono", LONGITUD_MAX_TELEFONO);
     const email = emailOpcional(args.email);
     const notas = notasOpcional(args.notas);
+
+    // JOS-50: "medium" NO se guarda — la ausencia ES el defecto.
+    const prioridad = prioridadAPersistir(args.prioridad);
 
     const fechaAlta = Date.now();
     const fechaProximoSeguimiento = calcularFechaProximoSeguimiento("new", fechaAlta);
@@ -268,6 +273,7 @@ export const crear = mutation({
       ...(email !== undefined ? { email } : {}),
       ...(notas !== undefined ? { notas } : {}),
       ...(fechaProximoSeguimiento !== undefined ? { fechaProximoSeguimiento } : {}),
+      ...(prioridad !== undefined ? { prioridad } : {}),
     });
     return toProspectoPublico((await ctx.db.get(id))!);
   },
@@ -306,9 +312,14 @@ export const obtener = query({
 });
 
 /**
- * PATCH /prospectos/:id (JOS-13). Solo datos de contacto y notas; etapaActual
- * y las tres fechas son de solo lectura aquí. En los opcionales, cadena vacía
- * (o solo espacios) elimina el campo — patch con `undefined` lo borra.
+ * PATCH /prospectos/:id (JOS-13). Datos de contacto, notas y —desde JOS-50—
+ * prioridad; etapaActual y las tres fechas siguen siendo de solo lectura aquí.
+ * En los opcionales, cadena vacía (o solo espacios) elimina el campo — patch con
+ * `undefined` lo borra.
+ *
+ * La prioridad aprovecha esa misma mecánica: pedir "medium" no escribe "medium",
+ * escribe `undefined` y con ello ELIMINA el campo, que es como se representa el
+ * defecto (JOS-50). No es un caso especial del patch, es el patch de siempre.
  */
 export const actualizar = mutation({
   args: {
@@ -319,6 +330,7 @@ export const actualizar = mutation({
     comoSeConocio: v.optional(v.string()),
     canalContactoPreferido: v.optional(canalContacto),
     notas: v.optional(v.string()),
+    prioridad: v.optional(prioridadProspecto),
   },
   returns: prospectoPublicoValidator,
   handler: async (ctx, args) => {
@@ -334,6 +346,7 @@ export const actualizar = mutation({
       patch.telefono = textoOpcionalAcotado(args.telefono, "telefono", LONGITUD_MAX_TELEFONO);
     if (args.email !== undefined) patch.email = emailOpcional(args.email);
     if (args.notas !== undefined) patch.notas = notasOpcional(args.notas);
+    if (args.prioridad !== undefined) patch.prioridad = prioridadAPersistir(args.prioridad);
 
     await ctx.db.patch(doc._id, patch);
     return toProspectoPublico((await ctx.db.get(doc._id))!);

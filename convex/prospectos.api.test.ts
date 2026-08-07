@@ -3,6 +3,7 @@ import { convexTest, type TestConvex } from "convex-test";
 import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { APP_TZ, ventanaDia } from "./lib/fecha";
 import { calcularFechaProximoSeguimiento } from "./lib/seguimiento";
 import schema from "./schema";
@@ -89,8 +90,21 @@ describe("prospectos.crear", () => {
   it("proyección pública: con id, sin usuarioId/_id/_creationTime", async () => {
     const p = await crear(nuevoTest(), { telefono: "600123123", notas: "hola" });
     expect(p.id).toBeDefined();
+    // `prioridad` está SIEMPRE (JOS-50), aunque el documento no la guarde: la
+    // proyección la resuelve. Los demás opcionales solo aparecen si tienen valor.
     expect(Object.keys(p).sort()).toEqual(
-      ["canalContactoPreferido", "comoSeConocio", "etapaActual", "fechaAlta", "fechaProximoSeguimiento", "id", "nombre", "notas", "telefono"].sort(),
+      [
+        "canalContactoPreferido",
+        "comoSeConocio",
+        "etapaActual",
+        "fechaAlta",
+        "fechaProximoSeguimiento",
+        "id",
+        "nombre",
+        "notas",
+        "prioridad",
+        "telefono",
+      ].sort(),
     );
   });
 
@@ -582,5 +596,113 @@ describe("aislamiento multi-tenant · dos sesiones", () => {
 
     const doc = await base.run((ctx) => ctx.db.get(deA.id));
     expect(doc).toMatchObject({ usuarioId: TENANT_A, nombre: "De A", notas: "intacta", etapaActual: "new" });
+  });
+});
+
+describe("prioridad (JOS-50)", () => {
+  /** Documento CRUDO, sin pasar por la proyección: es donde se ve la ausencia. */
+  async function doc(t: TestSesion, id: unknown) {
+    return t.run((ctx) => ctx.db.get(id as Id<"prospectos">));
+  }
+
+  it("sin prioridad: la API devuelve media y el documento NO guarda el campo", async () => {
+    const t = nuevoTest();
+    const p = await crear(t);
+
+    expect(p.prioridad).toBe("medium");
+    // La clave del diseño: "medium" es la AUSENCIA, no un valor almacenado.
+    // Por eso los prospectos anteriores a M10 son válidos sin migración.
+    expect(await doc(t, p.id)).not.toHaveProperty("prioridad");
+  });
+
+  it.each(["high", "low"] as const)("crear con prioridad %s la persiste tal cual", async (prioridad) => {
+    const t = nuevoTest();
+    const p = await crear(t, { prioridad });
+    expect(p.prioridad).toBe(prioridad);
+    expect((await doc(t, p.id))!.prioridad).toBe(prioridad);
+  });
+
+  it("crear con «medium» explícito tampoco lo escribe: una sola representación del defecto", async () => {
+    const t = nuevoTest();
+    const p = await crear(t, { prioridad: "medium" });
+    expect(p.prioridad).toBe("medium");
+    expect(await doc(t, p.id)).not.toHaveProperty("prioridad");
+  });
+
+  it("actualizar de ausente a high la persiste", async () => {
+    const t = nuevoTest();
+    const p = await crear(t);
+    const r = await t.mutation(api.prospectos.actualizar, { id: p.id, prioridad: "high" } as never);
+    expect(r.prioridad).toBe("high");
+    expect((await doc(t, p.id))!.prioridad).toBe("high");
+  });
+
+  it("actualizar a «medium» BORRA el campo del documento, no lo reescribe", async () => {
+    const t = nuevoTest();
+    const p = await crear(t, { prioridad: "high" });
+    expect((await doc(t, p.id))!.prioridad).toBe("high");
+
+    const r = await t.mutation(api.prospectos.actualizar, { id: p.id, prioridad: "medium" } as never);
+
+    expect(r.prioridad).toBe("medium");
+    expect(await doc(t, p.id)).not.toHaveProperty("prioridad");
+  });
+
+  it("no tocar la prioridad en un actualizar la deja intacta", async () => {
+    const t = nuevoTest();
+    const p = await crear(t, { prioridad: "low" });
+    const r = await t.mutation(api.prospectos.actualizar, { id: p.id, nombre: "Otro nombre" } as never);
+    expect(r.prioridad).toBe("low");
+  });
+
+  it("un prospecto ANTERIOR a M10 (insertado sin el campo) se lee como media", async () => {
+    const t = nuevoTest();
+    const id = await t.run((ctx) =>
+      ctx.db.insert("prospectos", {
+        usuarioId: TENANT_A,
+        nombre: "Prospecto viejo",
+        comoSeConocio: "Evento",
+        canalContactoPreferido: "phone",
+        etapaActual: "contacted",
+        fechaAlta: AHORA - 30 * 24 * 3_600_000,
+      }),
+    );
+    const r = await t.query(api.prospectos.obtener, { id });
+    expect(r.prioridad).toBe("medium");
+  });
+
+  it("valor inválido: lo rechaza el validador de Convex y no escribe nada", async () => {
+    const t = nuevoTest();
+    // El enum lo impone el validador de argumentos, igual que en etapa y canal:
+    // el rechazo llega ANTES del handler y con el formato de error de Convex,
+    // no con el VALIDATION_ERROR del contrato de M2.
+    await expect(crear(t, { prioridad: "urgente" })).rejects.toThrow();
+    expect(await t.run((ctx) => ctx.db.query("prospectos").collect())).toEqual([]);
+  });
+
+  it("las CUATRO puertas de lectura y escritura devuelven siempre la prioridad", async () => {
+    const t = nuevoTest();
+    const creado = await crear(t, { prioridad: "high" });
+    const obtenido = await t.query(api.prospectos.obtener, { id: creado.id });
+    const listado = await t.query(api.prospectos.listar, { paginationOpts: PAGINA });
+    const actualizado = await t.mutation(api.prospectos.actualizar, { id: creado.id, nombre: "Ana" } as never);
+
+    expect(creado.prioridad).toBe("high");
+    expect(obtenido.prioridad).toBe("high");
+    expect(listado.page[0].prioridad).toBe("high");
+    expect(actualizado.prioridad).toBe("high");
+  });
+
+  it("la prioridad NO toca el motor de seguimiento (regla de negocio de JOS-50)", async () => {
+    const t = nuevoTest();
+    const sinPrioridad = await crear(t);
+    const conPrioridad = await crear(t, { prioridad: "high" });
+
+    expect(conPrioridad.fechaProximoSeguimiento).toBe(sinPrioridad.fechaProximoSeguimiento);
+
+    // Y cambiarla después tampoco mueve la fecha.
+    const tras = await t.mutation(api.prospectos.actualizar, { id: sinPrioridad.id, prioridad: "low" } as never);
+    expect(tras.fechaProximoSeguimiento).toBe(sinPrioridad.fechaProximoSeguimiento);
+    expect(tras.fechaUltimoContacto).toBe(sinPrioridad.fechaUltimoContacto);
   });
 });

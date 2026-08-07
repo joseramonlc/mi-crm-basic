@@ -1,0 +1,422 @@
+diff --git a/convex/lib/prioridad.ts b/convex/lib/prioridad.ts
+new file mode 100644
+index 0000000..653b9ca
+--- /dev/null
++++ b/convex/lib/prioridad.ts
+@@ -0,0 +1,34 @@
++import type { Infer } from "convex/values";
++import { prioridadProspecto } from "../schema";
++
++export type Prioridad = Infer<typeof prioridadProspecto>;
++
++/** El defecto del campo: se escribe por ausencia, nunca como valor almacenado. */
++export const PRIORIDAD_POR_DEFECTO: Prioridad = "medium";
++
++/**
++ * Prioridad efectiva de un prospecto (JOS-50).
++ *
++ * ÚNICO sitio donde la ausencia del campo se traduce a "medium". El campo es
++ * opcional en el esquema para no necesitar migración —los prospectos anteriores
++ * a M10 no lo tienen— y las mutations omiten el valor por defecto en lugar de
++ * escribirlo, de modo que "ausente" y "medium" son el mismo estado.
++ *
++ * Esa regla NO sale de aquí: la proyección pública resuelve el valor antes de
++ * devolverlo, así que ninguna pantalla ve nunca un prospecto sin prioridad.
++ */
++export function prioridadDe(doc: { prioridad?: Prioridad }): Prioridad {
++  return doc.prioridad ?? PRIORIDAD_POR_DEFECTO;
++}
++
++/**
++ * Valor a PERSISTIR para una prioridad pedida: `undefined` cuando es el defecto,
++ * lo que en un patch de Convex elimina el campo y en un insert lo omite.
++ *
++ * Que "medium" no se guarde nunca es lo que mantiene coherente el modelo: si a
++ * veces se escribiera y a veces no, existirían dos representaciones del mismo
++ * estado y cualquier lectura directa del documento tendría que contemplar las dos.
++ */
++export function prioridadAPersistir(prioridad: Prioridad | undefined): Prioridad | undefined {
++  return prioridad === undefined || prioridad === PRIORIDAD_POR_DEFECTO ? undefined : prioridad;
++}
+diff --git a/convex/lib/proyecciones.ts b/convex/lib/proyecciones.ts
+index 0a250f7..2a47294 100644
+--- a/convex/lib/proyecciones.ts
++++ b/convex/lib/proyecciones.ts
+@@ -1,6 +1,7 @@
+ import { v, type Infer } from "convex/values";
+ import type { Doc } from "../_generated/dataModel";
+-import { canalContacto, etapaProspecto, tipoInteraccion, resultadoInteraccion } from "../schema";
++import { canalContacto, etapaProspecto, prioridadProspecto, tipoInteraccion, resultadoInteraccion } from "../schema";
++import { prioridadDe } from "./prioridad";
+ 
+ /**
+  * Proyecciones públicas de la API (M2): lo único que las funciones devuelven
+@@ -28,6 +29,14 @@ export const prospectoPublicoValidator = v.object({
+    * la Ficha —única que distingue los dos estados (JOS-69)— usa `obtener`.
+    */
+   seguimientoManual: v.optional(v.boolean()),
++  /**
++   * JOS-50. OBLIGATORIA a propósito, aunque en el documento sea opcional: la
++   * ausencia es un detalle de almacenamiento (evita la migración) y no debe
++   * cruzar la API. Si aquí fuera opcional, cada consumidor —las cuatro pantallas
++   * que vienen en M10— tendría que reimplementar "ausente = media", y esa regla
++   * acabaría duplicada por todo el cliente. El validador lo garantiza en runtime.
++   */
++  prioridad: prioridadProspecto,
+ });
+ export type ProspectoPublico = Infer<typeof prospectoPublicoValidator>;
+ 
+@@ -56,6 +65,8 @@ export function toProspectoPublico(doc: Doc<"prospectos">): ProspectoPublico {
+     ...(doc.fechaUltimoContacto !== undefined ? { fechaUltimoContacto: doc.fechaUltimoContacto } : {}),
+     ...(doc.fechaProximoSeguimiento !== undefined ? { fechaProximoSeguimiento: doc.fechaProximoSeguimiento } : {}),
+     ...(doc.seguimientoManual !== undefined ? { seguimientoManual: doc.seguimientoManual } : {}),
++    // Resuelta, no copiada: aquí muere la ausencia (JOS-50).
++    prioridad: prioridadDe(doc),
+   };
+ }
+ 
+diff --git a/convex/prospectos.api.test.ts b/convex/prospectos.api.test.ts
+index 364c040..0f85f17 100644
+--- a/convex/prospectos.api.test.ts
++++ b/convex/prospectos.api.test.ts
+@@ -3,6 +3,7 @@ import { convexTest, type TestConvex } from "convex-test";
+ import { ConvexError } from "convex/values";
+ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+ import { api } from "./_generated/api";
++import type { Id } from "./_generated/dataModel";
+ import { APP_TZ, ventanaDia } from "./lib/fecha";
+ import { calcularFechaProximoSeguimiento } from "./lib/seguimiento";
+ import schema from "./schema";
+@@ -89,8 +90,21 @@ describe("prospectos.crear", () => {
+   it("proyección pública: con id, sin usuarioId/_id/_creationTime", async () => {
+     const p = await crear(nuevoTest(), { telefono: "600123123", notas: "hola" });
+     expect(p.id).toBeDefined();
++    // `prioridad` está SIEMPRE (JOS-50), aunque el documento no la guarde: la
++    // proyección la resuelve. Los demás opcionales solo aparecen si tienen valor.
+     expect(Object.keys(p).sort()).toEqual(
+-      ["canalContactoPreferido", "comoSeConocio", "etapaActual", "fechaAlta", "fechaProximoSeguimiento", "id", "nombre", "notas", "telefono"].sort(),
++      [
++        "canalContactoPreferido",
++        "comoSeConocio",
++        "etapaActual",
++        "fechaAlta",
++        "fechaProximoSeguimiento",
++        "id",
++        "nombre",
++        "notas",
++        "prioridad",
++        "telefono",
++      ].sort(),
+     );
+   });
+ 
+@@ -584,3 +598,111 @@ describe("aislamiento multi-tenant · dos sesiones", () => {
+     expect(doc).toMatchObject({ usuarioId: TENANT_A, nombre: "De A", notas: "intacta", etapaActual: "new" });
+   });
+ });
++
++describe("prioridad (JOS-50)", () => {
++  /** Documento CRUDO, sin pasar por la proyección: es donde se ve la ausencia. */
++  async function doc(t: TestSesion, id: unknown) {
++    return t.run((ctx) => ctx.db.get(id as Id<"prospectos">));
++  }
++
++  it("sin prioridad: la API devuelve media y el documento NO guarda el campo", async () => {
++    const t = nuevoTest();
++    const p = await crear(t);
++
++    expect(p.prioridad).toBe("medium");
++    // La clave del diseño: "medium" es la AUSENCIA, no un valor almacenado.
++    // Por eso los prospectos anteriores a M10 son válidos sin migración.
++    expect(await doc(t, p.id)).not.toHaveProperty("prioridad");
++  });
++
++  it.each(["high", "low"] as const)("crear con prioridad %s la persiste tal cual", async (prioridad) => {
++    const t = nuevoTest();
++    const p = await crear(t, { prioridad });
++    expect(p.prioridad).toBe(prioridad);
++    expect((await doc(t, p.id))!.prioridad).toBe(prioridad);
++  });
++
++  it("crear con «medium» explícito tampoco lo escribe: una sola representación del defecto", async () => {
++    const t = nuevoTest();
++    const p = await crear(t, { prioridad: "medium" });
++    expect(p.prioridad).toBe("medium");
++    expect(await doc(t, p.id)).not.toHaveProperty("prioridad");
++  });
++
++  it("actualizar de ausente a high la persiste", async () => {
++    const t = nuevoTest();
++    const p = await crear(t);
++    const r = await t.mutation(api.prospectos.actualizar, { id: p.id, prioridad: "high" } as never);
++    expect(r.prioridad).toBe("high");
++    expect((await doc(t, p.id))!.prioridad).toBe("high");
++  });
++
++  it("actualizar a «medium» BORRA el campo del documento, no lo reescribe", async () => {
++    const t = nuevoTest();
++    const p = await crear(t, { prioridad: "high" });
++    expect((await doc(t, p.id))!.prioridad).toBe("high");
++
++    const r = await t.mutation(api.prospectos.actualizar, { id: p.id, prioridad: "medium" } as never);
++
++    expect(r.prioridad).toBe("medium");
++    expect(await doc(t, p.id)).not.toHaveProperty("prioridad");
++  });
++
++  it("no tocar la prioridad en un actualizar la deja intacta", async () => {
++    const t = nuevoTest();
++    const p = await crear(t, { prioridad: "low" });
++    const r = await t.mutation(api.prospectos.actualizar, { id: p.id, nombre: "Otro nombre" } as never);
++    expect(r.prioridad).toBe("low");
++  });
++
++  it("un prospecto ANTERIOR a M10 (insertado sin el campo) se lee como media", async () => {
++    const t = nuevoTest();
++    const id = await t.run((ctx) =>
++      ctx.db.insert("prospectos", {
++        usuarioId: TENANT_A,
++        nombre: "Prospecto viejo",
++        comoSeConocio: "Evento",
++        canalContactoPreferido: "phone",
++        etapaActual: "contacted",
++        fechaAlta: AHORA - 30 * 24 * 3_600_000,
++      }),
++    );
++    const r = await t.query(api.prospectos.obtener, { id });
++    expect(r.prioridad).toBe("medium");
++  });
++
++  it("valor inválido: lo rechaza el validador de Convex y no escribe nada", async () => {
++    const t = nuevoTest();
++    // El enum lo impone el validador de argumentos, igual que en etapa y canal:
++    // el rechazo llega ANTES del handler y con el formato de error de Convex,
++    // no con el VALIDATION_ERROR del contrato de M2.
++    await expect(crear(t, { prioridad: "urgente" })).rejects.toThrow();
++    expect(await t.run((ctx) => ctx.db.query("prospectos").collect())).toEqual([]);
++  });
++
++  it("las CUATRO puertas de lectura y escritura devuelven siempre la prioridad", async () => {
++    const t = nuevoTest();
++    const creado = await crear(t, { prioridad: "high" });
++    const obtenido = await t.query(api.prospectos.obtener, { id: creado.id });
++    const listado = await t.query(api.prospectos.listar, { paginationOpts: PAGINA });
++    const actualizado = await t.mutation(api.prospectos.actualizar, { id: creado.id, nombre: "Ana" } as never);
++
++    expect(creado.prioridad).toBe("high");
++    expect(obtenido.prioridad).toBe("high");
++    expect(listado.page[0].prioridad).toBe("high");
++    expect(actualizado.prioridad).toBe("high");
++  });
++
++  it("la prioridad NO toca el motor de seguimiento (regla de negocio de JOS-50)", async () => {
++    const t = nuevoTest();
++    const sinPrioridad = await crear(t);
++    const conPrioridad = await crear(t, { prioridad: "high" });
++
++    expect(conPrioridad.fechaProximoSeguimiento).toBe(sinPrioridad.fechaProximoSeguimiento);
++
++    // Y cambiarla después tampoco mueve la fecha.
++    const tras = await t.mutation(api.prospectos.actualizar, { id: sinPrioridad.id, prioridad: "low" } as never);
++    expect(tras.fechaProximoSeguimiento).toBe(sinPrioridad.fechaProximoSeguimiento);
++    expect(tras.fechaUltimoContacto).toBe(sinPrioridad.fechaUltimoContacto);
++  });
++});
+diff --git a/convex/prospectos.ts b/convex/prospectos.ts
+index d8cb158..180a824 100644
+--- a/convex/prospectos.ts
++++ b/convex/prospectos.ts
+@@ -21,7 +21,8 @@ import {
+   validarNumItems,
+ } from "./lib/validacion";
+ import { validationError } from "./lib/errores";
+-import { canalContacto, etapaProspecto } from "./schema";
++import { prioridadAPersistir } from "./lib/prioridad";
++import { canalContacto, etapaProspecto, prioridadProspecto } from "./schema";
+ 
+ export interface ProspectoActividad {
+   id: Id<"prospectos">;
+@@ -245,6 +246,7 @@ export const crear = mutation({
+     comoSeConocio: v.string(),
+     canalContactoPreferido: canalContacto,
+     notas: v.optional(v.string()),
++    prioridad: v.optional(prioridadProspecto),
+   },
+   returns: prospectoPublicoValidator,
+   handler: async (ctx, args) => {
+@@ -255,6 +257,9 @@ export const crear = mutation({
+     const email = emailOpcional(args.email);
+     const notas = notasOpcional(args.notas);
+ 
++    // JOS-50: "medium" NO se guarda — la ausencia ES el defecto.
++    const prioridad = prioridadAPersistir(args.prioridad);
++
+     const fechaAlta = Date.now();
+     const fechaProximoSeguimiento = calcularFechaProximoSeguimiento("new", fechaAlta);
+     const id = await ctx.db.insert("prospectos", {
+@@ -268,6 +273,7 @@ export const crear = mutation({
+       ...(email !== undefined ? { email } : {}),
+       ...(notas !== undefined ? { notas } : {}),
+       ...(fechaProximoSeguimiento !== undefined ? { fechaProximoSeguimiento } : {}),
++      ...(prioridad !== undefined ? { prioridad } : {}),
+     });
+     return toProspectoPublico((await ctx.db.get(id))!);
+   },
+@@ -306,9 +312,14 @@ export const obtener = query({
+ });
+ 
+ /**
+- * PATCH /prospectos/:id (JOS-13). Solo datos de contacto y notas; etapaActual
+- * y las tres fechas son de solo lectura aquí. En los opcionales, cadena vacía
+- * (o solo espacios) elimina el campo — patch con `undefined` lo borra.
++ * PATCH /prospectos/:id (JOS-13). Datos de contacto, notas y —desde JOS-50—
++ * prioridad; etapaActual y las tres fechas siguen siendo de solo lectura aquí.
++ * En los opcionales, cadena vacía (o solo espacios) elimina el campo — patch con
++ * `undefined` lo borra.
++ *
++ * La prioridad aprovecha esa misma mecánica: pedir "medium" no escribe "medium",
++ * escribe `undefined` y con ello ELIMINA el campo, que es como se representa el
++ * defecto (JOS-50). No es un caso especial del patch, es el patch de siempre.
+  */
+ export const actualizar = mutation({
+   args: {
+@@ -319,6 +330,7 @@ export const actualizar = mutation({
+     comoSeConocio: v.optional(v.string()),
+     canalContactoPreferido: v.optional(canalContacto),
+     notas: v.optional(v.string()),
++    prioridad: v.optional(prioridadProspecto),
+   },
+   returns: prospectoPublicoValidator,
+   handler: async (ctx, args) => {
+@@ -334,6 +346,7 @@ export const actualizar = mutation({
+       patch.telefono = textoOpcionalAcotado(args.telefono, "telefono", LONGITUD_MAX_TELEFONO);
+     if (args.email !== undefined) patch.email = emailOpcional(args.email);
+     if (args.notas !== undefined) patch.notas = notasOpcional(args.notas);
++    if (args.prioridad !== undefined) patch.prioridad = prioridadAPersistir(args.prioridad);
+ 
+     await ctx.db.patch(doc._id, patch);
+     return toProspectoPublico((await ctx.db.get(doc._id))!);
+diff --git a/convex/resumen.test.ts b/convex/resumen.test.ts
+index 01715e6..744f0d9 100644
+--- a/convex/resumen.test.ts
++++ b/convex/resumen.test.ts
+@@ -428,6 +428,13 @@ describe("resumen · presupuesto de lectura", () => {
+     // `seguimientoManual: true` forma parte del peor caso desde JOS-67: el campo
+     // es opcional, así que el documento MÁS grande que las mutaciones permiten
+     // crear es el que lo lleva presente, no el que lo omite.
++    //
++    // `prioridad: "medium"` entra en JOS-50 con un matiz: las mutations NUNCA
++    // persisten "medium" (la ausencia ES el defecto), así que el documento más
++    // grande que pueden crear lleva "high" o "low", dos bytes MENOS. Se mide con
++    // "medium" a propósito —la cadena más larga del enum— por dos razones: la
++    // guarda queda del lado conservador, y sobrevive si algún día se decidiera
++    // persistir el defecto. Si esa regla cambia, este fixture ya la contempla.
+     await t.run(async (ctx) => {
+       const prospectoId = await ctx.db.insert("prospectos", {
+         usuarioId: TENANT_A,
+@@ -441,6 +448,7 @@ describe("resumen · presupuesto de lectura", () => {
+         fechaAlta: hoyInicio - 10 * DIA,
+         fechaProximoSeguimiento: hoyInicio,
+         seguimientoManual: true,
++        prioridad: "medium",
+       });
+       for (let i = 1; i < MAX_RESUMEN_PROSPECTOS + 1; i++) {
+         await ctx.db.insert("prospectos", {
+@@ -455,6 +463,7 @@ describe("resumen · presupuesto de lectura", () => {
+           fechaAlta: hoyInicio - 10 * DIA,
+           fechaProximoSeguimiento: hoyInicio,
+           seguimientoManual: true,
++          prioridad: "medium",
+         });
+       }
+       for (let i = 0; i < MAX_RESUMEN_INTERACCIONES + 1; i++) {
+@@ -489,11 +498,15 @@ describe("resumen · presupuesto de lectura", () => {
+     // BYTES: el Resumen es la primera pantalla que lee DOS tablas en la misma query,
+     // y ambas suman contra el mismo límite.
+     //
+-    // Medición 2026-08-06 (JOS-67), con TODOS los campos libres en su tope Y
+-    // `seguimientoManual` presente:
+-    //   prospectos    1.201 × 2.811 B = 3.376.011 B
++    // Medición 2026-08-07 (JOS-50), con TODOS los campos libres en su tope,
++    // `seguimientoManual` presente y `prioridad` presente:
++    //   prospectos    1.201 × 2.832 B = 3.401.232 B
+     //   interacciones   501 × 4.265 B = 2.136.765 B
+-    //   total = 5.512.776 B = 32,9 % del límite → margen 3,04×
++    //   total = 5.537.997 B = 33,0 % del límite → margen 3,03×
++    //
++    // Medición anterior (2026-08-06, JOS-67): 2.811 B/prospecto, total 5.512.776 B
++    // = 32,9 %. El campo de prioridad cuesta +21 B por documento, que es
++    // exactamente lo que ocupa `,"prioridad":"medium"` en la serialización.
+     //
+     // Medición anterior (2026-08-03, antes de JOS-67): 2.786 B/prospecto, total
+     // 5.485.256 B = 32,7 %. El campo booleano nuevo cuesta +25 B por documento, que
+@@ -505,12 +518,17 @@ describe("resumen · presupuesto de lectura", () => {
+     // email la cifra subió, y esa subida fue señal de que la medición pasó a ser
+     // exhaustiva, no de que algo empeorase.
+     //
+-    // La guarda va a 1/3 del límite (5.592.405 B). Holgura restante: 79.629 B, un
+-    // 1,4 % — MÁS ESTRECHA que los ~107 KB de antes de JOS-67. Es deliberada:
+-    // cualquier campo nuevo en el documento de prospecto la rompe y obliga a volver
+-    // a medir, que es justo su función. Con este margen, en el documento de
+-    // prospecto caben ~3 campos escalares más antes de tener que rebajar
+-    // MAX_RESUMEN_INTERACCIONES.
++    // La guarda va a 1/3 del límite (5.592.405 B). Holgura restante: 54.408 B, un
++    // 0,97 % — se estrecha otra vez (era 1,4 % tras JOS-67 y ~107 KB antes). Es
++    // deliberada: cualquier campo nuevo en el documento de prospecto la rompe y
++    // obliga a volver a medir, que es justo su función.
++    //
++    // AVISO PARA EL PRÓXIMO CAMPO: a ~21 B por campo escalar (25.221 B sobre los
++    // 1.201 documentos) caben DOS más, no tres. El tercero no entra. A partir de
++    // ahí no hay ajuste fino posible: habrá que rebajar MAX_RESUMEN_INTERACCIONES
++    // —cada interacción cuesta 4.265 B, así que bajar de 500 a 450 libera ~213 KB—
++    // o repensar qué lee el Resumen. Conviene decidirlo ANTES de planificar el
++    // campo, no al ver el test en rojo.
+     //
+     // Rompe también si se sube cualquiera de las SIETE constantes implicadas: las dos
+     // cotas de lectura y los cinco topes de texto.
+diff --git a/convex/schema.ts b/convex/schema.ts
+index 006bcee..e85a870 100644
+--- a/convex/schema.ts
++++ b/convex/schema.ts
+@@ -43,6 +43,13 @@ export const etapaProspecto = v.union(
+   v.literal("discarded"),
+ );
+ 
++/**
++ * Prioridad del prospecto (JOS-50). Las claves son las de `PriorityLevel` en
++ * src/components/ui/PriorityBadge.tsx, que ya existía en el kit anticipando este
++ * campo ("matches Convex prospectos.prioridad") con sus etiquetas Alta/Media/Baja.
++ */
++export const prioridadProspecto = v.union(v.literal("high"), v.literal("medium"), v.literal("low"));
++
+ export const tipoInteraccion = v.union(v.literal("call"), v.literal("message"), v.literal("meeting"));
+ 
+ export const resultadoInteraccion = v.union(
+@@ -69,6 +76,14 @@ export default defineSchema({
+     // Ausente = false, así que los prospectos anteriores no necesitan migración.
+     // NO se indexa: solo se consulta tras leer el documento, nunca por rango.
+     seguimientoManual: v.optional(v.boolean()),
++    // JOS-50: prioridad del prospecto. AUSENTE = "medium", y las mutations omiten
++    // ese valor en vez de escribirlo, así que la ausencia es la representación
++    // canónica del defecto: los prospectos anteriores ya cumplen el esquema y no
++    // hace falta migración (mismo patrón que seguimientoManual). Hacia el cliente
++    // NO se ve la ausencia: la proyección pública siempre resuelve el valor.
++    // NO se indexa: ordenar por prioridad se hace en memoria sobre lecturas ya
++    // acotadas; un índice sobre un campo con ausencias complicaría los rangos.
++    prioridad: v.optional(prioridadProspecto),
+   })
+     .index("by_usuario", ["usuarioId"])
+     .index("by_usuario_seguimiento", ["usuarioId", "fechaProximoSeguimiento"])
+diff --git a/src/app/(app)/prospectos/[id]/EdicionDatos.test.tsx b/src/app/(app)/prospectos/[id]/EdicionDatos.test.tsx
+index 8b5c317..cf2027d 100644
+--- a/src/app/(app)/prospectos/[id]/EdicionDatos.test.tsx
++++ b/src/app/(app)/prospectos/[id]/EdicionDatos.test.tsx
+@@ -27,6 +27,8 @@ const PROSPECTO: ProspectoPublico = {
+   fechaAlta: Date.UTC(2026, 5, 15, 10),
+   fechaUltimoContacto: Date.UTC(2026, 6, 10, 10),
+   fechaProximoSeguimiento: Date.UTC(2026, 6, 20, 10),
++  // JOS-50: la API siempre la resuelve, así que el fixture también la trae.
++  prioridad: "medium",
+ };
+ 
+ /** Copia del fixture sin los campos indicados (opcionales ausentes de la API). */

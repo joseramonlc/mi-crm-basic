@@ -1,0 +1,96 @@
+GATES — JOS-50 (M10 · Prioridad de Prospectos, primer bocado de 5)
+Rama:  joseramonlc/jos-50-anadir-campo-prioridad-al-modelo-prospecto-y-a-la-api
+Base:  origin/master = 5860972 (merge de JOS-69)
+Fecha: 2026-08-07
+Entorno: FS nativa WSL2 (/home/pepe/proyectos/mi-crm-basic)
+
+Gates ejecutados redirigiendo a fichero y leyendo $? ANTES de cualquier tubería.
+
+────────────────────────────────────────────────────────────────────────
+1. TESTS  —  npm test
+────────────────────────────────────────────────────────────────────────
+EXIT_REAL = 0
+
+  Test Files  43 passed (43)
+       Tests  531 passed (531)
+
+CONTRASTE DE RECUENTO:
+
+  $ find convex src -name '*.test.ts' -o -name '*.test.tsx' | wc -l
+  43
+
+  43 en disco = 43 arrancados.
+
+  Referencia: antes de esta rama, 43 ficheros / 520 tests.
+  Delta: +0 ficheros y +11 tests.
+
+  Verificados NOMBRE A NOMBRE con --reporter=verbose, en
+  convex/prospectos.api.test.ts · describe "prioridad (JOS-50)":
+
+    · sin prioridad: la API devuelve media y el documento NO guarda el campo
+    · crear con prioridad high la persiste tal cual
+    · crear con prioridad low la persiste tal cual
+    · crear con «medium» explícito tampoco lo escribe
+    · actualizar de ausente a high la persiste
+    · actualizar a «medium» BORRA el campo del documento, no lo reescribe
+    · no tocar la prioridad en un actualizar la deja intacta
+    · un prospecto ANTERIOR a M10 (insertado sin el campo) se lee como media
+    · valor inválido: lo rechaza el validador de Convex y no escribe nada
+    · las CUATRO puertas de lectura y escritura devuelven siempre la prioridad
+    · la prioridad NO toca el motor de seguimiento
+
+  Los que leen el DOCUMENTO CRUDO (condición 2 de la auditoría) son cuatro:
+  los tres de «no se escribe medium» y el de «actualizar a medium borra».
+  Usan ctx.db.get directo, no la proyección.
+
+  DOS tests existentes cambiaron, ambos por la misma causa deseada —la
+  proyección pública ahora SIEMPRE trae `prioridad`—:
+    · prospectos.api.test.ts «proyección pública: con id, sin usuarioId…»,
+      que fija el conjunto exacto de claves devueltas.
+    · EdicionDatos.test.tsx, cuyo fixture ProspectoPublico se construye a mano.
+      Este NO lo encontró la suite: lo cazó `tsc`, porque el campo es
+      obligatorio en el tipo. Es la prueba de que la condición 1 funciona.
+
+────────────────────────────────────────────────────────────────────────
+2. LINT  —  npm run lint          EXIT_REAL = 0   (sin avisos)
+3. BUILD  —  npm run build        EXIT_REAL = 0
+4. TIPOS  —  npx tsc --noEmit     EXIT_REAL = 2   (los 5 preexistentes de
+   `import.meta.glob`; delta 0 — ningún error ajeno a esos cinco)
+────────────────────────────────────────────────────────────────────────
+
+════════════════════════════════════════════════════════════════════════
+PRESUPUESTO DE LECTURA — REMEDICIÓN (lo que exigía el plan)
+════════════════════════════════════════════════════════════════════════
+
+Medido de verdad, no estimado:
+
+  prospecto    2.832 B  (era 2.811 → +21 B)
+  interacción  4.265 B  (sin cambio)
+
+  prospectos    1.201 × 2.832 = 3.401.232 B
+  interacciones   501 × 4.265 = 2.136.765 B
+  ─────────────────────────────────────────
+  total                        5.537.997 B  = 33,0 % del límite de 16 MiB
+                                            → margen 3,03×
+
+  Guarda (límite/3) = 5.592.405 B
+  HOLGURA RESTANTE  =    54.408 B  =  0,97 % de la guarda
+  (era 79.629 B / 1,4 % tras JOS-67)
+
+  El coste real son 21 B por documento, exactamente lo que ocupa
+  `,"prioridad":"medium"` serializado. LA ESTIMACIÓN DEL PLAN (19 B / ~23 KB)
+  ERA BAJA; la corrección de la auditoría (21 B / ~25 KB) era la correcta.
+  Total del campo: 25.221 B.
+
+  CABE, y NO ha hecho falta rebajar MAX_RESUMEN_INTERACCIONES.
+
+  AVISO PARA EL PRÓXIMO CAMPO (anotado también en el test): a ~21 B por campo
+  escalar caben DOS más, no tres. El tercero no entra. A partir de ahí habrá
+  que rebajar MAX_RESUMEN_INTERACCIONES (bajar de 500 a 450 libera ~213 KB) o
+  repensar qué lee el Resumen. Conviene decidirlo antes de planificar el campo.
+
+  Nota sobre el fixture (condición 4): se mide con `prioridad: "medium"`, la
+  cadena más larga del enum, AUNQUE las mutations nunca la persistan —el
+  documento más grande que pueden crear lleva "high"/"low", 2 B menos—. Se hace
+  a propósito: deja la guarda del lado conservador y sobrevive si algún día se
+  decidiera persistir el defecto.

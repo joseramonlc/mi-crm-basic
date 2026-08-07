@@ -428,6 +428,13 @@ describe("resumen · presupuesto de lectura", () => {
     // `seguimientoManual: true` forma parte del peor caso desde JOS-67: el campo
     // es opcional, así que el documento MÁS grande que las mutaciones permiten
     // crear es el que lo lleva presente, no el que lo omite.
+    //
+    // `prioridad: "medium"` entra en JOS-50 con un matiz: las mutations NUNCA
+    // persisten "medium" (la ausencia ES el defecto), así que el documento más
+    // grande que pueden crear lleva "high" o "low", dos bytes MENOS. Se mide con
+    // "medium" a propósito —la cadena más larga del enum— por dos razones: la
+    // guarda queda del lado conservador, y sobrevive si algún día se decidiera
+    // persistir el defecto. Si esa regla cambia, este fixture ya la contempla.
     await t.run(async (ctx) => {
       const prospectoId = await ctx.db.insert("prospectos", {
         usuarioId: TENANT_A,
@@ -441,6 +448,7 @@ describe("resumen · presupuesto de lectura", () => {
         fechaAlta: hoyInicio - 10 * DIA,
         fechaProximoSeguimiento: hoyInicio,
         seguimientoManual: true,
+        prioridad: "medium",
       });
       for (let i = 1; i < MAX_RESUMEN_PROSPECTOS + 1; i++) {
         await ctx.db.insert("prospectos", {
@@ -455,6 +463,7 @@ describe("resumen · presupuesto de lectura", () => {
           fechaAlta: hoyInicio - 10 * DIA,
           fechaProximoSeguimiento: hoyInicio,
           seguimientoManual: true,
+          prioridad: "medium",
         });
       }
       for (let i = 0; i < MAX_RESUMEN_INTERACCIONES + 1; i++) {
@@ -489,11 +498,15 @@ describe("resumen · presupuesto de lectura", () => {
     // BYTES: el Resumen es la primera pantalla que lee DOS tablas en la misma query,
     // y ambas suman contra el mismo límite.
     //
-    // Medición 2026-08-06 (JOS-67), con TODOS los campos libres en su tope Y
-    // `seguimientoManual` presente:
-    //   prospectos    1.201 × 2.811 B = 3.376.011 B
+    // Medición 2026-08-07 (JOS-50), con TODOS los campos libres en su tope,
+    // `seguimientoManual` presente y `prioridad` presente:
+    //   prospectos    1.201 × 2.832 B = 3.401.232 B
     //   interacciones   501 × 4.265 B = 2.136.765 B
-    //   total = 5.512.776 B = 32,9 % del límite → margen 3,04×
+    //   total = 5.537.997 B = 33,0 % del límite → margen 3,03×
+    //
+    // Medición anterior (2026-08-06, JOS-67): 2.811 B/prospecto, total 5.512.776 B
+    // = 32,9 %. El campo de prioridad cuesta +21 B por documento, que es
+    // exactamente lo que ocupa `,"prioridad":"medium"` en la serialización.
     //
     // Medición anterior (2026-08-03, antes de JOS-67): 2.786 B/prospecto, total
     // 5.485.256 B = 32,7 %. El campo booleano nuevo cuesta +25 B por documento, que
@@ -505,12 +518,17 @@ describe("resumen · presupuesto de lectura", () => {
     // email la cifra subió, y esa subida fue señal de que la medición pasó a ser
     // exhaustiva, no de que algo empeorase.
     //
-    // La guarda va a 1/3 del límite (5.592.405 B). Holgura restante: 79.629 B, un
-    // 1,4 % — MÁS ESTRECHA que los ~107 KB de antes de JOS-67. Es deliberada:
-    // cualquier campo nuevo en el documento de prospecto la rompe y obliga a volver
-    // a medir, que es justo su función. Con este margen, en el documento de
-    // prospecto caben ~3 campos escalares más antes de tener que rebajar
-    // MAX_RESUMEN_INTERACCIONES.
+    // La guarda va a 1/3 del límite (5.592.405 B). Holgura restante: 54.408 B, un
+    // 0,97 % — se estrecha otra vez (era 1,4 % tras JOS-67 y ~107 KB antes). Es
+    // deliberada: cualquier campo nuevo en el documento de prospecto la rompe y
+    // obliga a volver a medir, que es justo su función.
+    //
+    // AVISO PARA EL PRÓXIMO CAMPO: a ~21 B por campo escalar (25.221 B sobre los
+    // 1.201 documentos) caben DOS más, no tres. El tercero no entra. A partir de
+    // ahí no hay ajuste fino posible: habrá que rebajar MAX_RESUMEN_INTERACCIONES
+    // —cada interacción cuesta 4.265 B, así que bajar de 500 a 450 libera ~213 KB—
+    // o repensar qué lee el Resumen. Conviene decidirlo ANTES de planificar el
+    // campo, no al ver el test en rojo.
     //
     // Rompe también si se sube cualquiera de las SIETE constantes implicadas: las dos
     // cotas de lectura y los cinco topes de texto.

@@ -43,6 +43,13 @@ export const etapaProspecto = v.union(
   v.literal("discarded"),
 );
 
+/**
+ * Prioridad del prospecto (JOS-50). Las claves son las de `PriorityLevel` en
+ * src/components/ui/PriorityBadge.tsx, que ya existía en el kit anticipando este
+ * campo ("matches Convex prospectos.prioridad") con sus etiquetas Alta/Media/Baja.
+ */
+export const prioridadProspecto = v.union(v.literal("high"), v.literal("medium"), v.literal("low"));
+
 export const tipoInteraccion = v.union(v.literal("call"), v.literal("message"), v.literal("meeting"));
 
 export const resultadoInteraccion = v.union(
@@ -69,6 +76,14 @@ export default defineSchema({
     // Ausente = false, así que los prospectos anteriores no necesitan migración.
     // NO se indexa: solo se consulta tras leer el documento, nunca por rango.
     seguimientoManual: v.optional(v.boolean()),
+    // JOS-50: prioridad del prospecto. AUSENTE = "medium", y las mutations omiten
+    // ese valor en vez de escribirlo, así que la ausencia es la representación
+    // canónica del defecto: los prospectos anteriores ya cumplen el esquema y no
+    // hace falta migración (mismo patrón que seguimientoManual). Hacia el cliente
+    // NO se ve la ausencia: la proyección pública siempre resuelve el valor.
+    // NO se indexa: ordenar por prioridad se hace en memoria sobre lecturas ya
+    // acotadas; un índice sobre un campo con ausencias complicaría los rangos.
+    prioridad: v.optional(prioridadProspecto),
   })
     .index("by_usuario", ["usuarioId"])
     .index("by_usuario_seguimiento", ["usuarioId", "fechaProximoSeguimiento"])
