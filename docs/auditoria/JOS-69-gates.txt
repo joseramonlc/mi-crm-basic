@@ -1,0 +1,120 @@
+GATES — JOS-69 (M11 · Fecha de Contacto Acordada, bocado C de 4)
+Rama:  joseramonlc/jos-69-fijar-y-quitar-la-fecha-de-contacto-acordada-desde-la-ficha
+Base:  origin/master = 6b6a8f6 (merge de JOS-68)
+Fecha: 2026-08-07
+Entorno: FS nativa WSL2 (/home/pepe/proyectos/mi-crm-basic)
+
+Los gates se ejecutaron redirigiendo a fichero y leyendo $? ANTES de cualquier
+tubería, para no repetir el falso verde del 2026-08-03 (un `| tail` devuelve el
+código de `tail`, no el del comando).
+
+────────────────────────────────────────────────────────────────────────
+1. TESTS  —  npm test
+────────────────────────────────────────────────────────────────────────
+EXIT_REAL = 0
+
+  Test Files  43 passed (43)
+       Tests  520 passed (520)
+    Duration  33.73s
+
+CONTRASTE DE RECUENTO (obligatorio en este proyecto):
+
+  $ find convex src -name '*.test.ts' -o -name '*.test.tsx' | wc -l
+  43
+
+  43 en disco = 43 arrancados.  Sin ficheros perdidos por el pool.
+
+  Referencia: antes de esta rama, 42 ficheros / 495 tests.
+  Delta: +1 fichero (SeguimientoAcordado.test.tsx) y +25 tests.
+
+  Verificados NOMBRE A NOMBRE con --reporter=verbose:
+
+    SeguimientoAcordado.test.tsx                                         20
+      Los dos estados de la misma fecha (lo crítico de la issue)
+        · calculada por el motor: etiqueta y explicación del sistema
+        · acordada por el usuario: cambian etiqueta Y explicación
+        · la marca SIN fecha es anómala y se muestra como automática
+        · en etapa terminal no se explica nada: no hay motor que explicar
+        · sin acuerdo se ofrece fijar; con acuerdo, cambiar y volver al automático
+      Fijar
+        · el selector no admite nada anterior a hoy y arranca vacío
+        · con acuerdo previo, «Cambiar fecha» precarga la vigente
+        · guardar envía el mediodía de Madrid del día elegido
+        · fecha pasada: error inline y sin llamar al servidor
+        · HOY se acepta: el suelo es hoy, no mañana
+        · sin fecha elegida: el error dice que falta elegirla, no que esté en el pasado
+        · cancelar cierra el selector sin llamar a nada
+        · dos activaciones síncronas ejecutan UNA sola llamada
+      Quitar
+        · llama a quitar sin argumentos: la fecha la recalcula el servidor
+        · sin estado optimista: la etiqueta es la del servidor hasta la suscripción
+      Etapas terminales
+        · no se ofrece fijar
+        · un acuerdo colgando SÍ se puede quitar
+      Fallos del servidor
+        · red: banner, fecha tecleada conservada, selector abierto
+        · carrera de etapa terminal: banner que lo explica, no el de conexión
+        · rechazo de la fecha: error bajo el campo, no banner
+
+    page.test.tsx · "contacto acordado en la ficha (JOS-69)"              5
+      · fijar: llama a la mutation con el día elegido y avisa
+      · quitar: llama a la mutation que RECALCULA con el motor y avisa
+      · cambiar de etapa con acuerdo vigente: el aviso dice que SE MANTIENE
+      · la marca SIN fecha no presume un acuerdo (caso anómalo pedido por la
+        auditoría del plan)
+      · el aviso sale del prospecto DEVUELTO, no de la suscripción desfasada
+
+  ADEMÁS, un test existente cambió: "cambiar de etapa NO registra interacción"
+  fijaba la lista EXACTA de mutations de la ficha (eran 2, ahora son 4). Se
+  actualizó la lista y se le añadió una aserción explícita de que
+  `interacciones:crear` sigue ausente, que es la garantía que ese test protege.
+
+AJUSTES POSTERIORES A LA AUDITORÍA DE CÓDIGO (GO del 2026-08-07, 3 menores):
+
+  Menor 1 · Guardar sin elegir fecha decía "no puede estar en el pasado".
+    APLICADO: texto propio ("Elige una fecha"). El test que cubría el caso
+    ahora exige el mensaje correcto y que NO salga el del pasado.
+
+  Menor 3 · Sin fecha no se mostraba la frase explicativa.
+    APLICADO: la frase acompaña siempre a la etiqueta; la excepción son las
+    etapas terminales, donde no hay motor que explicar y la tarjeta ya tiene
+    su indicador de "fuera del pipeline activo". Un test nuevo lo fija.
+
+  Menor 2 · Tras el éxito los botones se rehabilitan antes de que llegue la
+    suscripción.  NO APLICADO, a propósito. El remedio sería el pestillo del
+    selector de etapa (seguir bloqueado hasta que la suscripción confirme).
+    Allí compensa porque un doble cambio de etapa MUEVE el pipeline; aquí la
+    segunda acción o reabre el selector (inocuo) o repite `quitar`, que JOS-67
+    documenta y prueba como idempotente. A cambio, el pestillo introduce el
+    riesgo de un botón bloqueado para siempre si la confirmación no llega.
+    Se deja anotado para que la decisión sea visible y revocable.
+
+  Recuento tras los ajustes: 520 tests (+1 respecto a la primera pasada, el de
+  la etapa terminal sin frase). Los cuatro gates reejecutados.
+
+────────────────────────────────────────────────────────────────────────
+2. LINT  —  npm run lint
+────────────────────────────────────────────────────────────────────────
+EXIT_REAL = 0
+
+  Sin avisos ni errores.
+
+────────────────────────────────────────────────────────────────────────
+3. BUILD  —  npm run build
+────────────────────────────────────────────────────────────────────────
+EXIT_REAL = 0
+
+  ✓ Compiled successfully in 8.1s
+
+────────────────────────────────────────────────────────────────────────
+4. TIPOS  —  npx tsc --noEmit   (comprobación extra, no es gate del repo)
+────────────────────────────────────────────────────────────────────────
+EXIT_REAL = 2   ← los 5 PREEXISTENTES de `import.meta.glob`, delta 0
+
+  Durante el desarrollo llegó a haber 7: los callbacks `vi.fn()` del test
+  nuevo no satisfacían la firma que exige el componente (devolver promesa).
+  Se tiparon con `Mock<...>` y volvieron a quedar los 5 de siempre. Se anota
+  porque los tests pasaban en verde con ese error de tipos presente: el gate
+  de tipos cazó lo que la suite no.
+
+  $ grep "error TS" | grep -v "Property 'glob'"   →   (ninguno)

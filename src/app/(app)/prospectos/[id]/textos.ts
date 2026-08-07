@@ -1,4 +1,5 @@
 import { APP_TZ } from "../../../../../convex/lib/fecha";
+import { acuerdoActivo } from "../../../../../convex/lib/seguimiento";
 import type { InteraccionPublica, ProspectoPublico } from "../../../../../convex/lib/proyecciones";
 import { OPCIONES_CANAL, OPCIONES_RESULTADO, OPCIONES_TIPO, etiquetaEtapa, formatearFechaEs, type Etapa } from "@/lib/etiquetas";
 import type { BadgeProps } from "@/components/ui";
@@ -81,14 +82,64 @@ export const ERROR_CAMBIO_ETAPA = "No se pudo cambiar la etapa. Comprueba tu con
  * Toast del cambio de etapa (P6): en no terminales el motor SIEMPRE deja
  * fecha (el fallback sin fecha es solo defensivo); en terminales el prospecto
  * sale de la Actividad Diaria y el texto lo dice.
+ *
+ * Con un acuerdo vigente (JOS-69) la fecha NO se ha movido —la cita acordada
+ * gana sobre la regla de la etapa, precedencia de JOS-67— y anunciarla como
+ * "próximo contacto" haría creer que el cambio de etapa la recalculó. El texto
+ * dice entonces que se mantiene, y por qué.
+ *
+ * Qué cuenta como acuerdo vigente lo decide `acuerdoActivo`, el MISMO predicado
+ * del backend: exige la marca y la fecha. Un documento con la marca pero sin
+ * fecha es anómalo y cae al texto normal, igual que allí cae a la rama del motor.
  */
-export function textoToastEtapa(etapa: Etapa, fechaProximoSeguimiento?: number): string {
+export function textoToastEtapa(etapa: Etapa, fechaProximoSeguimiento?: number, seguimientoManual?: boolean): string {
   if (etapa === "joined") return "¡Incorporado al equipo! Sale de la actividad diaria.";
   if (etapa === "discarded") return "Prospecto descartado. Sale de la actividad diaria.";
   const base = `Etapa actualizada: ${etiquetaEtapa(etapa)}.`;
   if (fechaProximoSeguimiento === undefined) return base;
+  if (acuerdoActivo({ fechaProximoSeguimiento, seguimientoManual })) {
+    return `${base} Se mantiene el contacto acordado: ${formatearFechaEs(fechaProximoSeguimiento)}`;
+  }
   return `${base} Próximo contacto: ${formatearFechaEs(fechaProximoSeguimiento)}`;
 }
+
+/* ── Contacto acordado en la ficha (M11, JOS-69) ──────────────────────────── */
+
+/**
+ * Las dos caras de la MISMA fecha. El usuario tiene que saber cuál está viendo:
+ * si no, el sistema parece errático (la fecha unas veces se mueve al cambiar de
+ * etapa y otras no). La etiqueta cambia, y debajo va siempre una frase que dice
+ * quién la puso — una etiqueta que muta sola es fácil de no notar.
+ */
+export const ETIQUETA_SEGUIMIENTO_MOTOR = "Próximo seguimiento";
+export const ETIQUETA_SEGUIMIENTO_ACORDADO = "Contacto acordado";
+export const EXPLICACION_MOTOR = "La calcula el sistema según la etapa";
+export const EXPLICACION_ACORDADO = "La acordaste tú con el prospecto";
+
+export const ACCION_FIJAR = "Fijar contacto acordado";
+export const ACCION_CAMBIAR_FECHA = "Cambiar fecha";
+/** Volver al automático es una acción VISIBLE, nunca un menú escondido (letra de JOS-69). */
+export const ACCION_QUITAR = "Volver al automático";
+export const ACCION_GUARDAR_FECHA = "Guardar";
+export const ACCION_CANCELAR_FECHA = "Cancelar";
+export const GUARDANDO_FECHA = "Guardando…";
+
+export const ETIQUETA_CAMPO_ACORDADA = "Fecha del próximo contacto";
+export const AYUDA_CAMPO_ACORDADA = "Solo hoy o más adelante";
+
+export const ERROR_FECHA_ACORDADA_PASADA = "La fecha acordada no puede estar en el pasado";
+/** No es lo mismo elegir mal que no elegir: cada fallo dice lo que pasa de verdad. */
+export const ERROR_FECHA_ACORDADA_VACIA = "Elige una fecha";
+export const ERROR_SEGUIMIENTO_RED = "No se pudo guardar la fecha. Comprueba tu conexión e inténtalo de nuevo.";
+/**
+ * El servidor rechaza fijar en etapas terminales. La tarjeta no ofrece la acción
+ * ahí, así que esto solo aparece en una carrera (la etapa cambió con la ficha
+ * abierta); el banner de red mandaría a comprobar la conexión sin motivo.
+ */
+export const ERROR_SEGUIMIENTO_TERMINAL = "Este prospecto ya no está activo, así que no admite un próximo contacto.";
+
+export const TOAST_ACUERDO_FIJADO = "Contacto acordado guardado";
+export const TOAST_ACUERDO_QUITADO = "Vuelve a calcularlo el sistema";
 
 /** Indicador ligero de estado terminal en la tarjeta de seguimiento (D1 aprobada). */
 export const INDICADOR_TERMINAL: Partial<Record<Etapa, { texto: string; color: string }>> = {

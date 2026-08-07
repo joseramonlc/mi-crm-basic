@@ -11,6 +11,7 @@ import { esTerminal } from "../../../../../../../convex/lib/seguimiento";
 import { Avatar, Button, Input, PillSelect, StageBadge } from "@/components/ui";
 import { FormHeader } from "@/components/layout/FormHeader";
 import { escribirFlash } from "@/lib/flash";
+import { fechaAcordadaAMs } from "@/lib/fechaAcordada";
 import { destinoAlSalir, PARAM_VOLVER } from "@/lib/volver";
 import {
   AYUDA_FECHA_ACORDADA,
@@ -70,17 +71,6 @@ const BANNER_SERVIDOR: Record<string, string> = {
  */
 function fechaSeleccionadaAMs(dayKey: string, ahoraMs: number): number {
   if (dayKey === dayKeyToday(ahoraMs, APP_TZ)) return ahoraMs;
-  return ventanaDia(dayKey, APP_TZ).hoyInicio + 12 * 3_600_000;
-}
-
-/**
- * Conversión de la fecha ACORDADA (JOS-68). Siempre mediodía de Madrid del día
- * elegido: cae dentro del día civil correcto incluso en cambios de DST, y el
- * servidor lo normaliza a medianoche. Aquí no hay caso "hoy → ahora" —esa regla
- * existía para que el ritmo del día contase el registro recién hecho, y esta
- * fecha no registra nada: apunta al futuro.
- */
-function fechaAcordadaAMs(dayKey: string): number {
   return ventanaDia(dayKey, APP_TZ).hoyInicio + 12 * 3_600_000;
 }
 
