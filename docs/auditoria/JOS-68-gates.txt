@@ -1,0 +1,98 @@
+GATES — JOS-68 (M11 · Fecha de Contacto Acordada, bocado B de 4)
+Rama:  joseramonlc/jos-68-campo-de-fecha-acordada-en-la-pantalla-registrar-interaccion
+Base:  origin/master = 808960c
+Fecha: 2026-08-07
+Entorno: FS nativa WSL2 (/home/pepe/proyectos/mi-crm-basic)
+
+Los gates se ejecutaron redirigiendo a fichero y leyendo $? ANTES de cualquier
+tubería, para no repetir el falso verde del 2026-08-03 (un `| tail` devuelve el
+código de `tail`, no el del comando).
+
+────────────────────────────────────────────────────────────────────────
+1. TESTS  —  npm test
+────────────────────────────────────────────────────────────────────────
+EXIT_REAL = 0
+
+  Test Files  42 passed (42)
+       Tests  495 passed (495)
+    Duration  26.97s
+
+CONTRASTE DE RECUENTO (obligatorio en este proyecto):
+
+  $ find convex src -name '*.test.ts' -o -name '*.test.tsx' | wc -l
+  42
+
+  42 en disco = 42 arrancados.  Sin ficheros perdidos por el pool.
+
+  Referencia: antes de esta rama, 42 ficheros / 479 tests.
+  Delta: +0 ficheros (los casos se añaden a los dos existentes que tocan
+  la pantalla y la mutation) y +16 tests.
+
+  Los 16 se verificaron NOMBRE A NOMBRE en la salida --reporter=verbose,
+  no solo por el recuento:
+
+    convex/interacciones.test.ts · "fecha acordada en el registro (JOS-68)"   8
+      · con fecha acordada: manda el acuerdo, no el motor, y se guarda a medianoche
+      · acordar para HOY se acepta: el suelo es la medianoche de hoy, no el instante
+      · sustituye un acuerdo anterior en vez de consumirlo
+      · rechaza la fecha acordada {ayer, NaN, +Infinity, fuera de rango}      (4 casos)
+      · carrera con la UI: si el prospecto pasó a etapa terminal, rechaza sin
+        registrar nada
+
+    page.test.tsx · "próximo contacto acordado (JOS-68)"                      8
+      · campo opcional, vacío por defecto y sin admitir nada anterior a hoy
+      · vacío: el envío no cambia y el botón no lo exige
+      · con fecha: viaja el mediodía del día elegido y el aviso dice que el
+        contacto se acordó
+      · fecha pasada: error bajo SU campo, botón bloqueado y sin llamar a la API
+      · rechazo del servidor: se pinta en el campo acordado, NUNCA en la fecha
+        de la interacción
+      · en etapa terminal el campo no se ofrece: allí no hay seguimiento (JOS-8)
+      · mientras carga el prospecto el campo no aparece (sin parpadeo)
+      · carrera: si el servidor rechaza por etapa terminal, el banner lo explica
+        y no habla de conexión
+
+AJUSTE POSTERIOR A LA AUDITORÍA DE CÓDIGO (menor 1, GO del 2026-08-07):
+
+  Los cuatro casos de rechazo de `fechaAcordada` comprobaban que no se inserta
+  ninguna interacción, pero no que el prospecto quedase intacto. Se añadieron
+  esas tres aserciones (fechaUltimoContacto, fechaProximoSeguimiento y
+  seguimientoManual ausentes). Solo tests, ninguna línea de producción.
+  Los tres gates se reejecutaron después: mismos resultados y mismo recuento
+  (495 tests — son aserciones dentro de casos ya existentes, no casos nuevos).
+
+────────────────────────────────────────────────────────────────────────
+2. LINT  —  npm run lint
+────────────────────────────────────────────────────────────────────────
+EXIT_REAL = 0
+
+  Sin avisos ni errores.
+
+────────────────────────────────────────────────────────────────────────
+3. BUILD  —  npm run build
+────────────────────────────────────────────────────────────────────────
+EXIT_REAL = 0
+
+  ✓ Compiled successfully in 11.3s
+  ✓ Generating static pages using 7 workers (10/10)
+
+  /prospectos/[id]/interacciones/nueva sigue clasificada ƒ (dinámica), igual
+  que antes de la rama: el campo nuevo no cambia la estrategia de render.
+
+────────────────────────────────────────────────────────────────────────
+4. TIPOS  —  npx tsc --noEmit   (comprobación extra, no es gate del repo)
+────────────────────────────────────────────────────────────────────────
+EXIT_REAL = 2   ← PREEXISTENTE, no lo introduce esta rama
+
+  convex/interacciones.test.ts(11,29): error TS2339: Property 'glob' does not exist on type 'ImportMeta'.
+  convex/prospectos.api.test.ts(10,29): idem
+  convex/prospectos.test.ts(20,29):    idem
+  convex/resumen.test.ts(18,29):       idem
+  convex/seed.test.ts(8,29):           idem
+
+  Los cinco son el mismo `import.meta.glob` de convex-test, que tsc no conoce
+  porque los tipos de Vite no entran en el tsconfig del proyecto.
+
+  CONTRASTE: se ejecutó `git stash` y el MISMO comando sobre la base sin la
+  rama da exactamente 5 errores, los mismos cinco ficheros. Delta = 0.
+  El código de JOS-68 no añade ni un error de tipos.

@@ -180,13 +180,19 @@ const FECHA_MAX_ABS_MS = 8.64e15;
  * modo que el día de hoy se acepta entero. No se aplica FUTURO_MARGEN_MS: ese
  * margen existe para tolerar relojes de cliente adelantados al registrar algo
  * que YA ocurrió; aquí el riesgo es el contrario y el suelo ya es generoso.
+ *
+ * `campo` viaja en el `field` del VALIDATION_ERROR y por defecto es "fecha",
+ * el nombre del argumento en las mutations de JOS-67. Existe porque en
+ * "Registrar Interacción" (JOS-68) esta fecha convive con la de la interacción,
+ * que YA usa el field "fecha" y significa lo contrario: sin poder distinguirlas,
+ * el cliente pintaría el rechazo en el campo equivocado y con el mensaje opuesto.
  */
-export function fechaAcordadaValidada(fecha: number, ahoraMs: number): number {
-  if (!Number.isFinite(fecha)) throw validationError("fecha debe ser un número finito (ms epoch)", "fecha");
-  if (Math.abs(fecha) > FECHA_MAX_ABS_MS) throw validationError("fecha fuera de rango", "fecha");
+export function fechaAcordadaValidada(fecha: number, ahoraMs: number, campo = "fecha"): number {
+  if (!Number.isFinite(fecha)) throw validationError("fecha debe ser un número finito (ms epoch)", campo);
+  if (Math.abs(fecha) > FECHA_MAX_ABS_MS) throw validationError("fecha fuera de rango", campo);
   const acordada = zonedMidnightToMs(civilDate(fecha, APP_TZ), APP_TZ);
   if (acordada < zonedMidnightToMs(civilDate(ahoraMs, APP_TZ), APP_TZ)) {
-    throw validationError("La fecha acordada no puede estar en el pasado", "fecha");
+    throw validationError("La fecha acordada no puede estar en el pasado", campo);
   }
   return acordada;
 }

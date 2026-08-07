@@ -1,12 +1,16 @@
 // @vitest-environment jsdom
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ConvexError } from "convex/values";
 import { APP_TZ, ventanaDia, zonedMidnightToMs } from "../../../../../../../convex/lib/fecha";
 import { consumirFlash } from "@/lib/flash";
 import {
+  AYUDA_FECHA_ACORDADA,
+  AYUDA_FECHA_CONTACTO,
   BANNER_ERROR_RED,
+  BANNER_ETAPA_TERMINAL,
+  ERROR_FECHA_ACORDADA_PASADA,
   ERROR_FECHA_FUTURA,
   ERROR_QUE_OCURRIO_OBLIGATORIO,
   MAX_QUE_OCURRIO,
@@ -295,5 +299,120 @@ describe("destino de salida según el origen (JOS-23)", () => {
 
     await waitFor(() => expect(replaceMock).toHaveBeenCalledWith("/prospectos/p7"));
     expect(replaceMock).not.toHaveBeenCalledWith("https://ejemplo.invalido");
+  });
+});
+
+describe("próximo contacto acordado (JOS-68)", () => {
+  const ACORDADA = "2026-07-22";
+  const ACORDADA_MS = ventanaDia(ACORDADA, APP_TZ).hoyInicio + 12 * 3_600_000;
+  const ACORDADA_MEDIANOCHE = ventanaDia(ACORDADA, APP_TZ).hoyInicio;
+
+  /**
+   * Caja del campo (label + control + error), para exigir que el error salga
+   * DEBAJO DEL CAMPO CORRECTO y no en cualquier parte de la pantalla: son dos
+   * fechas de reglas opuestas y confundirlas es el fallo que se vigila.
+   */
+  function campo(etiqueta: string): HTMLElement {
+    return screen.getByLabelText(etiqueta).closest("div")!.parentElement as HTMLElement;
+  }
+
+  function ponerAcordada(valor: string) {
+    fireEvent.change(screen.getByLabelText("Próximo contacto acordado"), { target: { value: valor } });
+  }
+
+  it("campo opcional, vacío por defecto y sin admitir nada anterior a hoy", () => {
+    render(<RegistrarInteraccionPage />);
+    const acordada = screen.getByLabelText("Próximo contacto acordado") as HTMLInputElement;
+    expect(acordada.value).toBe("");
+    expect(acordada.getAttribute("min")).toBe(HOY);
+    // La otra fecha es su espejo: solo admite hasta hoy.
+    expect((screen.getByLabelText("Fecha del contacto") as HTMLInputElement).getAttribute("max")).toBe(HOY);
+    // Las dos ayudas están presentes para deshacer la ambigüedad de la pantalla.
+    expect(within(campo("Fecha del contacto")).getByText(AYUDA_FECHA_CONTACTO)).toBeDefined();
+    expect(within(campo("Próximo contacto acordado")).getByText(AYUDA_FECHA_ACORDADA)).toBeDefined();
+  });
+
+  it("vacío: el envío no cambia y el botón no lo exige", () => {
+    render(<RegistrarInteraccionPage />);
+    rellenarObligatorios();
+    expect(boton().disabled).toBe(false);
+    fireEvent.submit(boton().closest("form") as HTMLFormElement);
+    expect(mutateMock.mock.calls[0][0]).not.toHaveProperty("fechaAcordada");
+  });
+
+  it("con fecha: viaja el mediodía del día elegido y el aviso dice que el contacto se acordó", async () => {
+    mutateMock.mockResolvedValue({
+      interaccion: { id: "i11" },
+      prospecto: { ...PROSPECTO, fechaProximoSeguimiento: ACORDADA_MEDIANOCHE, seguimientoManual: true },
+    });
+    render(<RegistrarInteraccionPage />);
+    rellenarObligatorios();
+    ponerAcordada(ACORDADA);
+    fireEvent.submit(boton().closest("form") as HTMLFormElement);
+
+    await waitFor(() => expect(replaceMock).toHaveBeenCalledWith("/prospectos/p7"));
+    expect(mutateMock.mock.calls[0][0]).toEqual({
+      prospectoId: "p7",
+      fecha: AHORA,
+      tipo: "call",
+      queOcurrio: "Llamada corta",
+      resultado: "interested",
+      fechaAcordada: ACORDADA_MS,
+    });
+    expect(consumirFlash()).toBe(textoToast(ACORDADA_MEDIANOCHE, true));
+  });
+
+  it("fecha pasada: error bajo SU campo, botón bloqueado y sin llamar a la API", () => {
+    render(<RegistrarInteraccionPage />);
+    rellenarObligatorios();
+    ponerAcordada("2026-07-13");
+
+    expect(boton().disabled).toBe(true);
+    fireEvent.submit(boton().closest("form") as HTMLFormElement);
+    expect(within(campo("Próximo contacto acordado")).getByText(ERROR_FECHA_ACORDADA_PASADA)).toBeDefined();
+    expect(mutateMock).not.toHaveBeenCalled();
+  });
+
+  it("rechazo del servidor: se pinta en el campo acordado, NUNCA en la fecha de la interacción", async () => {
+    mutateMock.mockRejectedValue(
+      new ConvexError({ code: "VALIDATION_ERROR", field: "fechaAcordada", message: "en el pasado" }),
+    );
+    render(<RegistrarInteraccionPage />);
+    rellenarObligatorios();
+    fireEvent.submit(boton().closest("form") as HTMLFormElement);
+
+    await waitFor(() =>
+      expect(within(campo("Próximo contacto acordado")).getByText(ERROR_FECHA_ACORDADA_PASADA)).toBeDefined(),
+    );
+    // El fallo que se evita: mensaje contrario en el campo de al lado.
+    expect(screen.queryByText(ERROR_FECHA_FUTURA)).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("en etapa terminal el campo no se ofrece: allí no hay seguimiento (JOS-8)", () => {
+    useQueryMock.mockReturnValue({ ...PROSPECTO, etapaActual: "joined" });
+    render(<RegistrarInteraccionPage />);
+    expect(screen.queryByLabelText("Próximo contacto acordado")).toBeNull();
+    // El resto del formulario sigue completo: registrar el contacto sí se puede.
+    expect(screen.getByLabelText("Fecha del contacto")).toBeDefined();
+  });
+
+  it("mientras carga el prospecto el campo no aparece (sin parpadeo)", () => {
+    useQueryMock.mockReturnValue(undefined);
+    render(<RegistrarInteraccionPage />);
+    expect(screen.queryByLabelText("Próximo contacto acordado")).toBeNull();
+  });
+
+  it("carrera: si el servidor rechaza por etapa terminal, el banner lo explica y no habla de conexión", async () => {
+    mutateMock.mockRejectedValue(
+      new ConvexError({ code: "VALIDATION_ERROR", field: "etapaActual", message: "etapa terminal" }),
+    );
+    render(<RegistrarInteraccionPage />);
+    rellenarObligatorios();
+    fireEvent.submit(boton().closest("form") as HTMLFormElement);
+
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(BANNER_ETAPA_TERMINAL));
+    expect(screen.queryByText(BANNER_ERROR_RED)).toBeNull();
+    expect(replaceMock).not.toHaveBeenCalled();
   });
 });

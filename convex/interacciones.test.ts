@@ -173,6 +173,89 @@ describe("interacciones.crear · efectos en el prospecto", () => {
   });
 });
 
+describe("interacciones.crear · fecha acordada en el registro (JOS-68)", () => {
+  const FUTURO_DAY_KEY = "2026-07-20";
+  const { hoyInicio: FUTURO_MEDIANOCHE } = ventanaDia(FUTURO_DAY_KEY, APP_TZ);
+  const FUTURO_MEDIODIA = FUTURO_MEDIANOCHE + 12 * 3_600_000;
+
+  it("con fecha acordada: manda el acuerdo, no el motor, y se guarda a medianoche", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t);
+
+    const r = await crear(t, prospectoId, { fechaAcordada: FUTURO_MEDIODIA });
+
+    expect(r.prospecto.fechaProximoSeguimiento).toBe(FUTURO_MEDIANOCHE);
+    expect(r.prospecto.seguimientoManual).toBe(true);
+    // Lo que habría puesto el motor queda descartado: es la precedencia de JOS-67.
+    expect(r.prospecto.fechaProximoSeguimiento).not.toBe(calcularFechaProximoSeguimiento("contacted", AHORA));
+    // El resto del registro sigue igual: la interacción no guarda esta fecha.
+    expect(r.prospecto.fechaUltimoContacto).toBe(AHORA);
+    expect(r.interaccion).not.toHaveProperty("fechaAcordada");
+
+    const doc = await t.run((ctx) => ctx.db.get(prospectoId));
+    expect(doc!.fechaProximoSeguimiento).toBe(FUTURO_MEDIANOCHE);
+    expect(doc!.seguimientoManual).toBe(true);
+  });
+
+  it("acordar para HOY se acepta: el suelo es la medianoche de hoy, no el instante", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t);
+    const r = await crear(t, prospectoId, { fechaAcordada: AHORA });
+    expect(r.prospecto.fechaProximoSeguimiento).toBe(hoyInicio);
+    expect(r.prospecto.seguimientoManual).toBe(true);
+  });
+
+  it("sustituye un acuerdo anterior en vez de consumirlo", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t, {
+      fechaProximoSeguimiento: ventanaDia("2026-07-26", APP_TZ).hoyInicio,
+      seguimientoManual: true,
+    });
+    const r = await crear(t, prospectoId, { fechaAcordada: FUTURO_MEDIODIA });
+    expect(r.prospecto.fechaProximoSeguimiento).toBe(FUTURO_MEDIANOCHE);
+    expect(r.prospecto.seguimientoManual).toBe(true);
+  });
+
+  it.each([
+    ["ayer", AHORA - DIA],
+    ["NaN", Number.NaN],
+    ["+Infinity", Number.POSITIVE_INFINITY],
+    ["fuera del rango de Date", 9e15],
+  ])("rechaza la fecha acordada %s con field fechaAcordada y sin escribir nada", async (_nombre, fechaAcordada) => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t);
+
+    const data = await dataDeError(crear(t, prospectoId, { fechaAcordada }));
+
+    // field PROPIO: compartir "fecha" con la fecha de la interacción haría que el
+    // cliente pintara el campo equivocado con el mensaje contrario.
+    expect(data).toMatchObject({ code: "VALIDATION_ERROR", field: "fechaAcordada" });
+    expect(await t.run((ctx) => ctx.db.query("interacciones").collect())).toEqual([]);
+    // Y el prospecto tampoco se mueve: hoy la validación va antes del insert y
+    // antes del patch, y este test lo fija para que siga siendo así.
+    const doc = await t.run((ctx) => ctx.db.get(prospectoId));
+    expect(doc!.fechaUltimoContacto).toBeUndefined();
+    expect(doc).not.toHaveProperty("fechaProximoSeguimiento");
+    expect(doc).not.toHaveProperty("seguimientoManual");
+  });
+
+  it("carrera con la UI: si el prospecto pasó a etapa terminal, rechaza sin registrar nada", async () => {
+    const t = nuevoTest();
+    // La pantalla oculta el campo en etapas terminales; esto cubre el hueco de
+    // haberla abierto antes del cambio de etapa.
+    const prospectoId = await conProspecto(t, { etapaActual: "joined" });
+
+    const data = await dataDeError(crear(t, prospectoId, { fechaAcordada: FUTURO_MEDIODIA }));
+
+    expect(data).toMatchObject({ code: "VALIDATION_ERROR", field: "etapaActual" });
+    expect(await t.run((ctx) => ctx.db.query("interacciones").collect())).toEqual([]);
+    const doc = await t.run((ctx) => ctx.db.get(prospectoId));
+    expect(doc!.fechaUltimoContacto).toBeUndefined();
+    expect(doc).not.toHaveProperty("fechaProximoSeguimiento");
+    expect(doc).not.toHaveProperty("seguimientoManual");
+  });
+});
+
 describe("interacciones.crear · validación de fecha (reloj fijado)", () => {
   it("acepta exactamente now + margen de 5 minutos", async () => {
     const t = nuevoTest();
