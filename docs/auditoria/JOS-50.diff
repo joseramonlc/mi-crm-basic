@@ -375,7 +375,7 @@ index 01715e6..744f0d9 100644
      // Rompe también si se sube cualquiera de las SIETE constantes implicadas: las dos
      // cotas de lectura y los cinco topes de texto.
 diff --git a/convex/schema.ts b/convex/schema.ts
-index 006bcee..e85a870 100644
+index 006bcee..334f9c5 100644
 --- a/convex/schema.ts
 +++ b/convex/schema.ts
 @@ -43,6 +43,13 @@ export const etapaProspecto = v.union(
@@ -392,7 +392,7 @@ index 006bcee..e85a870 100644
  export const tipoInteraccion = v.union(v.literal("call"), v.literal("message"), v.literal("meeting"));
  
  export const resultadoInteraccion = v.union(
-@@ -69,6 +76,14 @@ export default defineSchema({
+@@ -69,6 +76,22 @@ export default defineSchema({
      // Ausente = false, así que los prospectos anteriores no necesitan migración.
      // NO se indexa: solo se consulta tras leer el documento, nunca por rango.
      seguimientoManual: v.optional(v.boolean()),
@@ -404,6 +404,14 @@ index 006bcee..e85a870 100644
 +    // NO se indexa: ordenar por prioridad se hace en memoria sobre lecturas ya
 +    // acotadas; un índice sobre un campo con ausencias complicaría los rangos.
 +    prioridad: v.optional(prioridadProspecto),
++    // ── OJO al QUITAR un campo opcional (vale para los DOS de arriba) ──
++    // Que la IDA no necesite migración NO implica que la vuelta tampoco. Convex
++    // valida los documentos EXISTENTES contra el esquema, y un documento que
++    // conserve el campo deja de ser válido si el esquema ya no lo declara: el
++    // despliegue se RECHAZA. El orden correcto es (1) dejar de escribirlo y
++    // desplegar, (2) vaciarlo de los documentos con patch({ campo: undefined }),
++    // (3) y solo entonces quitarlo de aquí. Lo señaló el review de CodeRabbit en
++    // el PR #12 sobre una afirmación equivocada del plan de JOS-50.
    })
      .index("by_usuario", ["usuarioId"])
      .index("by_usuario_seguimiento", ["usuarioId", "fechaProximoSeguimiento"])

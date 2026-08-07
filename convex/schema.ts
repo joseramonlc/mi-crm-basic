@@ -84,6 +84,14 @@ export default defineSchema({
     // NO se indexa: ordenar por prioridad se hace en memoria sobre lecturas ya
     // acotadas; un índice sobre un campo con ausencias complicaría los rangos.
     prioridad: v.optional(prioridadProspecto),
+    // ── OJO al QUITAR un campo opcional (vale para los DOS de arriba) ──
+    // Que la IDA no necesite migración NO implica que la vuelta tampoco. Convex
+    // valida los documentos EXISTENTES contra el esquema, y un documento que
+    // conserve el campo deja de ser válido si el esquema ya no lo declara: el
+    // despliegue se RECHAZA. El orden correcto es (1) dejar de escribirlo y
+    // desplegar, (2) vaciarlo de los documentos con patch({ campo: undefined }),
+    // (3) y solo entonces quitarlo de aquí. Lo señaló el review de CodeRabbit en
+    // el PR #12 sobre una afirmación equivocada del plan de JOS-50.
   })
     .index("by_usuario", ["usuarioId"])
     .index("by_usuario_seguimiento", ["usuarioId", "fechaProximoSeguimiento"])
