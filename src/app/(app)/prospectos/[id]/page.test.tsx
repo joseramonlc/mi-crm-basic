@@ -5,13 +5,20 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { getFunctionName } from "convex/server";
 import { escribirFlash, consumirFlash } from "@/lib/flash";
 import { formatearFechaEs } from "@/lib/etiquetas";
+import { fechaAcordadaAMs } from "@/lib/fechaAcordada";
 import { BANNER_ERROR_RED } from "../nuevo/textos";
 import {
+  ACCION_FIJAR,
+  ACCION_GUARDAR_FECHA,
+  ACCION_QUITAR,
   CARGANDO_HISTORIAL,
   CARGANDO_PROSPECTO,
   ERROR_CAMBIO_ETAPA,
+  ETIQUETA_CAMPO_ACORDADA,
   ETIQUETA_EDITAR,
   TITULO_EDICION,
+  TOAST_ACUERDO_FIJADO,
+  TOAST_ACUERDO_QUITADO,
   TOAST_DATOS_GUARDADOS,
   SIN_CONTACTO,
   SIN_NOTAS,
@@ -23,12 +30,24 @@ import FichaProspectoPage from "./page";
 
 // Sin proveedor Convex real (estrategia de JOS-22/M3): se mockean las dos
 // suscripciones, las mutations (etapa y actualización) y la navegación.
-const { useQueryMock, usePaginatedQueryMock, useMutationMock, cambiarEtapaMock, actualizarMock, loadMoreMock, replaceMock } = vi.hoisted(() => ({
+const {
+  useQueryMock,
+  usePaginatedQueryMock,
+  useMutationMock,
+  cambiarEtapaMock,
+  actualizarMock,
+  fijarMock,
+  quitarMock,
+  loadMoreMock,
+  replaceMock,
+} = vi.hoisted(() => ({
   useQueryMock: vi.fn(),
   usePaginatedQueryMock: vi.fn(),
   useMutationMock: vi.fn(),
   cambiarEtapaMock: vi.fn(),
   actualizarMock: vi.fn(),
+  fijarMock: vi.fn(),
+  quitarMock: vi.fn(),
   loadMoreMock: vi.fn(),
   replaceMock: vi.fn(),
 }));
@@ -116,10 +135,13 @@ beforeEach(() => {
   vi.clearAllMocks();
   window.sessionStorage.clear();
   useQueryMock.mockReturnValue(PROSPECTO);
-  // Cada mutation recibe su mock por nombre canónico (bocado 3: hay dos).
-  useMutationMock.mockImplementation((referencia) =>
-    getFunctionName(referencia) === "prospectos:actualizar" ? actualizarMock : cambiarEtapaMock,
-  );
+  // Cada mutation recibe su mock por nombre canónico (desde JOS-69 son cuatro).
+  const MOCKS: Record<string, ReturnType<typeof vi.fn>> = {
+    "prospectos:actualizar": actualizarMock,
+    "prospectos:fijarSeguimientoAcordado": fijarMock,
+    "prospectos:quitarSeguimientoAcordado": quitarMock,
+  };
+  useMutationMock.mockImplementation((referencia) => MOCKS[getFunctionName(referencia)] ?? cambiarEtapaMock);
   prepararHistorial();
 });
 
@@ -174,7 +196,10 @@ describe("sección de datos (P3) y notas (P8)", () => {
   });
 });
 
-describe("tarjeta de seguimiento (P5, solo lectura)", () => {
+// Desde JOS-69 la fecha de próximo contacto es editable; "Último contacto"
+// sigue siendo del motor. La edición se prueba en SeguimientoAcordado.test.tsx
+// y su cableado más abajo.
+describe("tarjeta de seguimiento (P5)", () => {
   it("muestra las dos fechas del motor formateadas", () => {
     render(<FichaProspectoPage />);
     expect(screen.getByText(formatearFechaEs(FECHA_PROXIMO))).toBeDefined();
@@ -424,11 +449,17 @@ describe("cambio de etapa (JOS-19, bocado 2)", () => {
     render(<FichaProspectoPage />);
     // getFunctionName: el proxy del api genera referencias nuevas por acceso;
     // el nombre canónico es la identidad estable de la función Convex. Desde
-    // el bocado 3 conviven DOS mutations — sigue sin estar interacciones.crear.
-    expect(useMutationMock.mock.calls.map((llamada) => getFunctionName(llamada[0]))).toEqual([
+    // JOS-69 conviven CUATRO mutations (las dos del contacto acordado se suman
+    // a etapa y actualización) — y sigue sin estar interacciones.crear, que es
+    // lo que este test protege.
+    const mutations = useMutationMock.mock.calls.map((llamada) => getFunctionName(llamada[0]));
+    expect(mutations).toEqual([
       "prospectos:cambiarEtapa",
       "prospectos:actualizar",
+      "prospectos:fijarSeguimientoAcordado",
+      "prospectos:quitarSeguimientoAcordado",
     ]);
+    expect(mutations).not.toContain("interacciones:crear");
   });
 
   it("el selector de etapa sigue operativo durante la edición, con el formulario abierto (P2 bocado 3)", async () => {
@@ -514,5 +545,85 @@ describe("edición de datos (JOS-18, bocado 3)", () => {
     expect(actualizarMock).not.toHaveBeenCalled();
     expect(screen.queryByRole("form", { name: TITULO_EDICION })).toBeNull();
     expect(screen.getByRole("region", { name: "Datos del prospecto" })).toBeDefined();
+  });
+});
+
+describe("contacto acordado en la ficha (JOS-69)", () => {
+  const ACORDADA = "2026-07-22";
+  const FECHA_ACUERDO = Date.UTC(2026, 6, 22, 10);
+  const AHORA = Date.UTC(2026, 6, 14, 8, 0); // martes 2026-07-14, 10:00 Madrid
+
+  beforeEach(() => {
+    vi.spyOn(Date, "now").mockReturnValue(AHORA);
+  });
+
+  it("fijar: llama a la mutation con el día elegido y avisa", async () => {
+    fijarMock.mockResolvedValue({ ...PROSPECTO, fechaProximoSeguimiento: FECHA_ACUERDO, seguimientoManual: true });
+    render(<FichaProspectoPage />);
+    fireEvent.click(screen.getByRole("button", { name: ACCION_FIJAR }));
+    fireEvent.change(screen.getByLabelText(ETIQUETA_CAMPO_ACORDADA), { target: { value: ACORDADA } });
+    fireEvent.click(screen.getByRole("button", { name: ACCION_GUARDAR_FECHA }));
+
+    await waitFor(() => expect(fijarMock).toHaveBeenCalledWith({ id: "p7", fecha: fechaAcordadaAMs(ACORDADA) }));
+    expect(textosDeStatus()).toContain(TOAST_ACUERDO_FIJADO);
+  });
+
+  it("quitar: llama a la mutation que RECALCULA con el motor y avisa", async () => {
+    useQueryMock.mockReturnValue({ ...PROSPECTO, fechaProximoSeguimiento: FECHA_ACUERDO, seguimientoManual: true });
+    quitarMock.mockResolvedValue({ ...PROSPECTO });
+    render(<FichaProspectoPage />);
+    fireEvent.click(screen.getByRole("button", { name: ACCION_QUITAR }));
+
+    await waitFor(() => expect(quitarMock).toHaveBeenCalledWith({ id: "p7" }));
+    expect(textosDeStatus()).toContain(TOAST_ACUERDO_QUITADO);
+  });
+
+  it("cambiar de etapa con acuerdo vigente: el aviso dice que la fecha SE MANTIENE", async () => {
+    // El acuerdo gana sobre la regla de la etapa (JOS-67): anunciar "próximo
+    // contacto" haría creer que el cambio de etapa recalculó la fecha.
+    cambiarEtapaMock.mockResolvedValue({
+      ...PROSPECTO,
+      etapaActual: "presented",
+      fechaProximoSeguimiento: FECHA_ACUERDO,
+      seguimientoManual: true,
+    });
+    render(<FichaProspectoPage />);
+    fireEvent.click(screen.getByRole("radio", { name: "Presentación realizada" }));
+
+    await waitFor(() =>
+      expect(textosDeStatus()).toContain(
+        `Etapa actualizada: Presentación realizada. Se mantiene el contacto acordado: ${formatearFechaEs(FECHA_ACUERDO)}`,
+      ),
+    );
+  });
+
+  it("la marca SIN fecha no presume un acuerdo: el aviso no habla de contacto acordado", async () => {
+    // Caso anómalo que el backend contempla defensivamente: seguimientoManual
+    // sin fecha NO es un acuerdo vigente.
+    cambiarEtapaMock.mockResolvedValue({
+      ...sin(PROSPECTO, "fechaProximoSeguimiento"),
+      etapaActual: "presented",
+      seguimientoManual: true,
+    });
+    render(<FichaProspectoPage />);
+    fireEvent.click(screen.getByRole("radio", { name: "Presentación realizada" }));
+
+    await waitFor(() => expect(textosDeStatus()).toContain("Etapa actualizada: Presentación realizada."));
+    expect(textosDeStatus().some((t) => t.includes("contacto acordado"))).toBe(false);
+  });
+
+  it("el aviso sale del prospecto DEVUELTO, no de la suscripción (que puede ir desfasada)", async () => {
+    // La suscripción todavía muestra el acuerdo; el servidor ya devolvió una
+    // fecha del motor. Manda lo devuelto.
+    useQueryMock.mockReturnValue({ ...PROSPECTO, fechaProximoSeguimiento: FECHA_ACUERDO, seguimientoManual: true });
+    cambiarEtapaMock.mockResolvedValue({ ...PROSPECTO, etapaActual: "presented", fechaProximoSeguimiento: FECHA_ACUERDO });
+    render(<FichaProspectoPage />);
+    fireEvent.click(screen.getByRole("radio", { name: "Presentación realizada" }));
+
+    await waitFor(() =>
+      expect(textosDeStatus()).toContain(
+        `Etapa actualizada: Presentación realizada. Próximo contacto: ${formatearFechaEs(FECHA_ACUERDO)}`,
+      ),
+    );
   });
 });

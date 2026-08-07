@@ -13,11 +13,14 @@ import { consumirFlash } from "@/lib/flash";
 import { formatearFechaEs } from "@/lib/etiquetas";
 import { SelectorEtapa } from "./SelectorEtapa";
 import { EdicionDatos, type PatchDatos } from "./EdicionDatos";
+import { DatoFecha, SeguimientoAcordado } from "./SeguimientoAcordado";
 import {
   CARGANDO_HISTORIAL,
   CARGANDO_PROSPECTO,
   CTA_REGISTRAR,
   ERROR_CAMBIO_ETAPA,
+  TOAST_ACUERDO_FIJADO,
+  TOAST_ACUERDO_QUITADO,
   ETIQUETA_ATRAS,
   ETIQUETA_EDITAR,
   ICONO_CANAL,
@@ -26,7 +29,6 @@ import {
   RESULTADO_BADGE,
   SIN_CONTACTO,
   SIN_NOTAS,
-  SIN_SEGUIMIENTO,
   TITULO_ETAPA,
   TITULO_FALLBACK,
   TOAST_DATOS_GUARDADOS,
@@ -64,6 +66,8 @@ export default function FichaProspectoPage() {
   const historial = usePaginatedQuery(api.interacciones.listarPorProspecto, { prospectoId }, { initialNumItems: 50 });
   const cambiarEtapa = useMutation(api.prospectos.cambiarEtapa);
   const actualizar = useMutation(api.prospectos.actualizar);
+  const fijarAcordado = useMutation(api.prospectos.fijarSeguimientoAcordado);
+  const quitarAcordado = useMutation(api.prospectos.quitarSeguimientoAcordado);
 
   // Drenaje automático (P11): la API de M2 pagina por contrato, pero JOS-20 no
   // admite paginación visible — se piden bloques de 50 hasta agotar el cursor.
@@ -97,7 +101,12 @@ export default function FichaProspectoPage() {
       // El toast usa el prospecto DEVUELTO (fecha recalculada por el motor);
       // pills, StageBadge y tarjeta se refrescan solos por la suscripción.
       const actualizado = await cambiarEtapa({ id: prospectoId, etapa });
-      setAviso(textoToastEtapa(actualizado.etapaActual, actualizado.fechaProximoSeguimiento));
+      // Los TRES datos salen del prospecto DEVUELTO, nunca del estado local: con
+      // una carrera o una suscripción desfasada, el aviso mentiría sobre si la
+      // fecha se ha movido (JOS-69).
+      setAviso(
+        textoToastEtapa(actualizado.etapaActual, actualizado.fechaProximoSeguimiento, actualizado.seguimientoManual),
+      );
     } catch {
       // Sin estado optimista: la etapa mostrada sigue siendo la del servidor
       // y la pendiente se anula (si no, las pills quedarían bloqueadas).
@@ -118,6 +127,19 @@ export default function FichaProspectoPage() {
     await actualizar({ id: prospectoId, ...patch });
     setAviso(TOAST_DATOS_GUARDADOS);
     setEditando(false);
+  }
+
+  // Contacto acordado (JOS-69): la ficha solo llama y avisa. La validación, los
+  // errores y el bloqueo durante el guardado viven en SeguimientoAcordado, que
+  // necesita el rechazo para conservar lo tecleado — por eso se re-lanza.
+  async function fijarAcuerdo(fechaMs: number) {
+    await fijarAcordado({ id: prospectoId, fecha: fechaMs });
+    setAviso(TOAST_ACUERDO_FIJADO);
+  }
+
+  async function quitarAcuerdo() {
+    await quitarAcordado({ id: prospectoId });
+    setAviso(TOAST_ACUERDO_QUITADO);
   }
 
   React.useEffect(() => {
@@ -165,7 +187,7 @@ export default function FichaProspectoPage() {
               ) : (
                 <SeccionDatos prospecto={prospecto} onEditar={() => setEditando(true)} />
               )}
-              <TarjetaSeguimiento prospecto={prospecto} />
+              <TarjetaSeguimiento prospecto={prospecto} onFijar={fijarAcuerdo} onQuitar={quitarAcuerdo} />
               <SeccionEtapa
                 etapaActual={prospecto.etapaActual}
                 guardando={guardandoEtapa}
@@ -240,17 +262,26 @@ function FilaDato({ icono, texto }: { icono: string; texto: string }) {
   );
 }
 
-/** Fechas del motor (JOS-8/JOS-12), SOLO lectura en la ficha (letra de JOS-17). */
-function TarjetaSeguimiento({ prospecto }: { prospecto: ProspectoPublico }) {
+/**
+ * Tarjeta de Seguimiento. La fecha de próximo contacto dejó de ser solo lectura
+ * en JOS-69: la Mejora #4 introduce la excepción a la letra de JOS-17/JOS-18
+ * para la cita acordada, y la edición vive en SeguimientoAcordado. "Último
+ * contacto" sigue siendo del motor y no se toca: lo mueve registrar interacciones.
+ */
+function TarjetaSeguimiento({
+  prospecto,
+  onFijar,
+  onQuitar,
+}: {
+  prospecto: ProspectoPublico;
+  onFijar: (fechaMs: number) => Promise<unknown>;
+  onQuitar: () => Promise<unknown>;
+}) {
   const terminal = INDICADOR_TERMINAL[prospecto.etapaActual];
   return (
     <Card>
       <section aria-label="Seguimiento" className="flex flex-col gap-3">
-        <DatoFecha
-          etiqueta="Próximo seguimiento"
-          valor={prospecto.fechaProximoSeguimiento !== undefined ? formatearFechaEs(prospecto.fechaProximoSeguimiento) : SIN_SEGUIMIENTO}
-          conValor={prospecto.fechaProximoSeguimiento !== undefined}
-        />
+        <SeguimientoAcordado prospecto={prospecto} onFijar={onFijar} onQuitar={onQuitar} />
         <DatoFecha
           etiqueta="Último contacto"
           valor={prospecto.fechaUltimoContacto !== undefined ? formatearFechaEs(prospecto.fechaUltimoContacto) : SIN_CONTACTO}
@@ -297,17 +328,6 @@ function SeccionEtapa({
         </p>
       )}
     </section>
-  );
-}
-
-function DatoFecha({ etiqueta, valor, conValor }: { etiqueta: string; valor: string; conValor: boolean }) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span style={{ fontSize: 13, fontWeight: 600, color: "var(--color-neutral-500)" }}>{etiqueta}</span>
-      <span style={{ fontSize: 16, fontWeight: conValor ? 600 : 400, color: conValor ? "var(--color-neutral-900)" : "var(--color-neutral-500)" }}>
-        {valor}
-      </span>
-    </div>
   );
 }
 
