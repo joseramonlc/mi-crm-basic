@@ -27,6 +27,8 @@ const PROSPECTO: ProspectoPublico = {
   fechaAlta: Date.UTC(2026, 5, 15, 10),
   fechaUltimoContacto: Date.UTC(2026, 6, 10, 10),
   fechaProximoSeguimiento: Date.UTC(2026, 6, 20, 10),
+  // JOS-50: la API siempre la resuelve, así que el fixture también la trae.
+  prioridad: "medium",
 };
 
 /** Copia del fixture sin los campos indicados (opcionales ausentes de la API). */
