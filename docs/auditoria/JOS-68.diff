@@ -1,0 +1,614 @@
+diff --git a/convex/interacciones.test.ts b/convex/interacciones.test.ts
+index 02c7530..dc2998d 100644
+--- a/convex/interacciones.test.ts
++++ b/convex/interacciones.test.ts
+@@ -173,6 +173,89 @@ describe("interacciones.crear · efectos en el prospecto", () => {
+   });
+ });
+ 
++describe("interacciones.crear · fecha acordada en el registro (JOS-68)", () => {
++  const FUTURO_DAY_KEY = "2026-07-20";
++  const { hoyInicio: FUTURO_MEDIANOCHE } = ventanaDia(FUTURO_DAY_KEY, APP_TZ);
++  const FUTURO_MEDIODIA = FUTURO_MEDIANOCHE + 12 * 3_600_000;
++
++  it("con fecha acordada: manda el acuerdo, no el motor, y se guarda a medianoche", async () => {
++    const t = nuevoTest();
++    const prospectoId = await conProspecto(t);
++
++    const r = await crear(t, prospectoId, { fechaAcordada: FUTURO_MEDIODIA });
++
++    expect(r.prospecto.fechaProximoSeguimiento).toBe(FUTURO_MEDIANOCHE);
++    expect(r.prospecto.seguimientoManual).toBe(true);
++    // Lo que habría puesto el motor queda descartado: es la precedencia de JOS-67.
++    expect(r.prospecto.fechaProximoSeguimiento).not.toBe(calcularFechaProximoSeguimiento("contacted", AHORA));
++    // El resto del registro sigue igual: la interacción no guarda esta fecha.
++    expect(r.prospecto.fechaUltimoContacto).toBe(AHORA);
++    expect(r.interaccion).not.toHaveProperty("fechaAcordada");
++
++    const doc = await t.run((ctx) => ctx.db.get(prospectoId));
++    expect(doc!.fechaProximoSeguimiento).toBe(FUTURO_MEDIANOCHE);
++    expect(doc!.seguimientoManual).toBe(true);
++  });
++
++  it("acordar para HOY se acepta: el suelo es la medianoche de hoy, no el instante", async () => {
++    const t = nuevoTest();
++    const prospectoId = await conProspecto(t);
++    const r = await crear(t, prospectoId, { fechaAcordada: AHORA });
++    expect(r.prospecto.fechaProximoSeguimiento).toBe(hoyInicio);
++    expect(r.prospecto.seguimientoManual).toBe(true);
++  });
++
++  it("sustituye un acuerdo anterior en vez de consumirlo", async () => {
++    const t = nuevoTest();
++    const prospectoId = await conProspecto(t, {
++      fechaProximoSeguimiento: ventanaDia("2026-07-26", APP_TZ).hoyInicio,
++      seguimientoManual: true,
++    });
++    const r = await crear(t, prospectoId, { fechaAcordada: FUTURO_MEDIODIA });
++    expect(r.prospecto.fechaProximoSeguimiento).toBe(FUTURO_MEDIANOCHE);
++    expect(r.prospecto.seguimientoManual).toBe(true);
++  });
++
++  it.each([
++    ["ayer", AHORA - DIA],
++    ["NaN", Number.NaN],
++    ["+Infinity", Number.POSITIVE_INFINITY],
++    ["fuera del rango de Date", 9e15],
++  ])("rechaza la fecha acordada %s con field fechaAcordada y sin escribir nada", async (_nombre, fechaAcordada) => {
++    const t = nuevoTest();
++    const prospectoId = await conProspecto(t);
++
++    const data = await dataDeError(crear(t, prospectoId, { fechaAcordada }));
++
++    // field PROPIO: compartir "fecha" con la fecha de la interacción haría que el
++    // cliente pintara el campo equivocado con el mensaje contrario.
++    expect(data).toMatchObject({ code: "VALIDATION_ERROR", field: "fechaAcordada" });
++    expect(await t.run((ctx) => ctx.db.query("interacciones").collect())).toEqual([]);
++    // Y el prospecto tampoco se mueve: hoy la validación va antes del insert y
++    // antes del patch, y este test lo fija para que siga siendo así.
++    const doc = await t.run((ctx) => ctx.db.get(prospectoId));
++    expect(doc!.fechaUltimoContacto).toBeUndefined();
++    expect(doc).not.toHaveProperty("fechaProximoSeguimiento");
++    expect(doc).not.toHaveProperty("seguimientoManual");
++  });
++
++  it("carrera con la UI: si el prospecto pasó a etapa terminal, rechaza sin registrar nada", async () => {
++    const t = nuevoTest();
++    // La pantalla oculta el campo en etapas terminales; esto cubre el hueco de
++    // haberla abierto antes del cambio de etapa.
++    const prospectoId = await conProspecto(t, { etapaActual: "joined" });
++
++    const data = await dataDeError(crear(t, prospectoId, { fechaAcordada: FUTURO_MEDIODIA }));
++
++    expect(data).toMatchObject({ code: "VALIDATION_ERROR", field: "etapaActual" });
++    expect(await t.run((ctx) => ctx.db.query("interacciones").collect())).toEqual([]);
++    const doc = await t.run((ctx) => ctx.db.get(prospectoId));
++    expect(doc!.fechaUltimoContacto).toBeUndefined();
++    expect(doc).not.toHaveProperty("fechaProximoSeguimiento");
++    expect(doc).not.toHaveProperty("seguimientoManual");
++  });
++});
++
+ describe("interacciones.crear · validación de fecha (reloj fijado)", () => {
+   it("acepta exactamente now + margen de 5 minutos", async () => {
+     const t = nuevoTest();
+diff --git a/convex/interacciones.ts b/convex/interacciones.ts
+index d6387f1..a4569dd 100644
+--- a/convex/interacciones.ts
++++ b/convex/interacciones.ts
+@@ -1,9 +1,10 @@
+ import { mutation, query } from "./_generated/server";
+ import { v } from "convex/values";
+ import { paginationOptsValidator, paginationResultValidator } from "convex/server";
+-import { calcularFechaProximoSeguimiento } from "./lib/seguimiento";
++import { calcularFechaProximoSeguimiento, esTerminal, type Etapa } from "./lib/seguimiento";
+ import { requireUsuario } from "./lib/usuario";
+ import { prospectoDelUsuario } from "./lib/acceso";
++import { validationError } from "./lib/errores";
+ import {
+   interaccionPublicaValidator,
+   prospectoPublicoValidator,
+@@ -12,6 +13,7 @@ import {
+ } from "./lib/proyecciones";
+ import {
+   conLimites,
++  fechaAcordadaValidada,
+   queOcurrioObligatorio,
+   siguientePasoOpcional,
+   validarFechaInteraccion,
+@@ -19,6 +21,28 @@ import {
+ } from "./lib/validacion";
+ import { resultadoInteraccion, tipoInteraccion } from "./schema";
+ 
++/**
++ * Fecha acordada del registro, ya validada y normalizada, o `undefined` si no se
++ * pactó ninguna (JOS-68).
++ *
++ * El rechazo en etapas terminales es el mismo contrato de
++ * `prospectos.fijarSeguimientoAcordado`: allí JOS-8 promete "sin seguimiento", y
++ * aceptar una fecha devolvería a la Actividad Diaria un prospecto ya incorporado
++ * o descartado. Se pregunta por `esTerminal`, no por la lista de etapas, para no
++ * duplicar la tabla de SEGUIMIENTO_DIAS.
++ *
++ * Se llama ANTES del insert: la mutation es transaccional y el rollback lo
++ * cubriría igual, pero es más claro y menos frágil no escribir nada hasta que
++ * todos los argumentos son válidos.
++ */
++function fechaAcordadaDelRegistro(fechaAcordada: number | undefined, etapa: Etapa, ahoraMs: number): number | undefined {
++  if (fechaAcordada === undefined) return undefined;
++  if (esTerminal(etapa)) {
++    throw validationError("No se puede fijar un contacto acordado en una etapa terminal", "etapaActual");
++  }
++  return fechaAcordadaValidada(fechaAcordada, ahoraMs, "fechaAcordada");
++}
++
+ /**
+  * POST /prospectos/:id/interacciones (JOS-14/JOS-11). Registra el contacto y
+  * actualiza el prospecto EN LA MISMA MUTATION — las mutations de Convex son
+@@ -28,6 +52,13 @@ import { resultadoInteraccion, tipoInteraccion } from "./schema";
+  * (fecha < fechaUltimoContacto actual) no mueve el "último contacto" hacia
+  * atrás. Ambos campos derivados se calculan desde la misma referencia
+  * (invocación 2 de JOS-12).
++ *
++ * `fechaAcordada` (JOS-68) es OPCIONAL y no se guarda en la interacción: no
++ * describe el contacto que acaba de ocurrir, sino el que se pactó para después.
++ * Viaja aquí, y no en una segunda llamada a `prospectos.fijarSeguimientoAcordado`,
++ * porque JOS-11 exige que el registro y sus efectos persistan o fallen juntos:
++ * con dos transacciones, un fallo de la segunda dejaría la interacción guardada
++ * y el acuerdo perdido, y el usuario ya habría visto el aviso de confirmación.
+  */
+ export const crear = mutation({
+   args: {
+@@ -37,6 +68,7 @@ export const crear = mutation({
+     queOcurrio: v.string(),
+     resultado: resultadoInteraccion,
+     siguientePasoAcordado: v.optional(v.string()),
++    fechaAcordada: v.optional(v.number()),
+   },
+   returns: v.object({
+     interaccion: interaccionPublicaValidator,
+@@ -45,9 +77,13 @@ export const crear = mutation({
+   handler: async (ctx, args) => {
+     const usuarioId = await requireUsuario(ctx);
+     const prospecto = await prospectoDelUsuario(ctx, args.prospectoId, usuarioId);
+-    validarFechaInteraccion(args.fecha, Date.now());
++    // Un único reloj para las dos fechas: dos Date.now() podrían caer a distinto
++    // lado de la medianoche y validarse contra días civiles diferentes.
++    const ahora = Date.now();
++    validarFechaInteraccion(args.fecha, ahora);
+     const queOcurrio = queOcurrioObligatorio(args.queOcurrio);
+     const siguientePasoAcordado = siguientePasoOpcional(args.siguientePasoAcordado);
++    const acordada = fechaAcordadaDelRegistro(args.fechaAcordada, prospecto.etapaActual, ahora);
+ 
+     const interaccionId = await ctx.db.insert("interacciones", {
+       usuarioId,
+@@ -65,12 +101,20 @@ export const crear = mutation({
+         : Math.max(prospecto.fechaUltimoContacto, args.fecha);
+     await ctx.db.patch(prospecto._id, {
+       fechaUltimoContacto: fechaReferencia,
+-      // undefined elimina el campo en etapas terminales.
+-      fechaProximoSeguimiento: calcularFechaProximoSeguimiento(prospecto.etapaActual, fechaReferencia),
+-      // JOS-67: el contacto YA ocurrió, así que el acuerdo se CONSUME y el motor
+-      // vuelve a gobernar. Es el único de los tres puntos de invocación donde el
+-      // acuerdo se pierde solo, sin que el usuario tenga que quitarlo.
+-      seguimientoManual: undefined,
++      ...(acordada !== undefined
++        ? // JOS-68: se pactó la próxima cita durante este contacto. Sustituye al
++          // motor en el MISMO campo que él escribe, así ninguna pantalla de
++          // lectura se entera de quién puso la fecha (diseño de JOS-67).
++          { fechaProximoSeguimiento: acordada, seguimientoManual: true }
++        : {
++            // undefined elimina el campo en etapas terminales.
++            fechaProximoSeguimiento: calcularFechaProximoSeguimiento(prospecto.etapaActual, fechaReferencia),
++            // JOS-67: el contacto YA ocurrió, así que el acuerdo previo se
++            // CONSUME y el motor vuelve a gobernar. Es el único de los tres
++            // puntos de invocación donde el acuerdo se pierde solo, sin que el
++            // usuario tenga que quitarlo.
++            seguimientoManual: undefined,
++          }),
+     });
+ 
+     return {
+diff --git a/convex/lib/validacion.ts b/convex/lib/validacion.ts
+index 2a93d38..4cb9708 100644
+--- a/convex/lib/validacion.ts
++++ b/convex/lib/validacion.ts
+@@ -180,13 +180,19 @@ const FECHA_MAX_ABS_MS = 8.64e15;
+  * modo que el día de hoy se acepta entero. No se aplica FUTURO_MARGEN_MS: ese
+  * margen existe para tolerar relojes de cliente adelantados al registrar algo
+  * que YA ocurrió; aquí el riesgo es el contrario y el suelo ya es generoso.
++ *
++ * `campo` viaja en el `field` del VALIDATION_ERROR y por defecto es "fecha",
++ * el nombre del argumento en las mutations de JOS-67. Existe porque en
++ * "Registrar Interacción" (JOS-68) esta fecha convive con la de la interacción,
++ * que YA usa el field "fecha" y significa lo contrario: sin poder distinguirlas,
++ * el cliente pintaría el rechazo en el campo equivocado y con el mensaje opuesto.
+  */
+-export function fechaAcordadaValidada(fecha: number, ahoraMs: number): number {
+-  if (!Number.isFinite(fecha)) throw validationError("fecha debe ser un número finito (ms epoch)", "fecha");
+-  if (Math.abs(fecha) > FECHA_MAX_ABS_MS) throw validationError("fecha fuera de rango", "fecha");
++export function fechaAcordadaValidada(fecha: number, ahoraMs: number, campo = "fecha"): number {
++  if (!Number.isFinite(fecha)) throw validationError("fecha debe ser un número finito (ms epoch)", campo);
++  if (Math.abs(fecha) > FECHA_MAX_ABS_MS) throw validationError("fecha fuera de rango", campo);
+   const acordada = zonedMidnightToMs(civilDate(fecha, APP_TZ), APP_TZ);
+   if (acordada < zonedMidnightToMs(civilDate(ahoraMs, APP_TZ), APP_TZ)) {
+-    throw validationError("La fecha acordada no puede estar en el pasado", "fecha");
++    throw validationError("La fecha acordada no puede estar en el pasado", campo);
+   }
+   return acordada;
+ }
+diff --git a/src/app/(app)/prospectos/[id]/interacciones/nueva/page.test.tsx b/src/app/(app)/prospectos/[id]/interacciones/nueva/page.test.tsx
+index 05db387..ef97d21 100644
+--- a/src/app/(app)/prospectos/[id]/interacciones/nueva/page.test.tsx
++++ b/src/app/(app)/prospectos/[id]/interacciones/nueva/page.test.tsx
+@@ -1,12 +1,16 @@
+ // @vitest-environment jsdom
+ import * as React from "react";
+ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
++import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+ import { ConvexError } from "convex/values";
+ import { APP_TZ, ventanaDia, zonedMidnightToMs } from "../../../../../../../convex/lib/fecha";
+ import { consumirFlash } from "@/lib/flash";
+ import {
++  AYUDA_FECHA_ACORDADA,
++  AYUDA_FECHA_CONTACTO,
+   BANNER_ERROR_RED,
++  BANNER_ETAPA_TERMINAL,
++  ERROR_FECHA_ACORDADA_PASADA,
+   ERROR_FECHA_FUTURA,
+   ERROR_QUE_OCURRIO_OBLIGATORIO,
+   MAX_QUE_OCURRIO,
+@@ -297,3 +301,118 @@ describe("destino de salida según el origen (JOS-23)", () => {
+     expect(replaceMock).not.toHaveBeenCalledWith("https://ejemplo.invalido");
+   });
+ });
++
++describe("próximo contacto acordado (JOS-68)", () => {
++  const ACORDADA = "2026-07-22";
++  const ACORDADA_MS = ventanaDia(ACORDADA, APP_TZ).hoyInicio + 12 * 3_600_000;
++  const ACORDADA_MEDIANOCHE = ventanaDia(ACORDADA, APP_TZ).hoyInicio;
++
++  /**
++   * Caja del campo (label + control + error), para exigir que el error salga
++   * DEBAJO DEL CAMPO CORRECTO y no en cualquier parte de la pantalla: son dos
++   * fechas de reglas opuestas y confundirlas es el fallo que se vigila.
++   */
++  function campo(etiqueta: string): HTMLElement {
++    return screen.getByLabelText(etiqueta).closest("div")!.parentElement as HTMLElement;
++  }
++
++  function ponerAcordada(valor: string) {
++    fireEvent.change(screen.getByLabelText("Próximo contacto acordado"), { target: { value: valor } });
++  }
++
++  it("campo opcional, vacío por defecto y sin admitir nada anterior a hoy", () => {
++    render(<RegistrarInteraccionPage />);
++    const acordada = screen.getByLabelText("Próximo contacto acordado") as HTMLInputElement;
++    expect(acordada.value).toBe("");
++    expect(acordada.getAttribute("min")).toBe(HOY);
++    // La otra fecha es su espejo: solo admite hasta hoy.
++    expect((screen.getByLabelText("Fecha del contacto") as HTMLInputElement).getAttribute("max")).toBe(HOY);
++    // Las dos ayudas están presentes para deshacer la ambigüedad de la pantalla.
++    expect(within(campo("Fecha del contacto")).getByText(AYUDA_FECHA_CONTACTO)).toBeDefined();
++    expect(within(campo("Próximo contacto acordado")).getByText(AYUDA_FECHA_ACORDADA)).toBeDefined();
++  });
++
++  it("vacío: el envío no cambia y el botón no lo exige", () => {
++    render(<RegistrarInteraccionPage />);
++    rellenarObligatorios();
++    expect(boton().disabled).toBe(false);
++    fireEvent.submit(boton().closest("form") as HTMLFormElement);
++    expect(mutateMock.mock.calls[0][0]).not.toHaveProperty("fechaAcordada");
++  });
++
++  it("con fecha: viaja el mediodía del día elegido y el aviso dice que el contacto se acordó", async () => {
++    mutateMock.mockResolvedValue({
++      interaccion: { id: "i11" },
++      prospecto: { ...PROSPECTO, fechaProximoSeguimiento: ACORDADA_MEDIANOCHE, seguimientoManual: true },
++    });
++    render(<RegistrarInteraccionPage />);
++    rellenarObligatorios();
++    ponerAcordada(ACORDADA);
++    fireEvent.submit(boton().closest("form") as HTMLFormElement);
++
++    await waitFor(() => expect(replaceMock).toHaveBeenCalledWith("/prospectos/p7"));
++    expect(mutateMock.mock.calls[0][0]).toEqual({
++      prospectoId: "p7",
++      fecha: AHORA,
++      tipo: "call",
++      queOcurrio: "Llamada corta",
++      resultado: "interested",
++      fechaAcordada: ACORDADA_MS,
++    });
++    expect(consumirFlash()).toBe(textoToast(ACORDADA_MEDIANOCHE, true));
++  });
++
++  it("fecha pasada: error bajo SU campo, botón bloqueado y sin llamar a la API", () => {
++    render(<RegistrarInteraccionPage />);
++    rellenarObligatorios();
++    ponerAcordada("2026-07-13");
++
++    expect(boton().disabled).toBe(true);
++    fireEvent.submit(boton().closest("form") as HTMLFormElement);
++    expect(within(campo("Próximo contacto acordado")).getByText(ERROR_FECHA_ACORDADA_PASADA)).toBeDefined();
++    expect(mutateMock).not.toHaveBeenCalled();
++  });
++
++  it("rechazo del servidor: se pinta en el campo acordado, NUNCA en la fecha de la interacción", async () => {
++    mutateMock.mockRejectedValue(
++      new ConvexError({ code: "VALIDATION_ERROR", field: "fechaAcordada", message: "en el pasado" }),
++    );
++    render(<RegistrarInteraccionPage />);
++    rellenarObligatorios();
++    fireEvent.submit(boton().closest("form") as HTMLFormElement);
++
++    await waitFor(() =>
++      expect(within(campo("Próximo contacto acordado")).getByText(ERROR_FECHA_ACORDADA_PASADA)).toBeDefined(),
++    );
++    // El fallo que se evita: mensaje contrario en el campo de al lado.
++    expect(screen.queryByText(ERROR_FECHA_FUTURA)).toBeNull();
++    expect(screen.queryByRole("alert")).toBeNull();
++  });
++
++  it("en etapa terminal el campo no se ofrece: allí no hay seguimiento (JOS-8)", () => {
++    useQueryMock.mockReturnValue({ ...PROSPECTO, etapaActual: "joined" });
++    render(<RegistrarInteraccionPage />);
++    expect(screen.queryByLabelText("Próximo contacto acordado")).toBeNull();
++    // El resto del formulario sigue completo: registrar el contacto sí se puede.
++    expect(screen.getByLabelText("Fecha del contacto")).toBeDefined();
++  });
++
++  it("mientras carga el prospecto el campo no aparece (sin parpadeo)", () => {
++    useQueryMock.mockReturnValue(undefined);
++    render(<RegistrarInteraccionPage />);
++    expect(screen.queryByLabelText("Próximo contacto acordado")).toBeNull();
++  });
++
++  it("carrera: si el servidor rechaza por etapa terminal, el banner lo explica y no habla de conexión", async () => {
++    mutateMock.mockRejectedValue(
++      new ConvexError({ code: "VALIDATION_ERROR", field: "etapaActual", message: "etapa terminal" }),
++    );
++    render(<RegistrarInteraccionPage />);
++    rellenarObligatorios();
++    fireEvent.submit(boton().closest("form") as HTMLFormElement);
++
++    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(BANNER_ETAPA_TERMINAL));
++    expect(screen.queryByText(BANNER_ERROR_RED)).toBeNull();
++    expect(replaceMock).not.toHaveBeenCalled();
++  });
++});
+diff --git a/src/app/(app)/prospectos/[id]/interacciones/nueva/page.tsx b/src/app/(app)/prospectos/[id]/interacciones/nueva/page.tsx
+index fffa7da..b9bc76f 100644
+--- a/src/app/(app)/prospectos/[id]/interacciones/nueva/page.tsx
++++ b/src/app/(app)/prospectos/[id]/interacciones/nueva/page.tsx
+@@ -7,12 +7,17 @@ import { ConvexError } from "convex/values";
+ import { api } from "../../../../../../../convex/_generated/api";
+ import type { Id } from "../../../../../../../convex/_generated/dataModel";
+ import { APP_TZ, dayKeyToday, ventanaDia } from "../../../../../../../convex/lib/fecha";
++import { esTerminal } from "../../../../../../../convex/lib/seguimiento";
+ import { Avatar, Button, Input, PillSelect, StageBadge } from "@/components/ui";
+ import { FormHeader } from "@/components/layout/FormHeader";
+ import { escribirFlash } from "@/lib/flash";
+ import { destinoAlSalir, PARAM_VOLVER } from "@/lib/volver";
+ import {
++  AYUDA_FECHA_ACORDADA,
++  AYUDA_FECHA_CONTACTO,
+   BANNER_ERROR_RED,
++  BANNER_ETAPA_TERMINAL,
++  ERROR_FECHA_ACORDADA_PASADA,
+   ERROR_FECHA_FUTURA,
+   ERROR_FECHA_OBLIGATORIA,
+   ERROR_QUE_OCURRIO_OBLIGATORIO,
+@@ -28,17 +33,33 @@ import {
+   type TipoInteraccion,
+ } from "./textos";
+ 
+-type Campo = "tipo" | "fecha" | "queOcurrio" | "resultado";
++type Campo = "tipo" | "fecha" | "queOcurrio" | "resultado" | "fechaAcordada";
+ 
+ /** `data` del contrato de errores de M2, si el rechazo viene de un ConvexError. */
+ function datosConvex(e: unknown): { code?: string; field?: string; message?: string } | undefined {
+   return e instanceof ConvexError ? (e.data as { code?: string; field?: string; message?: string }) : undefined;
+ }
+ 
+-/** field del servidor → campo y texto inline del cliente (última defensa). */
++/**
++ * field del servidor → campo y texto inline del cliente (última defensa).
++ *
++ * `fechaAcordada` tiene entrada propia y NO comparte la de `fecha`: son las dos
++ * fechas de la pantalla y sus reglas son opuestas (JOS-68). Por eso el servidor
++ * las distingue en el `field` — sin ello, el rechazo de una pintaría la otra.
++ */
+ const ERROR_SERVIDOR: Record<string, { campo: Campo; texto: string }> = {
+   fecha: { campo: "fecha", texto: ERROR_FECHA_FUTURA },
+   queOcurrio: { campo: "queOcurrio", texto: ERROR_QUE_OCURRIO_OBLIGATORIO },
++  fechaAcordada: { campo: "fechaAcordada", texto: ERROR_FECHA_ACORDADA_PASADA },
++};
++
++/**
++ * field del servidor → banner, para los rechazos que no pertenecen a ningún
++ * campo del formulario. `etapaActual` llega cuando el prospecto pasó a una etapa
++ * terminal con la pantalla ya abierta; el banner de red sería engañoso.
++ */
++const BANNER_SERVIDOR: Record<string, string> = {
++  etapaActual: BANNER_ETAPA_TERMINAL,
+ };
+ 
+ /**
+@@ -52,6 +73,17 @@ function fechaSeleccionadaAMs(dayKey: string, ahoraMs: number): number {
+   return ventanaDia(dayKey, APP_TZ).hoyInicio + 12 * 3_600_000;
+ }
+ 
++/**
++ * Conversión de la fecha ACORDADA (JOS-68). Siempre mediodía de Madrid del día
++ * elegido: cae dentro del día civil correcto incluso en cambios de DST, y el
++ * servidor lo normaliza a medianoche. Aquí no hay caso "hoy → ahora" —esa regla
++ * existía para que el ritmo del día contase el registro recién hecho, y esta
++ * fecha no registra nada: apunta al futuro.
++ */
++function fechaAcordadaAMs(dayKey: string): number {
++  return ventanaDia(dayKey, APP_TZ).hoyInicio + 12 * 3_600_000;
++}
++
+ /**
+  * Envoltura de la pantalla: el formulario lee el parámetro `volver` de la URL y
+  * `useSearchParams` suspende durante el prerenderizado, así que el hook necesita
+@@ -107,6 +139,7 @@ function FormularioInteraccion() {
+   const [queOcurrio, setQueOcurrio] = React.useState("");
+   const [resultado, setResultado] = React.useState<ResultadoInteraccion | "">("");
+   const [siguientePaso, setSiguientePaso] = React.useState("");
++  const [fechaAcordada, setFechaAcordada] = React.useState("");
+   const [errores, setErrores] = React.useState<Partial<Record<Campo, string>>>({});
+   const [errorGeneral, setErrorGeneral] = React.useState<string | null>(null);
+   const [guardando, setGuardando] = React.useState(false);
+@@ -118,8 +151,23 @@ function FormularioInteraccion() {
+   // cruza con el formulario abierto, validar() recalcula "hoy" al enviar:
+   // la validación real nunca usa este valor potencialmente desfasado.
+   const [hoyDayKey] = React.useState(() => dayKeyToday(Date.now(), APP_TZ));
++
++  // ¿Cabe pactar un próximo contacto? (JOS-68) En etapas terminales JOS-8 promete
++  // "sin seguimiento" y el servidor lo rechaza, así que el campo ni se ofrece.
++  // Exige el prospecto CARGADO: con `undefined` la etapa aún no se conoce y
++  // pintar el campo para esconderlo al llegar la respuesta daría un parpadeo.
++  const permiteAcuerdo = prospecto !== undefined && !esTerminal(prospecto.etapaActual);
++  const acordadaEnviable = permiteAcuerdo && fechaAcordada !== "";
++
+   const obligatoriosListos =
+-    tipo !== "" && resultado !== "" && queOcurrio.trim() !== "" && fecha !== "" && fecha <= hoyDayKey;
++    tipo !== "" &&
++    resultado !== "" &&
++    queOcurrio.trim() !== "" &&
++    fecha !== "" &&
++    fecha <= hoyDayKey &&
++    // Espejo del bloqueo de la fecha de la interacción: opcional, pero si está
++    // puesta y es inválida el botón no invita a enviar.
++    (!acordadaEnviable || fechaAcordada >= hoyDayKey);
+ 
+   function limpiarError(campo: Campo) {
+     setErrores((prev) => {
+@@ -137,6 +185,11 @@ function FormularioInteraccion() {
+     else if (fecha > dayKeyToday(Date.now(), APP_TZ)) nuevos.fecha = ERROR_FECHA_FUTURA;
+     if (queOcurrio.trim() === "") nuevos.queOcurrio = ERROR_QUE_OCURRIO_OBLIGATORIO;
+     if (resultado === "") nuevos.resultado = ERROR_RESULTADO_OBLIGATORIO;
++    // Opcional: solo se valida si el usuario la puso. "Hoy" se recalcula al
++    // enviar, igual que la fecha de la interacción, por si cruzó la medianoche.
++    if (acordadaEnviable && fechaAcordada < dayKeyToday(Date.now(), APP_TZ)) {
++      nuevos.fechaAcordada = ERROR_FECHA_ACORDADA_PASADA;
++    }
+     setErrores(nuevos);
+     return Object.keys(nuevos).length === 0;
+   }
+@@ -159,18 +212,23 @@ function FormularioInteraccion() {
+         queOcurrio: queOcurrio.trim(),
+         resultado: resultado as ResultadoInteraccion,
+         ...(siguientePaso.trim() !== "" ? { siguientePasoAcordado: siguientePaso.trim() } : {}),
++        ...(acordadaEnviable ? { fechaAcordada: fechaAcordadaAMs(fechaAcordada) } : {}),
+       });
+       // El destino —Ficha o Actividad Diaria— consume el flash al montar y
+-      // muestra el toast (P8).
+-      escribirFlash(textoToast(respuesta.prospecto.fechaProximoSeguimiento));
++      // muestra el toast (P8). Quién puso la fecha lo dice el prospecto que
++      // devuelve el servidor, no lo que el formulario creía enviar.
++      escribirFlash(
++        textoToast(respuesta.prospecto.fechaProximoSeguimiento, respuesta.prospecto.seguimientoManual === true),
++      );
+       router.replace(destinoSalida);
+     } catch (err) {
+       const datos = datosConvex(err);
+-      const mapeo = datos?.code === "VALIDATION_ERROR" && datos.field !== undefined ? ERROR_SERVIDOR[datos.field] : undefined;
++      const field = datos?.code === "VALIDATION_ERROR" ? datos.field : undefined;
++      const mapeo = field !== undefined ? ERROR_SERVIDOR[field] : undefined;
+       if (mapeo !== undefined) {
+         setErrores({ [mapeo.campo]: mapeo.texto });
+       } else {
+-        setErrorGeneral(BANNER_ERROR_RED);
++        setErrorGeneral((field !== undefined ? BANNER_SERVIDOR[field] : undefined) ?? BANNER_ERROR_RED);
+       }
+       enviando.current = false;
+       setGuardando(false);
+@@ -220,6 +278,7 @@ function FormularioInteraccion() {
+             type="date"
+             value={fecha}
+             max={hoyDayKey}
++            helper={AYUDA_FECHA_CONTACTO}
+             error={errores.fecha}
+             onChange={(e) => {
+               setFecha(e.target.value);
+@@ -257,6 +316,26 @@ function FormularioInteraccion() {
+             placeholder={PLACEHOLDER_SIGUIENTE_PASO}
+             onChange={(e) => setSiguientePaso(e.target.value)}
+           />
++          {/*
++            JOS-68. Va el ÚLTIMO y pegado al siguiente paso —que recoge el "qué"
++            del acuerdo mientras este recoge el "cuándo"—, lo más lejos posible de
++            la fecha de la interacción: son dos fechas de significado opuesto en
++            la misma pantalla y ese es el riesgo de confusión de la tarea.
++          */}
++          {permiteAcuerdo && (
++            <Input
++              label="Próximo contacto acordado"
++              type="date"
++              value={fechaAcordada}
++              min={hoyDayKey}
++              helper={AYUDA_FECHA_ACORDADA}
++              error={errores.fechaAcordada}
++              onChange={(e) => {
++                setFechaAcordada(e.target.value);
++                limpiarError("fechaAcordada");
++              }}
++            />
++          )}
+         </div>
+ 
+         {/* Sticky por encima de la tab bar móvil; ver nota de teclado en JOS-15. */}
+diff --git a/src/app/(app)/prospectos/[id]/interacciones/nueva/textos.ts b/src/app/(app)/prospectos/[id]/interacciones/nueva/textos.ts
+index f344cdc..b91a2dd 100644
+--- a/src/app/(app)/prospectos/[id]/interacciones/nueva/textos.ts
++++ b/src/app/(app)/prospectos/[id]/interacciones/nueva/textos.ts
+@@ -9,19 +9,43 @@ export const ERROR_FECHA_OBLIGATORIA = "La fecha es obligatoria";
+ export const ERROR_FECHA_FUTURA = "La fecha no puede ser futura";
+ export const ERROR_QUE_OCURRIO_OBLIGATORIO = "Cuenta qué ocurrió en el contacto";
+ export const ERROR_RESULTADO_OBLIGATORIO = "Elige un resultado";
++export const ERROR_FECHA_ACORDADA_PASADA = "La fecha acordada no puede estar en el pasado";
+ export const BANNER_ERROR_RED = "No se pudo guardar. Comprueba tu conexión e inténtalo de nuevo.";
+ 
++/**
++ * El servidor rechaza la fecha acordada en etapas terminales (JOS-68). La
++ * pantalla oculta el campo en esas etapas, así que esto solo se ve en una
++ * carrera: el prospecto pasó a incorporado o descartado con el formulario ya
++ * abierto. Merece texto propio — el banner de red mandaría a comprobar la
++ * conexión cuando el problema es otro y no se arregla reintentando.
++ */
++export const BANNER_ETAPA_TERMINAL =
++  "Este prospecto ya no está activo, así que no admite un próximo contacto. Vuelve atrás y actualiza la pantalla.";
++
+ export const PLACEHOLDER_QUE_OCURRIO = "Resume brevemente qué pasó en este contacto...";
+ export const PLACEHOLDER_SIGUIENTE_PASO = "Ej: Enviarle el vídeo de presentación / Llamarle el jueves...";
+ 
++/**
++ * Textos de ayuda de las DOS fechas de la pantalla (JOS-68). Son simétricas y
++ * significan lo contrario —una mira al pasado y la otra al futuro—, que es el
++ * principal riesgo de UX de la tarea: las etiquetas solas no bastan.
++ */
++export const AYUDA_FECHA_CONTACTO = "Cuándo hablaste con el prospecto";
++export const AYUDA_FECHA_ACORDADA = "Solo si habéis quedado en una fecha concreta. Si lo dejas vacío, la calculo yo";
++
+ /** Límite SOLO de cliente (P11): la API de M2, cerrada, no lo impone. */
+ export const MAX_QUE_OCURRIO = 500;
+ 
+ /**
+  * Texto del toast (P8): el "cierre de bucle" de JOS-61 incluye el próximo
+  * contacto que dejó fijado el motor; en etapas terminales no hay próximo.
++ *
++ * Con `acordado` (JOS-68) la fecha la puso el usuario, no el motor, y el texto lo
++ * dice: confirma que su acuerdo quedó registrado en vez de atribuir la fecha a
++ * un cálculo que no ha ocurrido.
+  */
+-export function textoToast(fechaProximoSeguimiento?: number): string {
++export function textoToast(fechaProximoSeguimiento?: number, acordado = false): string {
+   if (fechaProximoSeguimiento === undefined) return "Interacción registrada";
+-  return `Interacción registrada, próximo contacto: ${formatearFechaEs(fechaProximoSeguimiento)}`;
++  const etiqueta = acordado ? "contacto acordado" : "próximo contacto";
++  return `Interacción registrada, ${etiqueta}: ${formatearFechaEs(fechaProximoSeguimiento)}`;
+ }

@@ -7,12 +7,17 @@ import { ConvexError } from "convex/values";
 import { api } from "../../../../../../../convex/_generated/api";
 import type { Id } from "../../../../../../../convex/_generated/dataModel";
 import { APP_TZ, dayKeyToday, ventanaDia } from "../../../../../../../convex/lib/fecha";
+import { esTerminal } from "../../../../../../../convex/lib/seguimiento";
 import { Avatar, Button, Input, PillSelect, StageBadge } from "@/components/ui";
 import { FormHeader } from "@/components/layout/FormHeader";
 import { escribirFlash } from "@/lib/flash";
 import { destinoAlSalir, PARAM_VOLVER } from "@/lib/volver";
 import {
+  AYUDA_FECHA_ACORDADA,
+  AYUDA_FECHA_CONTACTO,
   BANNER_ERROR_RED,
+  BANNER_ETAPA_TERMINAL,
+  ERROR_FECHA_ACORDADA_PASADA,
   ERROR_FECHA_FUTURA,
   ERROR_FECHA_OBLIGATORIA,
   ERROR_QUE_OCURRIO_OBLIGATORIO,
@@ -28,17 +33,33 @@ import {
   type TipoInteraccion,
 } from "./textos";
 
-type Campo = "tipo" | "fecha" | "queOcurrio" | "resultado";
+type Campo = "tipo" | "fecha" | "queOcurrio" | "resultado" | "fechaAcordada";
 
 /** `data` del contrato de errores de M2, si el rechazo viene de un ConvexError. */
 function datosConvex(e: unknown): { code?: string; field?: string; message?: string } | undefined {
   return e instanceof ConvexError ? (e.data as { code?: string; field?: string; message?: string }) : undefined;
 }
 
-/** field del servidor → campo y texto inline del cliente (última defensa). */
+/**
+ * field del servidor → campo y texto inline del cliente (última defensa).
+ *
+ * `fechaAcordada` tiene entrada propia y NO comparte la de `fecha`: son las dos
+ * fechas de la pantalla y sus reglas son opuestas (JOS-68). Por eso el servidor
+ * las distingue en el `field` — sin ello, el rechazo de una pintaría la otra.
+ */
 const ERROR_SERVIDOR: Record<string, { campo: Campo; texto: string }> = {
   fecha: { campo: "fecha", texto: ERROR_FECHA_FUTURA },
   queOcurrio: { campo: "queOcurrio", texto: ERROR_QUE_OCURRIO_OBLIGATORIO },
+  fechaAcordada: { campo: "fechaAcordada", texto: ERROR_FECHA_ACORDADA_PASADA },
+};
+
+/**
+ * field del servidor → banner, para los rechazos que no pertenecen a ningún
+ * campo del formulario. `etapaActual` llega cuando el prospecto pasó a una etapa
+ * terminal con la pantalla ya abierta; el banner de red sería engañoso.
+ */
+const BANNER_SERVIDOR: Record<string, string> = {
+  etapaActual: BANNER_ETAPA_TERMINAL,
 };
 
 /**
@@ -49,6 +70,17 @@ const ERROR_SERVIDOR: Record<string, { campo: Campo; texto: string }> = {
  */
 function fechaSeleccionadaAMs(dayKey: string, ahoraMs: number): number {
   if (dayKey === dayKeyToday(ahoraMs, APP_TZ)) return ahoraMs;
+  return ventanaDia(dayKey, APP_TZ).hoyInicio + 12 * 3_600_000;
+}
+
+/**
+ * Conversión de la fecha ACORDADA (JOS-68). Siempre mediodía de Madrid del día
+ * elegido: cae dentro del día civil correcto incluso en cambios de DST, y el
+ * servidor lo normaliza a medianoche. Aquí no hay caso "hoy → ahora" —esa regla
+ * existía para que el ritmo del día contase el registro recién hecho, y esta
+ * fecha no registra nada: apunta al futuro.
+ */
+function fechaAcordadaAMs(dayKey: string): number {
   return ventanaDia(dayKey, APP_TZ).hoyInicio + 12 * 3_600_000;
 }
 
@@ -107,6 +139,7 @@ function FormularioInteraccion() {
   const [queOcurrio, setQueOcurrio] = React.useState("");
   const [resultado, setResultado] = React.useState<ResultadoInteraccion | "">("");
   const [siguientePaso, setSiguientePaso] = React.useState("");
+  const [fechaAcordada, setFechaAcordada] = React.useState("");
   const [errores, setErrores] = React.useState<Partial<Record<Campo, string>>>({});
   const [errorGeneral, setErrorGeneral] = React.useState<string | null>(null);
   const [guardando, setGuardando] = React.useState(false);
@@ -118,8 +151,23 @@ function FormularioInteraccion() {
   // cruza con el formulario abierto, validar() recalcula "hoy" al enviar:
   // la validación real nunca usa este valor potencialmente desfasado.
   const [hoyDayKey] = React.useState(() => dayKeyToday(Date.now(), APP_TZ));
+
+  // ¿Cabe pactar un próximo contacto? (JOS-68) En etapas terminales JOS-8 promete
+  // "sin seguimiento" y el servidor lo rechaza, así que el campo ni se ofrece.
+  // Exige el prospecto CARGADO: con `undefined` la etapa aún no se conoce y
+  // pintar el campo para esconderlo al llegar la respuesta daría un parpadeo.
+  const permiteAcuerdo = prospecto !== undefined && !esTerminal(prospecto.etapaActual);
+  const acordadaEnviable = permiteAcuerdo && fechaAcordada !== "";
+
   const obligatoriosListos =
-    tipo !== "" && resultado !== "" && queOcurrio.trim() !== "" && fecha !== "" && fecha <= hoyDayKey;
+    tipo !== "" &&
+    resultado !== "" &&
+    queOcurrio.trim() !== "" &&
+    fecha !== "" &&
+    fecha <= hoyDayKey &&
+    // Espejo del bloqueo de la fecha de la interacción: opcional, pero si está
+    // puesta y es inválida el botón no invita a enviar.
+    (!acordadaEnviable || fechaAcordada >= hoyDayKey);
 
   function limpiarError(campo: Campo) {
     setErrores((prev) => {
@@ -137,6 +185,11 @@ function FormularioInteraccion() {
     else if (fecha > dayKeyToday(Date.now(), APP_TZ)) nuevos.fecha = ERROR_FECHA_FUTURA;
     if (queOcurrio.trim() === "") nuevos.queOcurrio = ERROR_QUE_OCURRIO_OBLIGATORIO;
     if (resultado === "") nuevos.resultado = ERROR_RESULTADO_OBLIGATORIO;
+    // Opcional: solo se valida si el usuario la puso. "Hoy" se recalcula al
+    // enviar, igual que la fecha de la interacción, por si cruzó la medianoche.
+    if (acordadaEnviable && fechaAcordada < dayKeyToday(Date.now(), APP_TZ)) {
+      nuevos.fechaAcordada = ERROR_FECHA_ACORDADA_PASADA;
+    }
     setErrores(nuevos);
     return Object.keys(nuevos).length === 0;
   }
@@ -159,18 +212,23 @@ function FormularioInteraccion() {
         queOcurrio: queOcurrio.trim(),
         resultado: resultado as ResultadoInteraccion,
         ...(siguientePaso.trim() !== "" ? { siguientePasoAcordado: siguientePaso.trim() } : {}),
+        ...(acordadaEnviable ? { fechaAcordada: fechaAcordadaAMs(fechaAcordada) } : {}),
       });
       // El destino —Ficha o Actividad Diaria— consume el flash al montar y
-      // muestra el toast (P8).
-      escribirFlash(textoToast(respuesta.prospecto.fechaProximoSeguimiento));
+      // muestra el toast (P8). Quién puso la fecha lo dice el prospecto que
+      // devuelve el servidor, no lo que el formulario creía enviar.
+      escribirFlash(
+        textoToast(respuesta.prospecto.fechaProximoSeguimiento, respuesta.prospecto.seguimientoManual === true),
+      );
       router.replace(destinoSalida);
     } catch (err) {
       const datos = datosConvex(err);
-      const mapeo = datos?.code === "VALIDATION_ERROR" && datos.field !== undefined ? ERROR_SERVIDOR[datos.field] : undefined;
+      const field = datos?.code === "VALIDATION_ERROR" ? datos.field : undefined;
+      const mapeo = field !== undefined ? ERROR_SERVIDOR[field] : undefined;
       if (mapeo !== undefined) {
         setErrores({ [mapeo.campo]: mapeo.texto });
       } else {
-        setErrorGeneral(BANNER_ERROR_RED);
+        setErrorGeneral((field !== undefined ? BANNER_SERVIDOR[field] : undefined) ?? BANNER_ERROR_RED);
       }
       enviando.current = false;
       setGuardando(false);
@@ -220,6 +278,7 @@ function FormularioInteraccion() {
             type="date"
             value={fecha}
             max={hoyDayKey}
+            helper={AYUDA_FECHA_CONTACTO}
             error={errores.fecha}
             onChange={(e) => {
               setFecha(e.target.value);
@@ -257,6 +316,26 @@ function FormularioInteraccion() {
             placeholder={PLACEHOLDER_SIGUIENTE_PASO}
             onChange={(e) => setSiguientePaso(e.target.value)}
           />
+          {/*
+            JOS-68. Va el ÚLTIMO y pegado al siguiente paso —que recoge el "qué"
+            del acuerdo mientras este recoge el "cuándo"—, lo más lejos posible de
+            la fecha de la interacción: son dos fechas de significado opuesto en
+            la misma pantalla y ese es el riesgo de confusión de la tarea.
+          */}
+          {permiteAcuerdo && (
+            <Input
+              label="Próximo contacto acordado"
+              type="date"
+              value={fechaAcordada}
+              min={hoyDayKey}
+              helper={AYUDA_FECHA_ACORDADA}
+              error={errores.fechaAcordada}
+              onChange={(e) => {
+                setFechaAcordada(e.target.value);
+                limpiarError("fechaAcordada");
+              }}
+            />
+          )}
         </div>
 
         {/* Sticky por encima de la tab bar móvil; ver nota de teclado en JOS-15. */}
