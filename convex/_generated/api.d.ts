@@ -14,6 +14,7 @@ import type * as lib_acceso from "../lib/acceso.js";
 import type * as lib_constants from "../lib/constants.js";
 import type * as lib_errores from "../lib/errores.js";
 import type * as lib_fecha from "../lib/fecha.js";
+import type * as lib_prioridad from "../lib/prioridad.js";
 import type * as lib_proyecciones from "../lib/proyecciones.js";
 import type * as lib_seguimiento from "../lib/seguimiento.js";
 import type * as lib_usuario from "../lib/usuario.js";
@@ -35,6 +36,7 @@ declare const fullApi: ApiFromModules<{
   "lib/constants": typeof lib_constants;
   "lib/errores": typeof lib_errores;
   "lib/fecha": typeof lib_fecha;
+  "lib/prioridad": typeof lib_prioridad;
   "lib/proyecciones": typeof lib_proyecciones;
   "lib/seguimiento": typeof lib_seguimiento;
   "lib/usuario": typeof lib_usuario;
