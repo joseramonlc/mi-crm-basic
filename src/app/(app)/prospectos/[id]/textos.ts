@@ -122,6 +122,8 @@ export const ACCION_CAMBIAR_FECHA = "Cambiar fecha";
 export const ACCION_QUITAR = "Volver al automático";
 export const ACCION_GUARDAR_FECHA = "Guardar";
 export const ACCION_CANCELAR_FECHA = "Cancelar";
+/** JOS-70. El evento se crea en el calendario del usuario, no en el CRM: de ahí el «mi». */
+export const ACCION_CALENDARIO = "Añadir a mi calendario";
 export const GUARDANDO_FECHA = "Guardando…";
 
 export const ETIQUETA_CAMPO_ACORDADA = "Fecha del próximo contacto";

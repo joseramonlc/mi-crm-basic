@@ -3,10 +3,12 @@ import { ConvexError } from "convex/values";
 import { APP_TZ, dayKeyToday } from "../../../../../convex/lib/fecha";
 import { acuerdoActivo, esTerminal } from "../../../../../convex/lib/seguimiento";
 import type { ProspectoPublico } from "../../../../../convex/lib/proyecciones";
-import { Button, Input } from "@/components/ui";
+import { Button, buttonStyle, Icon, Input } from "@/components/ui";
 import { formatearFechaEs } from "@/lib/etiquetas";
 import { fechaAcordadaAMs } from "@/lib/fechaAcordada";
+import { urlGoogleCalendar } from "@/lib/calendario";
 import {
+  ACCION_CALENDARIO,
   ACCION_CAMBIAR_FECHA,
   ACCION_CANCELAR_FECHA,
   ACCION_FIJAR,
@@ -24,6 +26,7 @@ import {
   EXPLICACION_MOTOR,
   GUARDANDO_FECHA,
   SIN_SEGUIMIENTO,
+  etiquetaCanal,
 } from "./textos";
 
 export interface SeguimientoAcordadoProps {
@@ -171,6 +174,36 @@ export function SeguimientoAcordado({ prospecto, onFijar, onQuitar }: Seguimient
       */}
       {!terminal && (
         <p style={{ fontSize: 12, color: "var(--color-neutral-400)" }}>{acordado ? EXPLICACION_ACORDADO : EXPLICACION_MOTOR}</p>
+      )}
+
+      {/*
+        JOS-70. La condición es solo "hay fecha", sin mirar `terminal`: en las
+        etapas terminales el motor no programa seguimiento, así que el enlace
+        desaparece por sí mismo. Un terminal con un acuerdo colgando SÍ lo
+        conserva, y es lo correcto —la cita sigue estando ahí.
+
+        <a> de verdad y no un botón con window.open: abrir en pestaña nueva,
+        copiar el enlace y el teclado salen gratis. Es el primer enlace externo
+        de la aplicación, así que fija el patrón: target + rel completo.
+        `buttonStyle` existe para verse como Button sin serlo; Button no vale
+        aquí porque su interfaz extiende los atributos de <button>.
+      */}
+      {prospecto.fechaProximoSeguimiento !== undefined && (
+        <a
+          href={urlGoogleCalendar({
+            nombre: prospecto.nombre,
+            fechaMs: prospecto.fechaProximoSeguimiento,
+            canalEtiqueta: etiquetaCanal(prospecto.canalContactoPreferido),
+            telefono: prospecto.telefono,
+            email: prospecto.email,
+          })}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ ...buttonStyle({ variant: "ghost", size: "sm" }), alignSelf: "flex-start", paddingLeft: 0 }}
+        >
+          <Icon name="calendar" size={15} />
+          {ACCION_CALENDARIO}
+        </a>
       )}
 
       {editando ? (

@@ -4,10 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vite
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ConvexError } from "convex/values";
 import type { ProspectoPublico } from "../../../../../convex/lib/proyecciones";
+import { APP_TZ, zonedMidnightToMs } from "../../../../../convex/lib/fecha";
 import { fechaAcordadaAMs } from "@/lib/fechaAcordada";
 import { formatearFechaEs } from "@/lib/etiquetas";
+import { urlGoogleCalendar } from "@/lib/calendario";
 import { SeguimientoAcordado } from "./SeguimientoAcordado";
 import {
+  ACCION_CALENDARIO,
   ACCION_CAMBIAR_FECHA,
   ACCION_CANCELAR_FECHA,
   ACCION_FIJAR,
@@ -22,6 +25,7 @@ import {
   ETIQUETA_SEGUIMIENTO_MOTOR,
   EXPLICACION_ACORDADO,
   EXPLICACION_MOTOR,
+  etiquetaCanal,
 } from "./textos";
 
 // Martes 2026-07-14, 10:00 de Madrid. Date.now() fijado por espía (sin fake
@@ -44,6 +48,24 @@ const BASE: ProspectoPublico = {
 
 /** Con acuerdo vigente: la marca Y la fecha, que es lo que exige `acuerdoActivo`. */
 const CON_ACUERDO = { ...BASE, fechaProximoSeguimiento: FECHA_ACUERDO, seguimientoManual: true } as ProspectoPublico;
+
+/**
+ * Fixture propio de JOS-70, exigido por la auditoría (rev. 2, Mayor 3): `BASE`
+ * no trae `telefono` ni `email` —los dos son opcionales—, así que sobre él un
+ * componente que se OLVIDARA de pasarlos daría exactamente el mismo href que
+ * uno correcto, y la prueba del cableado pasaría con la descripción rota.
+ *
+ * La fecha va en medianoche real de Madrid por el mismo motivo que en
+ * calendario.test.ts: `Date.UTC` no distinguiría el día civil del de UTC.
+ *
+ * `BASE` se deja intacto a propósito: tocarlo movería las 20 pruebas anteriores.
+ */
+const CON_CONTACTO = {
+  ...BASE,
+  telefono: "+34 600 111 222",
+  email: "ana@ejemplo.com",
+  fechaProximoSeguimiento: zonedMidnightToMs({ y: 2026, m: 8, d: 15 }, APP_TZ),
+} as ProspectoPublico;
 
 // Tipados: el componente exige callbacks que devuelven promesa, y un vi.fn()
 // suelto no lo satisface (tsc lo cazaría aunque los tests pasaran).
@@ -260,5 +282,53 @@ describe("fallos del servidor", () => {
 
     await waitFor(() => expect(screen.getByText(ERROR_FECHA_ACORDADA_PASADA)).toBeDefined());
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+/**
+ * JOS-70. Lo que se prueba aquí es el CABLEADO, no el formato de la URL: eso ya
+ * lo cubren las diez pruebas de calendario.test.ts. Sin estas, el enlace podía
+ * quedar mal conectado —o sin poner— con aquellas diez en verde.
+ */
+describe("enlace «Añadir a mi calendario» (JOS-70)", () => {
+  function enlace(): HTMLAnchorElement {
+    return screen.getByRole("link", { name: ACCION_CALENDARIO }) as HTMLAnchorElement;
+  }
+
+  it("I1 · con fecha de seguimiento, el enlace está", () => {
+    montar();
+    expect(enlace()).toBeDefined();
+  });
+
+  it("I2 · el href lleva nombre, canal, teléfono, email y fecha del prospecto", () => {
+    montar(CON_CONTACTO);
+
+    expect(enlace().href).toBe(
+      urlGoogleCalendar({
+        nombre: CON_CONTACTO.nombre,
+        fechaMs: CON_CONTACTO.fechaProximoSeguimiento!,
+        canalEtiqueta: etiquetaCanal(CON_CONTACTO.canalContactoPreferido),
+        telefono: CON_CONTACTO.telefono,
+        email: CON_CONTACTO.email,
+      }),
+    );
+  });
+
+  it("I3 · abre fuera con el rel completo (primer enlace externo de la app)", () => {
+    montar(CON_CONTACTO);
+
+    expect(enlace().target).toBe("_blank");
+    expect(enlace().rel).toContain("noopener");
+    expect(enlace().rel).toContain("noreferrer");
+  });
+
+  it("I4 · sin fecha de seguimiento no hay enlace", () => {
+    montar({ ...BASE, fechaProximoSeguimiento: undefined } as ProspectoPublico);
+    expect(screen.queryByRole("link", { name: ACCION_CALENDARIO })).toBeNull();
+  });
+
+  it("I5 · en etapa terminal con fecha colgando, el enlace se conserva (D5)", () => {
+    montar({ ...CON_CONTACTO, etapaActual: "discarded", seguimientoManual: true } as ProspectoPublico);
+    expect(enlace()).toBeDefined();
   });
 });
