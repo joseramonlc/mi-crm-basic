@@ -100,11 +100,13 @@ describe("guardado (JOS-15)", () => {
 
     await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/prospectos/p42"));
     expect(mutateMock).toHaveBeenCalledTimes(1);
-    // Igualdad estricta del payload: los opcionales vacíos NO viajan.
+    // Igualdad estricta del payload: los opcionales vacíos NO viajan, pero
+    // `prioridad` SÍ viaja siempre (B1 de JOS-51), con el defecto "medium".
     expect(mutateMock.mock.calls[0][0]).toEqual({
       nombre: "Ana Pérez",
       comoSeConocio: "Referido",
       canalContactoPreferido: "phone",
+      prioridad: "medium",
       email: "ana@ejemplo.com",
     });
   });
@@ -170,6 +172,53 @@ describe("guardado (JOS-15)", () => {
 
     resolver({ id: "p9" });
     await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/prospectos/p9"));
+  });
+});
+
+describe("selector de prioridad (JOS-51)", () => {
+  it("es un radiogroup de 3 botones (no un <select>), con 'Media' preseleccionada", () => {
+    render(<NuevoProspectoPage />);
+    const grupo = screen.getByRole("radiogroup", { name: "Prioridad" });
+    expect(grupo.tagName).not.toBe("SELECT");
+    const radios = screen.getAllByRole("radio");
+    expect(radios.map((r) => r.textContent)).toEqual(["Alta", "Media", "Baja"]);
+    expect(screen.getByRole("radio", { name: "Media" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("aparece ANTES del campo 'Nota inicial' (posición de la issue)", () => {
+    render(<NuevoProspectoPage />);
+    const grupo = screen.getByRole("radiogroup", { name: "Prioridad" });
+    const nota = screen.getByLabelText("Nota inicial");
+    // Node.DOCUMENT_POSITION_FOLLOWING: `nota` va DESPUÉS de `grupo` en el DOM.
+    expect(grupo.compareDocumentPosition(nota) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("no es obligatoria: sin tocarla, Guardar se habilita solo con los 3 obligatorios", () => {
+    render(<NuevoProspectoPage />);
+    rellenarObligatorios();
+    expect(boton().disabled).toBe(false);
+  });
+
+  it("elegir 'Alta' envía prioridad 'high'", async () => {
+    mutateMock.mockResolvedValue({ id: "pA", nombre: "Ana Pérez" });
+    render(<NuevoProspectoPage />);
+    rellenarObligatorios();
+    fireEvent.click(screen.getByRole("radio", { name: "Alta" }));
+    fireEvent.submit(boton().closest("form") as HTMLFormElement);
+
+    await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/prospectos/pA"));
+    expect(mutateMock.mock.calls[0][0]).toMatchObject({ prioridad: "high" });
+  });
+
+  it("elegir 'Baja' envía prioridad 'low'", async () => {
+    mutateMock.mockResolvedValue({ id: "pB", nombre: "Ana Pérez" });
+    render(<NuevoProspectoPage />);
+    rellenarObligatorios();
+    fireEvent.click(screen.getByRole("radio", { name: "Baja" }));
+    fireEvent.submit(boton().closest("form") as HTMLFormElement);
+
+    await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/prospectos/pB"));
+    expect(mutateMock.mock.calls[0][0]).toMatchObject({ prioridad: "low" });
   });
 });
 

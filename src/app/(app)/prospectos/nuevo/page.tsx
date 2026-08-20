@@ -6,14 +6,16 @@ import { useMutation } from "convex/react";
 import { ConvexError } from "convex/values";
 import { api } from "../../../../../convex/_generated/api";
 import { EMAIL_RE } from "../../../../../convex/lib/validacion";
-import { Button, Input, NativeSelect } from "@/components/ui";
+import { Button, Input, NativeSelect, PillSelect } from "@/components/ui";
 import { FormHeader } from "@/components/layout/FormHeader";
+import { OPCIONES_PRIORIDAD, PRIORIDAD_POR_DEFECTO, type PriorityLevel } from "@/lib/prioridad";
 import {
   BANNER_ERROR_RED,
   ERROR_CANAL_OBLIGATORIO,
   ERROR_COMO_OBLIGATORIO,
   ERROR_EMAIL_FORMATO,
   ERROR_NOMBRE_OBLIGATORIO,
+  LABEL_PRIORIDAD,
   OPCIONES_CANAL,
   OPCIONES_COMO_SE_CONOCIO,
   PLACEHOLDER_NOMBRE,
@@ -54,6 +56,11 @@ export default function NuevoProspectoPage() {
   const [comoSeConocio, setComoSeConocio] = React.useState("");
   const [telefono, setTelefono] = React.useState("");
   const [email, setEmail] = React.useState("");
+  // Prioridad (JOS-51): opcional para el usuario, pero el estado NUNCA está
+  // vacío — arranca en el defecto "Media" y siempre viaja en el POST (B1). El
+  // backend traduce "medium" a ausencia persistida (JOS-50), así que enviarlo
+  // no escribe nada de más.
+  const [prioridad, setPrioridad] = React.useState<PriorityLevel>(PRIORIDAD_POR_DEFECTO);
   const [notas, setNotas] = React.useState("");
   const [errores, setErrores] = React.useState<Partial<Record<Campo, string>>>({});
   const [errorGeneral, setErrorGeneral] = React.useState<string | null>(null);
@@ -104,6 +111,7 @@ export default function NuevoProspectoPage() {
         nombre: nombre.trim(),
         comoSeConocio,
         canalContactoPreferido: canal as CanalContacto,
+        prioridad,
         ...(telefono.trim() !== "" ? { telefono: telefono.trim() } : {}),
         ...(email.trim() !== "" ? { email: email.trim() } : {}),
         ...(notas.trim() !== "" ? { notas: notas.trim() } : {}),
@@ -186,6 +194,12 @@ export default function NuevoProspectoPage() {
               const v = email.trim();
               if (v !== "" && !EMAIL_RE.test(v)) ponerError("email", ERROR_EMAIL_FORMATO);
             }}
+          />
+          <PillSelect
+            label={LABEL_PRIORIDAD}
+            options={OPCIONES_PRIORIDAD}
+            value={prioridad}
+            onChange={setPrioridad}
           />
           <Input
             label="Nota inicial"

@@ -1,6 +1,9 @@
 import * as React from "react";
+import { ETIQUETAS_PRIORIDAD, type PriorityLevel } from "@/lib/prioridad";
 
-export type PriorityLevel = "high" | "medium" | "low";
+// Re-exportado desde su fuente única (src/lib/prioridad.ts) para no romper a
+// quien lo importa desde aquí (p. ej. ProspectCard).
+export type { PriorityLevel };
 
 export interface PriorityBadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
   /** Priority level. @default 'medium' */
@@ -13,15 +16,12 @@ export interface PriorityBadgeProps extends React.HTMLAttributes<HTMLSpanElement
   size?: number;
 }
 
-/** high=Alta, medium=Media, low=Baja — matches Convex `prospectos.prioridad`. */
-const LEVELS: Record<PriorityLevel, string> = { high: "Alta", medium: "Media", low: "Baja" };
-
 /** Priority pill (Alta/Media/Baja) or bare colored dot. */
 export function PriorityBadge({ level = "medium", label, dotOnly = false, size = 9, style, ...rest }: PriorityBadgeProps) {
   if (dotOnly) {
     return (
       <span
-        aria-label={`Prioridad ${LEVELS[level]}`}
+        aria-label={`Prioridad ${ETIQUETAS_PRIORIDAD[level]}`}
         style={{
           width: size,
           height: size,
@@ -54,7 +54,7 @@ export function PriorityBadge({ level = "medium", label, dotOnly = false, size =
       {...rest}
     >
       <span style={{ width: 7, height: 7, borderRadius: "50%", background: `var(--color-priority-${level}-dot)`, flex: "none" }} />
-      {label || LEVELS[level]}
+      {label || ETIQUETAS_PRIORIDAD[level]}
     </span>
   );
 }

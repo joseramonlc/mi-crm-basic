@@ -8,6 +8,8 @@ export type { CanalContacto } from "@/lib/etiquetas";
  */
 export const OPCIONES_COMO_SE_CONOCIO = ["Referido", "Red social", "Evento", "Conocido", "Otro"];
 
+export const LABEL_PRIORIDAD = "Prioridad";
+
 export const ERROR_NOMBRE_OBLIGATORIO = "El nombre es obligatorio";
 export const ERROR_EMAIL_FORMATO = "Email no válido";
 export const ERROR_CANAL_OBLIGATORIO = "Elige un canal de contacto";
