@@ -9,6 +9,13 @@ export interface PillOption<V extends string = string> {
   label: string;
   /** Icono Lucide opcional (16px) a la izquierda del label. */
   icon?: string;
+  /**
+   * Punto de color opcional a la izquierda del label. Se limita a una variable
+   * CSS del sistema de tokens (nunca un color suelto), para que un componente
+   * compartido no acepte estilos no gobernados. Lo usa el selector de prioridad
+   * con `--color-priority-{nivel}-dot`.
+   */
+  dot?: `var(${string})`;
   /** @default "primario" */
   tone?: PillTone;
 }
@@ -112,6 +119,12 @@ export function PillSelect<V extends string = string>({ label, options, value, o
                 whiteSpace: "nowrap",
               }}
             >
+              {o.dot && (
+                <span
+                  aria-hidden
+                  style={{ width: 8, height: 8, borderRadius: "50%", background: o.dot, flex: "none" }}
+                />
+              )}
               {o.icon && <Icon name={o.icon} size={16} />}
               {o.label}
             </button>
