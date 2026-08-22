@@ -2,12 +2,14 @@ import * as React from "react";
 import { ConvexError } from "convex/values";
 import { EMAIL_RE } from "../../../../../convex/lib/validacion";
 import type { ProspectoPublico } from "../../../../../convex/lib/proyecciones";
-import { Button, Input, NativeSelect } from "@/components/ui";
+import { Button, Input, NativeSelect, PillSelect } from "@/components/ui";
+import { OPCIONES_PRIORIDAD, type PriorityLevel } from "@/lib/prioridad";
 import {
   BANNER_ERROR_RED,
   ERROR_COMO_OBLIGATORIO,
   ERROR_EMAIL_FORMATO,
   ERROR_NOMBRE_OBLIGATORIO,
+  LABEL_PRIORIDAD,
   OPCIONES_CANAL,
   OPCIONES_COMO_SE_CONOCIO,
   type CanalContacto,
@@ -22,6 +24,7 @@ export type PatchDatos = Partial<{
   comoSeConocio: string;
   canalContactoPreferido: CanalContacto;
   notas: string;
+  prioridad: PriorityLevel;
 }>;
 
 export interface EdicionDatosProps {
@@ -72,6 +75,9 @@ export function EdicionDatos({ prospecto, onGuardar, onCerrar }: EdicionDatosPro
     comoSeConocio: prospecto.comoSeConocio,
     canal: prospecto.canalContactoPreferido,
     notas: prospecto.notas ?? "",
+    // La proyección pública SIEMPRE resuelve la prioridad (JOS-50): nunca llega
+    // ausente, así que aquí no hace falta el defecto — el snapshot es el valor.
+    prioridad: prospecto.prioridad,
   }));
 
   const [nombre, setNombre] = React.useState(inicial.nombre);
@@ -80,6 +86,7 @@ export function EdicionDatos({ prospecto, onGuardar, onCerrar }: EdicionDatosPro
   const [comoSeConocio, setComoSeConocio] = React.useState(inicial.comoSeConocio);
   const [canal, setCanal] = React.useState<CanalContacto>(inicial.canal);
   const [notas, setNotas] = React.useState(inicial.notas);
+  const [prioridad, setPrioridad] = React.useState<PriorityLevel>(inicial.prioridad);
   const [errores, setErrores] = React.useState<Partial<Record<Campo, string>>>({});
   const [errorGeneral, setErrorGeneral] = React.useState<string | null>(null);
   const [guardando, setGuardando] = React.useState(false);
@@ -125,6 +132,9 @@ export function EdicionDatos({ prospecto, onGuardar, onCerrar }: EdicionDatosPro
     if (comoSeConocio !== inicial.comoSeConocio) patch.comoSeConocio = comoSeConocio;
     if (canal !== inicial.canal) patch.canalContactoPreferido = canal;
     if (notas.trim() !== inicial.notas) patch.notas = notas.trim();
+    // Volver a "medium" viaja como "medium": el backend lo traduce a ausencia
+    // (prioridadAPersistir), que ES el defecto. No es un caso especial del patch.
+    if (prioridad !== inicial.prioridad) patch.prioridad = prioridad;
     return patch;
   }
 
@@ -201,6 +211,7 @@ export function EdicionDatos({ prospecto, onGuardar, onCerrar }: EdicionDatosPro
           if (v !== "" && !EMAIL_RE.test(v)) ponerError("email", ERROR_EMAIL_FORMATO);
         }}
       />
+      <PillSelect label={LABEL_PRIORIDAD} options={OPCIONES_PRIORIDAD} value={prioridad} onChange={setPrioridad} />
       <Input label="Notas" multiline rows={3} value={notas} placeholder="Opcional" onChange={(e) => setNotas(e.target.value)} />
 
       {errorGeneral !== null && (
