@@ -124,7 +124,7 @@ function Actividad({ datos }: { datos: DatosActividad }) {
               key={p.id}
               name={p.nombre}
               stage={p.etapaActual}
-              priority="medium"
+              priority={p.prioridad}
               channel={p.canalContactoPreferido}
               lastInteraction="Para hoy"
               timeAgo={formatTimeAgo(p.fechaUltimoContacto, hoyInicio)}
@@ -142,7 +142,7 @@ function Actividad({ datos }: { datos: DatosActividad }) {
               key={p.id}
               name={p.nombre}
               stage={p.etapaActual}
-              priority="medium"
+              priority={p.prioridad}
               channel={p.canalContactoPreferido}
               lastInteraction={p.diasVencido !== undefined ? textoVencido(p.diasVencido) : ""}
               timeAgo={formatTimeAgo(p.fechaUltimoContacto, hoyInicio)}

@@ -12,6 +12,7 @@ import {
   LONGITUD_MAX_TELEFONO,
 } from "./lib/validacion";
 import { APP_TZ, ventanaDia } from "./lib/fecha";
+import type { Prioridad } from "./lib/prioridad";
 import schema from "./schema";
 
 // Los tests viven junto a las funciones: convex-test necesita el mapa de módulos
@@ -37,6 +38,7 @@ type Nuevo = {
   fechaAlta?: number;
   fechaUltimoContacto?: number;
   fechaProximoSeguimiento?: number;
+  prioridad?: Prioridad;
 };
 
 function nuevoTest(): TestConvex<typeof schema> {
@@ -55,6 +57,9 @@ async function insertar(t: TestConvex<typeof schema>, docs: Nuevo[]) {
         fechaAlta: d.fechaAlta ?? hoyInicio - 30 * DIA,
         ...(d.fechaUltimoContacto !== undefined ? { fechaUltimoContacto: d.fechaUltimoContacto } : {}),
         ...(d.fechaProximoSeguimiento !== undefined ? { fechaProximoSeguimiento: d.fechaProximoSeguimiento } : {}),
+        // JOS-54: "medium" se guarda por AUSENCIA (como en producción); solo persistimos
+        // los niveles explícitos high/low para no fabricar un estado que la API no crea.
+        ...(d.prioridad !== undefined && d.prioridad !== "medium" ? { prioridad: d.prioridad } : {}),
       });
     }
   });
@@ -192,6 +197,101 @@ describe("actividadDiaria · partición, orden y proyección", () => {
     });
     // Los completados tienen seguimiento futuro: no aparecen en las listas
     expect(r.hoy.map((p) => p.nombre)).toEqual(["Pendiente hoy"]);
+  });
+});
+
+describe("actividadDiaria · orden por prioridad (JOS-54)", () => {
+  it("ordena por prioridad (Alta→Media→Baja) y, dentro de cada nivel, por antigüedad", async () => {
+    const t = nuevoTest();
+    await insertar(t, [
+      // Todos "hoy". Prioridades y antigüedades mezcladas; la fechaProximoSeguimiento
+      // NO refleja el orden esperado, para demostrar que manda la prioridad, no la fecha.
+      { nombre: "Media vieja", fechaProximoSeguimiento: hoyInicio + HORA, fechaUltimoContacto: hoyInicio - 8 * DIA, prioridad: "medium" },
+      { nombre: "Alta nueva", fechaProximoSeguimiento: hoyInicio + 2 * HORA, fechaUltimoContacto: hoyInicio - 1 * DIA, prioridad: "high" },
+      { nombre: "Baja", fechaProximoSeguimiento: hoyInicio + 3 * HORA, fechaUltimoContacto: hoyInicio - 20 * DIA, prioridad: "low" },
+      { nombre: "Alta vieja", fechaProximoSeguimiento: hoyInicio + 4 * HORA, fechaUltimoContacto: hoyInicio - 5 * DIA, prioridad: "high" },
+      { nombre: "Media nueva", fechaProximoSeguimiento: hoyInicio + 5 * HORA, fechaUltimoContacto: hoyInicio - 2 * DIA, prioridad: "medium" },
+    ]);
+
+    const r = await actividad(t);
+    // "Baja" es la MÁS antigua (20 d) y aun así va última: la prioridad domina la antigüedad.
+    expect(r.hoy.map((p) => p.nombre)).toEqual(["Alta vieja", "Alta nueva", "Media vieja", "Media nueva", "Baja"]);
+  });
+
+  it("la prioridad NO adelanta fechas: un Alta con fecha de mañana sigue FUERA de «hoy»", async () => {
+    const t = nuevoTest();
+    await insertar(t, [
+      { nombre: "Alta hoy", fechaProximoSeguimiento: hoyInicio + 2 * HORA, prioridad: "high" },
+      { nombre: "Alta mañana", fechaProximoSeguimiento: mananaInicio + 3 * HORA, prioridad: "high" },
+      { nombre: "Media hoy", fechaProximoSeguimiento: hoyInicio + 5 * HORA, prioridad: "medium" },
+    ]);
+
+    const r = await actividad(t);
+    // "Alta mañana" no está: su FECHA manda, no su prioridad — no salta de grupo.
+    expect(r.hoy.map((p) => p.nombre)).toEqual(["Alta hoy", "Media hoy"]);
+    expect(r.vencidos.map((p) => p.nombre)).not.toContain("Alta mañana");
+  });
+
+  it("los vencidos también se ordenan por prioridad dentro de su grupo", async () => {
+    const t = nuevoTest();
+    await insertar(t, [
+      { nombre: "Venc media", fechaProximoSeguimiento: hoyInicio - 2 * DIA, fechaUltimoContacto: hoyInicio - 5 * DIA, prioridad: "medium" },
+      { nombre: "Venc alta", fechaProximoSeguimiento: hoyInicio - 1 * DIA, fechaUltimoContacto: hoyInicio - 3 * DIA, prioridad: "high" },
+    ]);
+
+    const r = await actividad(t);
+    // "Venc media" está MÁS vencida por fecha (2 d vs 1 d), pero "Venc alta" va primera:
+    // dentro del grupo la prioridad manda sobre la antigüedad de la fecha vencida.
+    expect(r.vencidos.map((p) => p.nombre)).toEqual(["Venc alta", "Venc media"]);
+  });
+
+  it("la proyección de tarjeta incluye la prioridad resuelta (ausente → media)", async () => {
+    const t = nuevoTest();
+    await insertar(t, [
+      { nombre: "Sin prioridad", fechaProximoSeguimiento: hoyInicio + HORA }, // el documento NO guarda el campo
+      { nombre: "Con alta", fechaProximoSeguimiento: hoyInicio + 2 * HORA, prioridad: "high" },
+    ]);
+
+    const r = await actividad(t);
+    expect(r.hoy.find((p) => p.nombre === "Sin prioridad")!.prioridad).toBe("medium");
+    expect(r.hoy.find((p) => p.nombre === "Con alta")!.prioridad).toBe("high");
+  });
+
+  it("desempate determinista: misma prioridad y antigüedad → orden por _creationTime, no por la fecha del índice", async () => {
+    const t = nuevoTest();
+    // Mismo nivel (Alta) y misma antigüedad. "A" se inserta ANTES (menor _creationTime) pero
+    // con fecha MAYOR (más tarde en el índice); "B" al revés. Si mandara el índice saldría
+    // [B, A]; el desempate por _creationTime (A creado antes) fuerza [A, B].
+    await insertar(t, [{ nombre: "A", fechaProximoSeguimiento: hoyInicio + 2 * HORA, fechaUltimoContacto: hoyInicio - 4 * DIA, prioridad: "high" }]);
+    await insertar(t, [{ nombre: "B", fechaProximoSeguimiento: hoyInicio + HORA, fechaUltimoContacto: hoyInicio - 4 * DIA, prioridad: "high" }]);
+
+    const r = await actividad(t);
+    expect(r.hoy.map((p) => p.nombre)).toEqual(["A", "B"]);
+  });
+
+  it("INVARIANTE de truncamiento: la MEMBRESÍA la decide la fecha, no la prioridad (centinela Alta menos urgente NO entra)", async () => {
+    const t = nuevoTest();
+    // 500 supervivientes con fecha MÁS urgente y prioridades mezcladas…
+    const supervivientes: Nuevo[] = Array.from({ length: MAX_ACTIVIDAD }, (_, i) => ({
+      nombre: `Sup ${i}`,
+      fechaProximoSeguimiento: hoyInicio + i * 60_000, // 0..499 min, todos < centinela
+      prioridad: (["high", "medium", "low"] as const)[i % 3],
+    }));
+    // …y un centinela Alta que es el MENOS urgente por fecha (pero aún dentro de "hoy").
+    const centinela: Nuevo = { nombre: "Centinela Alta", fechaProximoSeguimiento: mananaInicio - 1, prioridad: "high" };
+    await insertar(t, [...supervivientes, centinela]);
+
+    const r = await actividad(t);
+    // (b) hay truncamiento y la lista es exactamente MAX_ACTIVIDAD
+    expect(r.truncado.hoy).toBe(true);
+    expect(r.hoy).toHaveLength(MAX_ACTIVIDAD);
+    // (a) el centinela Alta NO entra: ordenar por prioridad ANTES del corte lo colaría,
+    // expulsando a un prospecto más urgente por fecha. Ese es el bug que esto mata.
+    expect(r.hoy.map((p) => p.nombre)).not.toContain("Centinela Alta");
+    expect(r.hoy.every((p) => p.nombre.startsWith("Sup "))).toBe(true);
+    // (c) los 500 supervivientes SÍ salen ordenados Alta → Media → Baja (rango no decreciente)
+    const rangos = r.hoy.map((p) => ({ high: 0, medium: 1, low: 2 })[p.prioridad]);
+    expect(rangos).toEqual([...rangos].sort((a, b) => a - b));
   });
 });
 

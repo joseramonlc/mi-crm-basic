@@ -21,7 +21,7 @@ import {
   validarNumItems,
 } from "./lib/validacion";
 import { validationError } from "./lib/errores";
-import { prioridadAPersistir } from "./lib/prioridad";
+import { prioridadAPersistir, prioridadDe, type Prioridad } from "./lib/prioridad";
 import { canalContacto, etapaProspecto, prioridadProspecto } from "./schema";
 
 export interface ProspectoActividad {
@@ -29,6 +29,7 @@ export interface ProspectoActividad {
   nombre: string;
   etapaActual: Doc<"prospectos">["etapaActual"];
   canalContactoPreferido: Doc<"prospectos">["canalContactoPreferido"];
+  prioridad: Prioridad;
   fechaUltimoContacto?: number;
   diasVencido?: number;
 }
@@ -38,15 +39,35 @@ function antiguedad(p: Doc<"prospectos">): number {
   return p.fechaUltimoContacto ?? p.fechaAlta;
 }
 
+/** Rango de orden por prioridad (JOS-54): Alta(0) → Media(1) → Baja(2), defecto resuelto. */
+const RANGO_PRIORIDAD: Record<Prioridad, number> = { high: 0, medium: 1, low: 2 };
+function rangoPrioridad(p: Doc<"prospectos">): number {
+  return RANGO_PRIORIDAD[prioridadDe(p)];
+}
+
 /**
  * Lee hasta MAX_ACTIVIDAD+1 filas de un rango, descarta el centinela y señala
- * truncamiento. El orden por antigüedad solo se aplica DESPUÉS del descarte:
- * si no hay truncamiento se leyó el conjunto completo y el orden es globalmente
- * correcto; si lo hay, la UI presenta vista parcial (nunca como completa).
+ * truncamiento. El orden (prioridad, luego antigüedad) solo se aplica DESPUÉS del
+ * descarte: si no hay truncamiento se leyó el conjunto completo y el orden es
+ * globalmente correcto; si lo hay, la UI presenta vista parcial (nunca como completa).
+ *
+ * INVARIANTE (JOS-54): el .sort() va DESPUÉS del slice A PROPÓSITO. La MEMBRESÍA la
+ * decide la fecha —el índice by_usuario_seguimiento trae los más urgentes antes del
+ * corte—; la prioridad SOLO reordena a los supervivientes para pintarlos. Ordenar por
+ * prioridad ANTES del corte expulsaría un seguimiento más urgente por fecha para colar un
+ * Alta menos urgente (lo cubre el test del invariante de truncamiento). Desempates en
+ * cascada: prioridad → antigüedad → _creationTime → _id, orden total y determinista que no
+ * depende de que el sort del motor sea estable.
  */
 function acotar(leidos: Doc<"prospectos">[]): { filas: Doc<"prospectos">[]; truncado: boolean } {
   const truncado = leidos.length > MAX_ACTIVIDAD;
-  const filas = (truncado ? leidos.slice(0, MAX_ACTIVIDAD) : leidos).sort((a, b) => antiguedad(a) - antiguedad(b));
+  const filas = (truncado ? leidos.slice(0, MAX_ACTIVIDAD) : leidos).sort(
+    (a, b) =>
+      rangoPrioridad(a) - rangoPrioridad(b) ||
+      antiguedad(a) - antiguedad(b) ||
+      a._creationTime - b._creationTime ||
+      (a._id < b._id ? -1 : a._id > b._id ? 1 : 0),
+  );
   return { filas, truncado };
 }
 
@@ -102,6 +123,8 @@ export const actividadDiaria = query({
       nombre: p.nombre,
       etapaActual: p.etapaActual,
       canalContactoPreferido: p.canalContactoPreferido,
+      // Resuelta aquí (ausente = media, JOS-50): la tarjeta nunca recibe undefined.
+      prioridad: prioridadDe(p),
       fechaUltimoContacto: p.fechaUltimoContacto,
       ...(vencido && p.fechaProximoSeguimiento !== undefined
         ? { diasVencido: diffCalendarDays(p.fechaProximoSeguimiento, hoyInicio, APP_TZ) }
