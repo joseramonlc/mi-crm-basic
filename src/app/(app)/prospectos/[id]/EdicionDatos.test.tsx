@@ -46,7 +46,7 @@ function montar(props: Partial<React.ComponentProps<typeof EdicionDatos>> = {}) 
 }
 
 describe("EdicionDatos (JOS-18): formulario co-localizado de la ficha", () => {
-  it("precarga EXACTAMENTE los 6 campos editables con los valores actuales; los del sistema no están (P9)", () => {
+  it("precarga EXACTAMENTE los 7 campos editables con los valores actuales; los del sistema no están (P9)", () => {
     montar();
     expect((screen.getByLabelText("Nombre") as HTMLInputElement).value).toBe("Ana Pérez");
     expect((screen.getByLabelText("Teléfono") as HTMLInputElement).value).toBe("+34 600 111 222");
@@ -54,10 +54,13 @@ describe("EdicionDatos (JOS-18): formulario co-localizado de la ficha", () => {
     expect((screen.getByLabelText("Notas") as HTMLTextAreaElement).value).toBe("Nota previa.");
     expect((screen.getByLabelText("Canal de contacto preferido") as HTMLSelectElement).value).toBe("whatsapp");
     expect((screen.getByLabelText("Cómo se le conoció") as HTMLSelectElement).value).toBe("Evento");
-    // 4 cajas de texto (nombre, teléfono, email, notas) + 2 selects: nada más
-    // es editable — ni fechas ni etapa aparecen como campos.
+    // JOS-52: la prioridad actual (Media, del fixture) es la pastilla marcada.
+    expect(screen.getByRole("radio", { name: "Media" }).getAttribute("aria-checked")).toBe("true");
+    // 4 cajas de texto (nombre, teléfono, email, notas) + 2 selects + 3 pastillas
+    // de prioridad: nada más es editable — ni fechas ni etapa aparecen como campos.
     expect(screen.getAllByRole("textbox")).toHaveLength(4);
     expect(screen.getAllByRole("combobox")).toHaveLength(2);
+    expect(screen.getAllByRole("radio")).toHaveLength(3);
   });
 
   it("opcionales ausentes en la API → campos vacíos", () => {
@@ -95,6 +98,15 @@ describe("EdicionDatos (JOS-18): formulario co-localizado de la ficha", () => {
     expect(onGuardar).toHaveBeenCalledTimes(1);
     // Un único par clave-valor, con trim: el resto de campos NO viaja.
     expect(onGuardar).toHaveBeenCalledWith({ nombre: "Ana P. López" });
+  });
+
+  it("diff de prioridad: cambiar la pastilla viaja SOLO ese campo (JOS-52)", () => {
+    const { onGuardar, formulario } = montar();
+    // El fixture arranca en "Media"; elegir "Alta" es el único cambio.
+    fireEvent.click(screen.getByRole("radio", { name: "Alta" }));
+    fireEvent.submit(formulario());
+    expect(onGuardar).toHaveBeenCalledTimes(1);
+    expect(onGuardar).toHaveBeenCalledWith({ prioridad: "high" });
   });
 
   it("vaciar un opcional viaja como cadena vacía — el backend lo elimina por contrato M2 (P5)", () => {

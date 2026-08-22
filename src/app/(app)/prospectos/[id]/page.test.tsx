@@ -80,6 +80,10 @@ const PROSPECTO = {
   fechaAlta: FECHA_ALTA,
   fechaUltimoContacto: FECHA_ULTIMO,
   fechaProximoSeguimiento: FECHA_PROXIMO,
+  // JOS-50: la proyección pública SIEMPRE resuelve la prioridad, así que el
+  // fixture también la trae. "medium" (el defecto) para que "elegir Alta" en la
+  // edición genere un diff real (JOS-52).
+  prioridad: "medium" as const,
 };
 
 const INTERACCIONES = [
@@ -175,10 +179,12 @@ describe("contrato de ruta y header (bloqueo 4 de la rev. 2)", () => {
 });
 
 describe("sección de datos (P3) y notas (P8)", () => {
-  it("muestra etapa, canal con etiqueta de producto, contacto, cómo se conoció y fecha de alta", () => {
+  it("muestra etapa, prioridad, canal con etiqueta de producto, contacto, cómo se conoció y fecha de alta", () => {
     render(<FichaProspectoPage />);
     // "Contactado" aparece en el StageBadge de cabecera Y en el selector de etapa (bocado 2).
     expect(screen.getAllByText("Contactado").length).toBeGreaterThanOrEqual(1);
+    // JOS-52: la prioridad (Media, del fixture) se ve en lectura junto a la etapa.
+    expect(screen.getByText("Media")).toBeDefined();
     expect(screen.getByText("WhatsApp")).toBeDefined();
     expect(screen.getByText("+34 600 111 222")).toBeDefined();
     expect(screen.getByText("ana@ejemplo.com")).toBeDefined();
@@ -519,6 +525,22 @@ describe("edición de datos (JOS-18, bocado 3)", () => {
     expect(actualizarMock).toHaveBeenCalledTimes(1);
     expect(actualizarMock).toHaveBeenCalledWith({ id: "p7", nombre: "Ana López" });
     // Vuelta a lectura: el formulario desaparece.
+    expect(screen.queryByRole("form", { name: TITULO_EDICION })).toBeNull();
+    expect(screen.getByRole("region", { name: "Datos del prospecto" })).toBeDefined();
+  });
+
+  it("editar → elegir Alta → guardar: cablea prioridad con la mutation, toast y vuelta a lectura (JOS-52)", async () => {
+    actualizarMock.mockResolvedValue({ ...PROSPECTO, prioridad: "high" });
+    render(<FichaProspectoPage />);
+    fireEvent.click(screen.getByRole("button", { name: ETIQUETA_EDITAR }));
+    // "Alta" es exclusivo del selector de prioridad (las etapas no lo usan).
+    fireEvent.click(screen.getByRole("radio", { name: "Alta" }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+    await waitFor(() => expect(textosDeStatus()).toContain(TOAST_DATOS_GUARDADOS));
+    expect(actualizarMock).toHaveBeenCalledTimes(1);
+    expect(actualizarMock).toHaveBeenCalledWith({ id: "p7", prioridad: "high" });
+    // Vuelta a lectura: el formulario desaparece y la sección de datos vuelve.
     expect(screen.queryByRole("form", { name: TITULO_EDICION })).toBeNull();
     expect(screen.getByRole("region", { name: "Datos del prospecto" })).toBeDefined();
   });

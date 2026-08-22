@@ -7,7 +7,7 @@ import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { api } from "../../../../../convex/_generated/api";
 import type { Id } from "../../../../../convex/_generated/dataModel";
 import type { InteraccionPublica, ProspectoPublico } from "../../../../../convex/lib/proyecciones";
-import { Avatar, Badge, buttonStyle, Card, EmptyState, Icon, StageBadge, Toast } from "@/components/ui";
+import { Avatar, Badge, buttonStyle, Card, EmptyState, Icon, PriorityBadge, StageBadge, Toast } from "@/components/ui";
 import { FormHeader } from "@/components/layout/FormHeader";
 import { consumirFlash } from "@/lib/flash";
 import { formatearFechaEs } from "@/lib/etiquetas";
@@ -233,7 +233,13 @@ function SeccionDatos({ prospecto, onEditar }: { prospecto: ProspectoPublico; on
           <h2 className="truncate" style={{ fontSize: "var(--text-h2-size)", fontWeight: 600, letterSpacing: "-0.01em", color: "var(--color-neutral-900)" }}>
             {prospecto.nombre}
           </h2>
-          <StageBadge stage={prospecto.etapaActual} style={{ alignSelf: "flex-start" }} />
+          {/* Etapa y prioridad juntas, dos pastillas de estado (JOS-52, opción A
+              de la auditoría): "Contactado · Alta" de un vistazo. La prioridad
+              llega SIEMPRE resuelta desde la proyección pública (JOS-50). */}
+          <div className="flex flex-wrap items-center gap-2">
+            <StageBadge stage={prospecto.etapaActual} />
+            <PriorityBadge level={prospecto.prioridad} />
+          </div>
         </div>
         {/* Entrada al modo edición (JOS-18, D1: junto a lo que edita). */}
         <button type="button" onClick={onEditar} style={{ ...buttonStyle({ variant: "secondary", size: "sm" }), marginLeft: "auto", flex: "none" }}>
