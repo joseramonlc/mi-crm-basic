@@ -160,6 +160,9 @@ const prospectoPipelineValidator = v.object({
   nombre: v.string(),
   etapaActual: etapaProspecto,
   canalContactoPreferido: canalContacto,
+  // JOS-53: indicador visual en la tarjeta. NO altera el orden del Pipeline (eso es
+  // exclusivo de la Actividad Diaria); solo viaja para pintar el puntito de color.
+  prioridad: prioridadProspecto,
   fechaUltimoContacto: v.optional(v.number()),
   fechaProximoSeguimiento: v.optional(v.number()),
   diasVencido: v.optional(v.number()),
@@ -216,6 +219,8 @@ export const pipeline = query({
         nombre: p.nombre,
         etapaActual: p.etapaActual,
         canalContactoPreferido: p.canalContactoPreferido,
+        // Resuelta aquí (ausente = media, JOS-50); la tarjeta nunca recibe undefined.
+        prioridad: prioridadDe(p),
         ...(p.fechaUltimoContacto !== undefined ? { fechaUltimoContacto: p.fechaUltimoContacto } : {}),
         ...(proxima !== undefined ? { fechaProximoSeguimiento: proxima } : {}),
         ...(proxima !== undefined && proxima < hoyInicio
