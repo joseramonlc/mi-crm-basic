@@ -167,7 +167,7 @@ function Columna({
                 key={p.id}
                 name={p.nombre}
                 showStage={false}
-                priority="medium"
+                priority={p.prioridad}
                 channel={p.canalContactoPreferido}
                 lastInteraction={textoSeguimiento(p.fechaProximoSeguimiento, p.diasVencido, hoyInicio)}
                 accessory={p.diasVencido !== undefined ? <Badge tone="error">{ETIQUETA_VENCIDO}</Badge> : undefined}

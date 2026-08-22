@@ -22,6 +22,7 @@ type Prospecto = {
   nombre: string;
   etapaActual: Etapa;
   canalContactoPreferido: "phone" | "whatsapp" | "mail" | "instagram" | "otro";
+  prioridad: "high" | "medium" | "low";
   fechaUltimoContacto?: number;
   fechaProximoSeguimiento?: number;
   diasVencido?: number;
@@ -48,7 +49,7 @@ function payload(grupos: Partial<Record<Etapa, Grupo>> = {}, overrides: { tieneP
 }
 
 function prospecto(id: string, nombre: string, extra: Partial<Prospecto> = {}): Prospecto {
-  return { id, nombre, etapaActual: "new", canalContactoPreferido: "phone", ...extra };
+  return { id, nombre, etapaActual: "new", canalContactoPreferido: "phone", prioridad: "medium", ...extra };
 }
 
 /** La cabecera de cada etapa es el disclosure: <h2> con un <button aria-expanded>. */
@@ -156,6 +157,25 @@ describe("tarjetas: urgencia y navegación", () => {
     expect(screen.getAllByText("Vencido")).toHaveLength(1);
     expect(screen.getByText("Vencido hace 3 días")).toBeDefined();
     expect(screen.getByText("En 5 días")).toBeDefined();
+  });
+
+  it("cada tarjeta muestra el puntito de SU prioridad, no el «medium» fijo de antes (JOS-53)", () => {
+    useQueryMock.mockReturnValue(
+      payload({
+        new: grupo([
+          prospecto("1", "Alta Uno", { prioridad: "high" }),
+          prospecto("2", "Media Dos", { prioridad: "medium" }),
+        ]),
+        contacted: grupo([prospecto("3", "Baja Tres", { etapaActual: "contacted", prioridad: "low" })]),
+      }),
+    );
+    render(<PipelinePage />);
+    // El puntito de ProspectCard expone la prioridad por su aria-label (new y contacted
+    // arrancan expandidas, así que las tres tarjetas se ven).
+    expect(screen.getByLabelText("Prioridad Alta")).toBeDefined();
+    expect(screen.getByLabelText("Prioridad Baja")).toBeDefined();
+    // Exactamente UNA «Media»: antes salían todas iguales, con el valor fijo.
+    expect(screen.getAllByLabelText("Prioridad Media")).toHaveLength(1);
   });
 
   it("la etapa no se repite dentro de la tarjeta (la declara la sección)", () => {

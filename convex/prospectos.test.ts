@@ -476,9 +476,10 @@ describe("pipeline · agrupación, orden y proyección (JOS-21)", () => {
     });
     expect(hoy.diasVencido).toBeUndefined();
     expect(manana.diasVencido).toBeUndefined();
-    // La proyección no expone el tenant ni los campos de sistema.
+    // La proyección no expone el tenant ni los campos de sistema. `prioridad` SÍ va
+    // (JOS-53): siempre presente, resuelta.
     expect(Object.keys(vencido).sort()).toEqual(
-      ["canalContactoPreferido", "diasVencido", "etapaActual", "fechaProximoSeguimiento", "fechaUltimoContacto", "id", "nombre"],
+      ["canalContactoPreferido", "diasVencido", "etapaActual", "fechaProximoSeguimiento", "fechaUltimoContacto", "id", "nombre", "prioridad"],
     );
   });
 
@@ -495,6 +496,33 @@ describe("pipeline · agrupación, orden y proyección (JOS-21)", () => {
     const segunda = nombres((await pipeline(t)).grupos.contacted);
     expect(primera).toEqual(["A", "B", "C", "D"]);
     expect(segunda).toEqual(primera);
+  });
+});
+
+describe("pipeline · prioridad (JOS-53)", () => {
+  it("la proyección de tarjeta incluye la prioridad resuelta (ausente → media)", async () => {
+    const t = nuevoTest();
+    await insertar(t, [
+      { nombre: "Sin prioridad", etapaActual: "new", fechaProximoSeguimiento: hoyInicio }, // el documento NO guarda el campo
+      { nombre: "Con alta", etapaActual: "new", fechaProximoSeguimiento: hoyInicio + HORA, prioridad: "high" },
+    ]);
+
+    const g = (await pipeline(t)).grupos.new;
+    expect(g.prospectos.find((p) => p.nombre === "Sin prioridad")!.prioridad).toBe("medium");
+    expect(g.prospectos.find((p) => p.nombre === "Con alta")!.prioridad).toBe("high");
+  });
+
+  it("la prioridad NO reordena el Pipeline: el orden sigue siendo por fecha, no por prioridad", async () => {
+    const t = nuevoTest();
+    await insertar(t, [
+      // El MÁS urgente por fecha es de prioridad BAJA; el menos urgente, ALTA.
+      { nombre: "Baja urgente", etapaActual: "contacted", fechaProximoSeguimiento: hoyInicio - DIA, prioridad: "low" },
+      { nombre: "Alta futura", etapaActual: "contacted", fechaProximoSeguimiento: hoyInicio + 5 * DIA, prioridad: "high" },
+    ]);
+
+    // Si el Pipeline reordenara por prioridad, "Alta futura" iría primera. NO lo hace: aquí
+    // manda la fecha (a diferencia de la Actividad Diaria, JOS-54). Es la regla "lo que NO cambia".
+    expect(nombres((await pipeline(t)).grupos.contacted)).toEqual(["Baja urgente", "Alta futura"]);
   });
 });
 
