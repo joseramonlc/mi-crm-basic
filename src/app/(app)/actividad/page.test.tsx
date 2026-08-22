@@ -38,6 +38,7 @@ type Prospecto = {
   nombre: string;
   etapaActual: "new" | "contacted" | "presented" | "evaluating" | "joined" | "discarded";
   canalContactoPreferido: "phone" | "whatsapp" | "mail" | "instagram" | "otro";
+  prioridad: "high" | "medium" | "low";
   fechaUltimoContacto?: number;
   diasVencido?: number;
 };
@@ -55,7 +56,7 @@ function payload(overrides: Partial<Payload> = {}): Payload {
 }
 
 function prospecto(id: string, nombre: string, extra: Partial<Prospecto> = {}): Prospecto {
-  return { id, nombre, etapaActual: "new", canalContactoPreferido: "phone", ...extra };
+  return { id, nombre, etapaActual: "new", canalContactoPreferido: "phone", prioridad: "medium", ...extra };
 }
 
 function ultimoDayKey(): string {
@@ -132,6 +133,24 @@ describe("estados de la pantalla", () => {
 
     fireEvent.click(screen.getByText("Elena Prat"));
     expect(pushMock).toHaveBeenCalledWith("/prospectos/p3");
+  });
+
+  it("cada tarjeta muestra el puntito de SU prioridad, no el «medium» fijo de antes (JOS-54)", () => {
+    useQueryMock.mockReturnValue(
+      payload({
+        hoy: [
+          prospecto("p1", "Alta Uno", { prioridad: "high" }),
+          prospecto("p2", "Media Dos", { prioridad: "medium" }),
+        ],
+        vencidos: [prospecto("p3", "Baja Tres", { prioridad: "low", diasVencido: 2 })],
+      }),
+    );
+    render(<ActividadPage />);
+    // El puntito de ProspectCard expone la prioridad por su aria-label.
+    expect(screen.getByLabelText("Prioridad Alta")).toBeDefined();
+    expect(screen.getByLabelText("Prioridad Baja")).toBeDefined();
+    // Exactamente UNA «Media» (la tarjeta p2): antes salían tres, con el valor fijo.
+    expect(screen.getAllByLabelText("Prioridad Media")).toHaveLength(1);
   });
 
   it("actividad truncada: banner exacto de vista parcial y '≥' solo en la cantidad truncada", () => {
