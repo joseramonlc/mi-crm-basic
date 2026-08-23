@@ -77,3 +77,29 @@ export const MAX_RESUMEN_PROSPECTOS = 6 * MAX_PIPELINE;
  * "presupuesto de lectura" de convex/resumen.test.ts, que se remidió en JOS-67.
  */
 export const MAX_RESUMEN_INTERACCIONES = 500;
+
+/**
+ * Tope de interacciones por prospecto (JOS-80). NO es cosmético: acota la cascada de
+ * `prospectos.eliminar`, que borra en UNA transacción el prospecto y TODAS sus
+ * interacciones. Sin cota, un historial arbitrariamente grande podría superar los
+ * límites de transacción de Convex (16 MiB / 32.000 leídos / 16.000 escritos) y dejar
+ * sin borrar datos personales justo en el peor caso. Se hace cumplir en
+ * `interacciones.crear`, así que acota el crecimiento SOLO HACIA DELANTE. Eso, por sí
+ * solo, NO garantiza los datos YA guardados (que pudieron crecer sin tope antes de
+ * JOS-24/JOS-80): que la cascada quepa para el histórico EXISTENTE lo CERTIFICA el gate
+ * de producción (auditoría de tamaños + medición real del borrado) ANTES de habilitar el
+ * borrado; ver plan JOS-80 §4.2(b).
+ *
+ * El binding de la cascada es la ESCRITURA de documentos: borra N+1 (N interacciones +
+ * el prospecto). Con margen ≤ 25 %: N+1 ≤ 0,25 × 16.000 = 4.000. Por bytes, con los
+ * campos libres ya topados desde JOS-24 (2.000 car. × 2), cada interacción ronda ~4,5 KB,
+ * así que 500 × 4,5 KB ≈ 2,2 MB de lectura ≈ 14 % del límite de 16 MiB. 500 queda
+ * holgado por ambos lados y, como MAX_PIPELINE/MAX_RESUMEN_*, está fuera del alcance
+ * realista de un networker individual (500 contactos registrados con UNA misma persona).
+ *
+ * ⚠️ VALOR PROVISIONAL: lo CONFIRMA el gate de producción de JOS-80 (auditoría de tamaños
+ * reales + medición del borrado con `getTransactionMetrics()` en entorno desechable). Si la
+ * medición mostrara el peor caso por encima del 25 % de cualquier límite, se baja este valor
+ * ANTES de habilitar el borrado. El gate y su umbral viven en [ver plan JOS-80 §4.2(b)].
+ */
+export const MAX_INTERACCIONES_POR_PROSPECTO = 500;

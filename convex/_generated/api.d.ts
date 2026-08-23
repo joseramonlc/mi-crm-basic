@@ -9,8 +9,10 @@
  */
 
 import type * as config_seguimiento from "../config/seguimiento.js";
+import type * as gateBorrado from "../gateBorrado.js";
 import type * as interacciones from "../interacciones.js";
 import type * as lib_acceso from "../lib/acceso.js";
+import type * as lib_borrado from "../lib/borrado.js";
 import type * as lib_constants from "../lib/constants.js";
 import type * as lib_errores from "../lib/errores.js";
 import type * as lib_fecha from "../lib/fecha.js";
@@ -31,8 +33,10 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   "config/seguimiento": typeof config_seguimiento;
+  gateBorrado: typeof gateBorrado;
   interacciones: typeof interacciones;
   "lib/acceso": typeof lib_acceso;
+  "lib/borrado": typeof lib_borrado;
   "lib/constants": typeof lib_constants;
   "lib/errores": typeof lib_errores;
   "lib/fecha": typeof lib_fecha;
