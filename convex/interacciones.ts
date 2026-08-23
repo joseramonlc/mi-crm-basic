@@ -20,6 +20,7 @@ import {
   validarNumItems,
 } from "./lib/validacion";
 import { resultadoInteraccion, tipoInteraccion } from "./schema";
+import { MAX_INTERACCIONES_POR_PROSPECTO } from "./lib/constants";
 
 /**
  * Fecha acordada del registro, ya validada y normalizada, o `undefined` si no se
@@ -84,6 +85,25 @@ export const crear = mutation({
     const queOcurrio = queOcurrioObligatorio(args.queOcurrio);
     const siguientePasoAcordado = siguientePasoOpcional(args.siguientePasoAcordado);
     const acordada = fechaAcordadaDelRegistro(args.fechaAcordada, prospecto.etapaActual, ahora);
+
+    // JOS-80: tope de interacciones por prospecto. Acota la cascada de
+    // `prospectos.eliminar` para que quepa siempre en UNA transacción (garantía del
+    // gate de producción). Se lee tras validar los argumentos —así una llamada
+    // inválida no paga el recuento— y con `.take(MAX)`: cuesta solo lo que hay, salvo
+    // cerca del tope, donde el rechazo es inminente igualmente. El orden por fecha del
+    // índice es indiferente para contar; solo importa el prefijo usuarioId+prospectoId.
+    const existentes = await ctx.db
+      .query("interacciones")
+      .withIndex("by_usuario_prospecto_fecha", (q) =>
+        q.eq("usuarioId", usuarioId).eq("prospectoId", prospecto._id),
+      )
+      .take(MAX_INTERACCIONES_POR_PROSPECTO);
+    if (existentes.length >= MAX_INTERACCIONES_POR_PROSPECTO) {
+      throw validationError(
+        `No se pueden registrar más de ${MAX_INTERACCIONES_POR_PROSPECTO} interacciones por prospecto`,
+        "prospectoId",
+      );
+    }
 
     const interaccionId = await ctx.db.insert("interacciones", {
       usuarioId,
