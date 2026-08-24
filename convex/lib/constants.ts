@@ -81,25 +81,26 @@ export const MAX_RESUMEN_INTERACCIONES = 500;
 /**
  * Tope de interacciones por prospecto (JOS-80). NO es cosmético: acota la cascada de
  * `prospectos.eliminar`, que borra en UNA transacción el prospecto y TODAS sus
- * interacciones. Sin cota, un historial arbitrariamente grande podría superar los
- * límites de transacción de Convex (16 MiB / 32.000 leídos / 16.000 escritos) y dejar
- * sin borrar datos personales justo en el peor caso. Se hace cumplir en
- * `interacciones.crear`, así que acota el crecimiento SOLO HACIA DELANTE. Eso, por sí
- * solo, NO garantiza los datos YA guardados (que pudieron crecer sin tope antes de
- * JOS-24/JOS-80): que la cascada quepa para el histórico EXISTENTE lo CERTIFICA el gate
- * de producción (auditoría de tamaños + medición real del borrado) ANTES de habilitar el
- * borrado; ver plan JOS-80 §4.2(b).
+ * interacciones. Sin cota, un historial arbitrariamente grande podría superar los límites
+ * de transacción de Convex (16 MiB leídos/escritos, 32.000/16.000 docs) y dejar sin borrar
+ * datos personales justo en el peor caso. Se hace cumplir en `interacciones.crear`, así que
+ * acota el crecimiento SOLO HACIA DELANTE; que la cascada quepa para el histórico EXISTENTE
+ * lo CERTIFICÓ el gate de producción (auditoría de tamaños: máx. real = 1 interacción por
+ * prospecto). Ver docs/auditoria/JOS-80-gate.md.
  *
- * El binding de la cascada es la ESCRITURA de documentos: borra N+1 (N interacciones +
- * el prospecto). Con margen ≤ 25 %: N+1 ≤ 0,25 × 16.000 = 4.000. Por bytes, con los
- * campos libres ya topados desde JOS-24 (2.000 car. × 2), cada interacción ronda ~4,5 KB,
- * así que 500 × 4,5 KB ≈ 2,2 MB de lectura ≈ 14 % del límite de 16 MiB. 500 queda
- * holgado por ambos lados y, como MAX_PIPELINE/MAX_RESUMEN_*, está fuera del alcance
- * realista de un networker individual (500 contactos registrados con UNA misma persona).
- *
- * ⚠️ VALOR PROVISIONAL: lo CONFIRMA el gate de producción de JOS-80 (auditoría de tamaños
- * reales + medición del borrado con `getTransactionMetrics()` en entorno desechable). Si la
- * medición mostrara el peor caso por encima del 25 % de cualquier límite, se baja este valor
- * ANTES de habilitar el borrado. El gate y su umbral viven en [ver plan JOS-80 §4.2(b)].
+ * VALOR FIJADO POR MEDICIÓN (gate de JOS-80, 2026-08-24; docs/auditoria/JOS-80-gate.md).
+ * Dos hallazgos bajaron el valor desde los 500 provisionales:
+ *  1. El binding NO es la escritura sino la LECTURA de bytes: Convex LEE CADA DOC DOS VECES
+ *     al borrar (localizarlo por índice en `collect()` + lectura interna de `ctx.db.delete`),
+ *     así que bytesRead ≈ 2× el contenido.
+ *  2. Las validaciones acotan por `string.length`, NO por bytes (`validacion.ts`): un
+ *     carácter BMP ocupa hasta 3 bytes UTF-8, luego el peor caso admisible pesa ~3× lo que
+ *     sugeriría contar caracteres. Peor caso: interacción (2000+2000)×3 = 12 000 B;
+ *     prospecto 2479×3 = 7 437 B.
+ * Borrado real del peor caso medido: 500 → 72,91 % de bytesRead; 170 → 24,85 %;
+ * **150 → 21,94 %** (margen ~3 puntos bajo el criterio de diseño ≤ 25 %). 150 es un techo de
+ * seguridad muy por encima del uso realista; si alguien lo aproximara, el Trozo B de JOS-80
+ * (borrar interacciones sueltas) es la vía de escape. Cambiar este valor —o los topes de
+ * longitud de `validacion.ts`— obliga a REMEDIR el gate.
  */
-export const MAX_INTERACCIONES_POR_PROSPECTO = 500;
+export const MAX_INTERACCIONES_POR_PROSPECTO = 150;

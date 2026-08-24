@@ -158,3 +158,26 @@ export const GUARDANDO_CAMBIOS = "Guardando…";
 export const CANCELAR_EDICION = "Cancelar";
 /** Copy literal del toast de JOS-18. */
 export const TOAST_DATOS_GUARDADOS = "Datos guardados";
+
+/* ── Eliminar prospecto (JOS-80) ──────────────────────────────────────────── */
+
+export const ETIQUETA_ELIMINAR = "Eliminar prospecto";
+export const TITULO_CONFIRMAR_ELIMINAR = "¿Eliminar este prospecto?";
+/** Acción destructiva y sin papelera: el mensaje lo dice sin rodeos (JOS-80). */
+export const MENSAJE_CONFIRMAR_ELIMINAR =
+  "Se eliminarán el prospecto y todo su historial de interacciones. Esta acción no se puede deshacer.";
+export const ACCION_CONFIRMAR_ELIMINAR = "Eliminar";
+export const ACCION_CANCELAR_ELIMINAR = "Cancelar";
+export const TOAST_PROSPECTO_ELIMINADO = "Prospecto eliminado";
+/** Fallo CONFIRMADO por el backend (la transacción se revirtió): permite reintentar. */
+export const ERROR_ELIMINAR = "No se pudo eliminar. Comprueba tu conexión e inténtalo de nuevo.";
+
+/** Pantalla neutra mientras se completa el borrado (fallback de LimiteBorrado, §6.1). */
+export const ELIMINANDO = "Eliminando…";
+
+/* Resultado INCIERTO por caída de red (JOS-80 §6.2): el borrado PUDO completarse. NO se
+   promete verificación en el destino (Actividad no es una lista exhaustiva de prospectos). */
+export const TITULO_ELIMINAR_INCIERTO = "No hemos podido confirmar";
+export const MENSAJE_ELIMINAR_INCIERTO =
+  "Se perdió la conexión y no podemos confirmar si el prospecto llegó a eliminarse; es posible que sí. Cuando recuperes la conexión, búscalo para comprobarlo.";
+export const ACCION_ELIMINAR_INCIERTO = "Salir";

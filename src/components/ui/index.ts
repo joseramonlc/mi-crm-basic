@@ -12,6 +12,7 @@ export * from "./NativeSelect";
 export * from "./PillSelect";
 export * from "./Switch";
 export * from "./Toast";
+export * from "./ConfirmDialog";
 export * from "./EmptyState";
 export * from "./FilterChip";
 export * from "./ProspectCard";

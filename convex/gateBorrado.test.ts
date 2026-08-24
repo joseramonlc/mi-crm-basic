@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { internal } from "./_generated/api";
 import { MAX_INTERACCIONES_POR_PROSPECTO } from "./lib/constants";
+import { EMAIL_RE, LONGITUD_MAX_EMAIL } from "./lib/validacion";
 import schema from "./schema";
 
 const modules = import.meta.glob(["./**/*.{js,ts}", "!./**/*.test.ts", "!./**/*.d.ts"]);
@@ -98,8 +99,6 @@ describe("gate JOS-80 · medición real del borrado (getTransactionMetrics)", ()
     const id = await t.mutation(internal.gateBorrado.sembrarPeorCaso, {
       usuarioId: TENANT,
       numInteracciones: MAX_INTERACCIONES_POR_PROSPECTO,
-      bytesProspecto: 100,
-      bytesInteraccion: 100,
     });
     const m = await t.mutation(internal.gateBorrado.medirBorrado, { id });
     dentroDeMargen(m);
@@ -114,11 +113,11 @@ describe("gate JOS-80 · medición real del borrado (getTransactionMetrics)", ()
 
   it("regresión con documentos históricos GRANDES (por encima de los topes actuales): completa y dentro de margen", async () => {
     const t = nuevo();
+    // `sembrarPeorCaso` rellena TODOS los campos libres a su tope de longitud con caracteres de
+    // 3 bytes → ya supera por bytes cualquier histórico previo a JOS-24/JOS-74.
     const id = await t.mutation(internal.gateBorrado.sembrarPeorCaso, {
       usuarioId: TENANT,
       numInteracciones: MAX_INTERACCIONES_POR_PROSPECTO,
-      bytesProspecto: 6000, // > tope actual de `notas` (2000)
-      bytesInteraccion: 3000, // > tope actual de `queOcurrio` (2000)
     });
     const m = await t.mutation(internal.gateBorrado.medirBorrado, { id });
     dentroDeMargen(m);
@@ -130,7 +129,7 @@ describe("gate JOS-80 · guardas de entorno (solo desechable)", () => {
     process.env.APP_ENV = "production";
     await expect(
       nuevo().mutation(internal.gateBorrado.sembrarPeorCaso, {
-        usuarioId: TENANT, numInteracciones: 1, bytesProspecto: 10, bytesInteraccion: 10,
+        usuarioId: TENANT, numInteracciones: 1,
       }),
     ).rejects.toThrow(/desechable|development/i);
   });
@@ -138,9 +137,21 @@ describe("gate JOS-80 · guardas de entorno (solo desechable)", () => {
   it("medirBorrado aborta fuera de development", async () => {
     const t = nuevo();
     const id = await t.mutation(internal.gateBorrado.sembrarPeorCaso, {
-      usuarioId: TENANT, numInteracciones: 1, bytesProspecto: 10, bytesInteraccion: 10,
+      usuarioId: TENANT, numInteracciones: 1,
     });
     process.env.APP_ENV = "production";
     await expect(t.mutation(internal.gateBorrado.medirBorrado, { id })).rejects.toThrow(/desechable|development/i);
+  });
+});
+
+describe("gate JOS-80 · sembrado del peor caso (email válido de longitud máxima)", () => {
+  it("el email sembrado pasa EMAIL_RE y mide exactamente LONGITUD_MAX_EMAIL (sugerencia del auditor)", async () => {
+    const t = nuevo();
+    // 0 interacciones: basta el prospecto para inspeccionar su email.
+    const id = await t.mutation(internal.gateBorrado.sembrarPeorCaso, { usuarioId: TENANT, numInteracciones: 0 });
+    const email = await t.run(async (ctx) => (await ctx.db.get(id))?.email);
+    expect(email).toBeDefined();
+    expect(email!.length).toBe(LONGITUD_MAX_EMAIL);
+    expect(EMAIL_RE.test(email!)).toBe(true);
   });
 });
