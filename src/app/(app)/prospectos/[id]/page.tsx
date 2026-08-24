@@ -2,18 +2,20 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
+import { ConvexError } from "convex/values";
 import { api } from "../../../../../convex/_generated/api";
 import type { Id } from "../../../../../convex/_generated/dataModel";
 import type { InteraccionPublica, ProspectoPublico } from "../../../../../convex/lib/proyecciones";
-import { Avatar, Badge, buttonStyle, Card, EmptyState, Icon, PriorityBadge, StageBadge, Toast } from "@/components/ui";
+import { Avatar, Badge, buttonStyle, Card, ConfirmDialog, EmptyState, Icon, PriorityBadge, StageBadge, Toast } from "@/components/ui";
 import { FormHeader } from "@/components/layout/FormHeader";
-import { consumirFlash } from "@/lib/flash";
+import { consumirFlash, escribirFlash } from "@/lib/flash";
 import { formatearFechaEs } from "@/lib/etiquetas";
 import { SelectorEtapa } from "./SelectorEtapa";
 import { EdicionDatos, type PatchDatos } from "./EdicionDatos";
 import { DatoFecha, SeguimientoAcordado } from "./SeguimientoAcordado";
+import { LimiteBorrado, PantallaEliminando } from "./LimiteBorrado";
 import {
   CARGANDO_HISTORIAL,
   CARGANDO_PROSPECTO,
@@ -23,6 +25,16 @@ import {
   TOAST_ACUERDO_QUITADO,
   ETIQUETA_ATRAS,
   ETIQUETA_EDITAR,
+  ETIQUETA_ELIMINAR,
+  TITULO_CONFIRMAR_ELIMINAR,
+  MENSAJE_CONFIRMAR_ELIMINAR,
+  ACCION_CONFIRMAR_ELIMINAR,
+  ACCION_CANCELAR_ELIMINAR,
+  TOAST_PROSPECTO_ELIMINADO,
+  ERROR_ELIMINAR,
+  TITULO_ELIMINAR_INCIERTO,
+  MENSAJE_ELIMINAR_INCIERTO,
+  ACCION_ELIMINAR_INCIERTO,
   ICONO_CANAL,
   INDICADOR_TERMINAL,
   PREFIJO_SIGUIENTE_PASO,
@@ -51,23 +63,52 @@ const estiloH2Seccion: React.CSSProperties = {
 };
 
 /**
- * Ficha del Prospecto en modo lectura (M4 bocado 1: JOS-17 sin selector de
- * etapa + JOS-20). Dos suscripciones paralelas de M2 (obtener +
- * listarPorProspecto); la reactividad de Convex cumple el "sin recargar" de
- * JOS-20. El selector de etapa llega con JOS-19 y la edición con JOS-18.
+ * Ficha del Prospecto. El export por defecto es solo el andamiaje: aloja `borrandoRef` (que debe
+ * SOBREVIVIR al desmontaje del hijo) y envuelve el contenido en `LimiteBorrado`. La lógica y las
+ * suscripciones viven en el HIJO `FichaProspectoContenido`, porque un límite de error solo captura
+ * a sus DESCENDIENTES (JOS-80 §6.1).
  */
 export default function FichaProspectoPage() {
+  const borrandoRef = React.useRef(false);
+  return (
+    <LimiteBorrado borrandoRef={borrandoRef} fallback={<PantallaEliminando />}>
+      <FichaProspectoContenido borrandoRef={borrandoRef} />
+    </LimiteBorrado>
+  );
+}
+
+/**
+ * Contenido de la Ficha (M4 bocado 1: JOS-17 + JOS-20). Dos suscripciones paralelas de M2
+ * (obtener + listarPorProspecto); la reactividad de Convex cumple el "sin recargar" de JOS-20.
+ */
+function FichaProspectoContenido({ borrandoRef }: { borrandoRef: React.MutableRefObject<boolean> }) {
   const params = useParams<{ id: string }>();
   // Conversión ÚNICA del id de la ruta (bloqueo 4 de la rev. 2): ambas
   // consultas consumen exactamente este valor.
   const prospectoId = params.id as Id<"prospectos">;
+  const router = useRouter();
 
-  const prospecto = useQuery(api.prospectos.obtener, { id: prospectoId });
-  const historial = usePaginatedQuery(api.interacciones.listarPorProspecto, { prospectoId }, { initialNumItems: 50 });
+  // Borrado (JOS-80). `eliminando` pasa las dos suscripciones a "skip" (best-effort para evitar
+  // el parpadeo); la seguridad ante un NOT_FOUND reactivo la da `LimiteBorrado` (§6.1), no el
+  // orden. El desenlace del rechazo se decide en `manejarEliminar` (§6.2).
+  const [confirmandoEliminar, setConfirmandoEliminar] = React.useState(false);
+  const [eliminando, setEliminando] = React.useState(false);
+  const [errorEliminar, setErrorEliminar] = React.useState<string | null>(null);
+  const [incierto, setIncierto] = React.useState(false);
+  // Guarda SÍNCRONA anti doble activación (el estado no cambia hasta el re-render).
+  const eliminandoRef = React.useRef(false);
+
+  const prospecto = useQuery(api.prospectos.obtener, eliminando ? "skip" : { id: prospectoId });
+  const historial = usePaginatedQuery(
+    api.interacciones.listarPorProspecto,
+    eliminando ? "skip" : { prospectoId },
+    { initialNumItems: 50 },
+  );
   const cambiarEtapa = useMutation(api.prospectos.cambiarEtapa);
   const actualizar = useMutation(api.prospectos.actualizar);
   const fijarAcordado = useMutation(api.prospectos.fijarSeguimientoAcordado);
   const quitarAcordado = useMutation(api.prospectos.quitarSeguimientoAcordado);
+  const eliminar = useMutation(api.prospectos.eliminar);
 
   // Drenaje automático (P11): la API de M2 pagina por contrato, pero JOS-20 no
   // admite paginación visible — se piden bloques de 50 hasta agotar el cursor.
@@ -142,6 +183,44 @@ export default function FichaProspectoPage() {
     setAviso(TOAST_ACUERDO_QUITADO);
   }
 
+  // Borrado (JOS-80 §6.2). Un rechazo de `eliminar` NO implica que no se borrara (una caída de red
+  // TRAS el commit rechaza en local con el doc ya borrado): se distingue el desenlace.
+  async function manejarEliminar() {
+    if (eliminandoRef.current) return;
+    eliminandoRef.current = true;
+    borrandoRef.current = true;
+    setErrorEliminar(null);
+    setEliminando(true);
+    try {
+      await eliminar({ id: prospectoId });
+      escribirFlash(TOAST_PROSPECTO_ELIMINADO);
+      router.replace("/actividad");
+    } catch (e) {
+      if (e instanceof ConvexError) {
+        const code = (e.data as { code?: string } | null | undefined)?.code;
+        if (code === "NOT_FOUND") {
+          // Ya no existe (doble envío / borrado por otra vía) = ÉXITO.
+          escribirFlash(TOAST_PROSPECTO_ELIMINADO);
+          router.replace("/actividad");
+          return;
+        }
+        // Fallo CONFIRMADO por el backend ANTES del commit (la transacción de Convex se revierte
+        // atómicamente): el prospecto SIGUE. Se re-habilita la página; `obtener` no dará NOT_FOUND
+        // porque el doc existe. Diálogo con error accesible y REINTENTO.
+        eliminandoRef.current = false;
+        borrandoRef.current = false;
+        setEliminando(false);
+        setErrorEliminar(ERROR_ELIMINAR);
+        return;
+      }
+      // Error de TRANSPORTE → resultado INCIERTO: el borrado PUDO completarse. NO se re-suscribe
+      // `obtener` (se deja `eliminando=true` → "skip"; `borrandoRef.current=true` → el límite sigue
+      // cubriendo cualquier NOT_FOUND). Estado explícito «no confirmado», SIN reintento. `eliminandoRef`
+      // se deja en true: no se relanza sobre un id posiblemente inexistente.
+      setIncierto(true);
+    }
+  }
+
   React.useEffect(() => {
     // Lectura única de un sistema externo (sessionStorage) tras el commit (en
     // un initializer divergiría del HTML del servidor en la hidratación). La
@@ -195,6 +274,14 @@ export default function FichaProspectoPage() {
                 onCambiar={manejarCambioEtapa}
               />
               {!editando && <SeccionNotas notas={prospecto.notas} />}
+              {!editando && (
+                <SeccionEliminar
+                  onEliminar={() => {
+                    setErrorEliminar(null);
+                    setConfirmandoEliminar(true);
+                  }}
+                />
+              )}
             </>
           )}
         </div>
@@ -218,6 +305,26 @@ export default function FichaProspectoPage() {
           {CTA_REGISTRAR}
         </Link>
       </div>
+
+      {incierto ? (
+        <ModalIncierto onSalir={() => router.replace("/actividad")} />
+      ) : (
+        confirmandoEliminar && (
+          <ConfirmDialog
+            titulo={TITULO_CONFIRMAR_ELIMINAR}
+            mensaje={MENSAJE_CONFIRMAR_ELIMINAR}
+            etiquetaConfirmar={ACCION_CONFIRMAR_ELIMINAR}
+            etiquetaCancelar={ACCION_CANCELAR_ELIMINAR}
+            onConfirmar={manejarEliminar}
+            onCancelar={() => {
+              setConfirmandoEliminar(false);
+              setErrorEliminar(null);
+            }}
+            procesando={eliminando}
+            error={errorEliminar}
+          />
+        )
+      )}
 
       {aviso !== null && <Toast mensaje={aviso} onClose={() => setAviso(null)} />}
     </div>
@@ -347,6 +454,114 @@ function SeccionNotas({ notas }: { notas?: string }) {
         <p style={{ fontSize: 15, color: "var(--color-neutral-400)" }}>{SIN_NOTAS}</p>
       )}
     </section>
+  );
+}
+
+/**
+ * Acción destructiva (JOS-80), en zona propia y separada de «Editar» para no
+ * confundirla. Solo abre la confirmación; el borrado y su contrato de error viven en
+ * la página. Texto en color de error, sin fondo: discreta pero inequívoca.
+ */
+function SeccionEliminar({ onEliminar }: { onEliminar: () => void }) {
+  return (
+    <section aria-label={ETIQUETA_ELIMINAR}>
+      <button
+        type="button"
+        onClick={onEliminar}
+        style={{
+          ...buttonStyle({ variant: "ghost", size: "sm" }),
+          alignSelf: "flex-start",
+          color: "var(--color-error-text)",
+        }}
+      >
+        <Icon name="trash-2" size={16} color="var(--color-error-text)" />
+        {ETIQUETA_ELIMINAR}
+      </button>
+    </section>
+  );
+}
+
+/**
+ * Estado de resultado INCIERTO por caída de red (JOS-80 §6.2): el borrado PUDO completarse. Modal
+ * con UNA sola acción (salir); NO ofrece reintento (daría NOT_FOUND si ya se borró) ni promete que
+ * en el destino se pueda verificar. `alertdialog` porque interrumpe y no es cancelable.
+ */
+function ModalIncierto({ onSalir }: { onSalir: () => void }) {
+  const tituloId = React.useId();
+  const mensajeId = React.useId();
+  const dialogRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    dialogRef.current?.querySelector<HTMLElement>("button")?.focus();
+  }, []);
+  function alPulsarTecla(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key === "Escape") {
+      onSalir();
+      return;
+    }
+    if (e.key !== "Tab") return;
+    // Trampa de foco (mismo mecanismo que ConfirmDialog): aísla el foco dentro del modal. Con una
+    // sola acción, Tab/Shift+Tab lo mantienen en el botón; no puede alcanzar el fondo.
+    const enfocables = dialogRef.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+    );
+    if (enfocables === undefined || enfocables.length === 0) return;
+    const primero = enfocables[0];
+    const ultimo = enfocables[enfocables.length - 1];
+    if (e.shiftKey && document.activeElement === primero) {
+      e.preventDefault();
+      ultimo.focus();
+    } else if (!e.shiftKey && document.activeElement === ultimo) {
+      e.preventDefault();
+      primero.focus();
+    }
+  }
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 50,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+        background: "rgba(0,0,0,0.45)",
+      }}
+    >
+      <div
+        ref={dialogRef}
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={tituloId}
+        aria-describedby={mensajeId}
+        onKeyDown={alPulsarTecla}
+        style={{
+          width: "100%",
+          maxWidth: 420,
+          background: "var(--surface-card)",
+          border: "1px solid var(--border-default)",
+          borderRadius: "var(--radius-lg)",
+          boxShadow: "var(--shadow-2)",
+          padding: 24,
+          fontFamily: "var(--font-sans)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 16,
+        }}
+      >
+        <h2 id={tituloId} style={{ fontSize: "var(--text-h3-size)", fontWeight: 600, color: "var(--color-neutral-900)", margin: 0 }}>
+          {TITULO_ELIMINAR_INCIERTO}
+        </h2>
+        <p id={mensajeId} style={{ margin: 0, fontSize: 15, lineHeight: 1.55, color: "var(--color-neutral-700)" }}>
+          {MENSAJE_ELIMINAR_INCIERTO}
+        </p>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+          <button type="button" onClick={onSalir} style={buttonStyle({ size: "md" })}>
+            {ACCION_ELIMINAR_INCIERTO}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

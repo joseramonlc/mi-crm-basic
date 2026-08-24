@@ -7,6 +7,7 @@ import { APP_TZ, diffCalendarDays, ventanaDia } from "./lib/fecha";
 import { calcularFechaProximoSeguimiento, esTerminal, seguimientoTrasCambioEtapa } from "./lib/seguimiento";
 import { requireUsuario } from "./lib/usuario";
 import { prospectoDelUsuario } from "./lib/acceso";
+import { eliminarProspectoEnCascada } from "./lib/borrado";
 import { prospectoPublicoValidator, toProspectoPublico } from "./lib/proyecciones";
 import {
   LONGITUD_MAX_COMO_SE_CONOCIO,
@@ -463,5 +464,31 @@ export const quitarSeguimientoAcordado = mutation({
       seguimientoManual: undefined,
     });
     return toProspectoPublico((await ctx.db.get(doc._id))!);
+  },
+});
+
+/**
+ * DELETE /prospectos/:id (JOS-80). Borra el prospecto y TODO su historial de
+ * interacciones en la MISMA transacción (Convex = todo o nada): o desaparece todo o
+ * no desaparece nada, sin estados intermedios visibles. Es el criterio 2 de la issue y
+ * lo que evita interacciones «huérfanas» que el Resumen seguiría contando (lee
+ * `interacciones` por su cuenta, `resumen.ts`).
+ *
+ * Autorización idéntica al resto: `prospectoDelUsuario` da NOT_FOUND opaco para un id
+ * ajeno o inexistente (no revela existencia). La cascada vive en
+ * `eliminarProspectoEnCascada`, acotada por MAX_INTERACCIONES_POR_PROSPECTO y certificada
+ * por el gate de producción (docs/auditoria/JOS-80-gate.md).
+ *
+ * No devuelve datos: el documento ya no existe. Acción destructiva y sin papelera; la
+ * salvaguarda (confirmación explícita) es de la UI (JOS-80).
+ */
+export const eliminar = mutation({
+  args: { id: v.id("prospectos") },
+  returns: v.null(),
+  handler: async (ctx, { id }) => {
+    const usuarioId = await requireUsuario(ctx);
+    const doc = await prospectoDelUsuario(ctx, id, usuarioId);
+    await eliminarProspectoEnCascada(ctx, doc);
+    return null;
   },
 });

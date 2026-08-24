@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { getFunctionName } from "convex/server";
+import { ConvexError } from "convex/values";
 import { escribirFlash, consumirFlash } from "@/lib/flash";
 import { formatearFechaEs } from "@/lib/etiquetas";
 import { fechaAcordadaAMs } from "@/lib/fechaAcordada";
@@ -16,6 +17,14 @@ import {
   ERROR_CAMBIO_ETAPA,
   ETIQUETA_CAMPO_ACORDADA,
   ETIQUETA_EDITAR,
+  ETIQUETA_ELIMINAR,
+  ACCION_CONFIRMAR_ELIMINAR,
+  ACCION_CANCELAR_ELIMINAR,
+  TOAST_PROSPECTO_ELIMINADO,
+  ERROR_ELIMINAR,
+  TITULO_ELIMINAR_INCIERTO,
+  ACCION_ELIMINAR_INCIERTO,
+  ELIMINANDO,
   TITULO_EDICION,
   TOAST_ACUERDO_FIJADO,
   TOAST_ACUERDO_QUITADO,
@@ -38,6 +47,7 @@ const {
   actualizarMock,
   fijarMock,
   quitarMock,
+  eliminarMock,
   loadMoreMock,
   replaceMock,
 } = vi.hoisted(() => ({
@@ -48,6 +58,7 @@ const {
   actualizarMock: vi.fn(),
   fijarMock: vi.fn(),
   quitarMock: vi.fn(),
+  eliminarMock: vi.fn(),
   loadMoreMock: vi.fn(),
   replaceMock: vi.fn(),
 }));
@@ -144,6 +155,7 @@ beforeEach(() => {
     "prospectos:actualizar": actualizarMock,
     "prospectos:fijarSeguimientoAcordado": fijarMock,
     "prospectos:quitarSeguimientoAcordado": quitarMock,
+    "prospectos:eliminar": eliminarMock,
   };
   useMutationMock.mockImplementation((referencia) => MOCKS[getFunctionName(referencia)] ?? cambiarEtapaMock);
   prepararHistorial();
@@ -343,7 +355,15 @@ describe("cambio de etapa (JOS-19, bocado 2)", () => {
   it("la sección va entre la tarjeta de seguimiento y las notas (orden JOS-59)", () => {
     const { container } = render(<FichaProspectoPage />);
     const secciones = Array.from(container.querySelectorAll("section[aria-label]")).map((s) => s.getAttribute("aria-label"));
-    expect(secciones).toEqual(["Datos del prospecto", "Seguimiento", "Etapa del pipeline", "Notas", "Historial"]);
+    // JOS-80: "Eliminar prospecto" es la última sección de la columna izquierda, antes del historial.
+    expect(secciones).toEqual([
+      "Datos del prospecto",
+      "Seguimiento",
+      "Etapa del pipeline",
+      "Notas",
+      "Eliminar prospecto",
+      "Historial",
+    ]);
   });
 
   it("activar otra etapa llama UNA vez a cambiarEtapa con el id de la ruta y muestra el toast con la fecha recalculada", async () => {
@@ -455,15 +475,15 @@ describe("cambio de etapa (JOS-19, bocado 2)", () => {
     render(<FichaProspectoPage />);
     // getFunctionName: el proxy del api genera referencias nuevas por acceso;
     // el nombre canónico es la identidad estable de la función Convex. Desde
-    // JOS-69 conviven CUATRO mutations (las dos del contacto acordado se suman
-    // a etapa y actualización) — y sigue sin estar interacciones.crear, que es
-    // lo que este test protege.
+    // JOS-69 conviven varias mutations (contacto acordado) y desde JOS-80 se suma
+    // `eliminar` — y sigue sin estar interacciones.crear, que es lo que este test protege.
     const mutations = useMutationMock.mock.calls.map((llamada) => getFunctionName(llamada[0]));
     expect(mutations).toEqual([
       "prospectos:cambiarEtapa",
       "prospectos:actualizar",
       "prospectos:fijarSeguimientoAcordado",
       "prospectos:quitarSeguimientoAcordado",
+      "prospectos:eliminar",
     ]);
     expect(mutations).not.toContain("interacciones:crear");
   });
@@ -647,5 +667,136 @@ describe("contacto acordado en la ficha (JOS-69)", () => {
         `Etapa actualizada: Presentación realizada. Próximo contacto: ${formatearFechaEs(FECHA_ACUERDO)}`,
       ),
     );
+  });
+});
+
+describe("eliminar prospecto (JOS-80)", () => {
+  function abrirDialogo() {
+    fireEvent.click(screen.getByRole("button", { name: ETIQUETA_ELIMINAR }));
+    return within(screen.getByRole("dialog"));
+  }
+
+  it("el botón abre la confirmación", () => {
+    render(<FichaProspectoPage />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    abrirDialogo();
+    expect(screen.getByRole("dialog")).toBeDefined();
+  });
+
+  it("cancelar cierra sin borrar", () => {
+    render(<FichaProspectoPage />);
+    const dialogo = abrirDialogo();
+    fireEvent.click(dialogo.getByRole("button", { name: ACCION_CANCELAR_ELIMINAR }));
+    expect(eliminarMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("confirmar borra: llama eliminar, corta la suscripción (skip), escribe flash y navega con replace", async () => {
+    eliminarMock.mockResolvedValue(null);
+    render(<FichaProspectoPage />);
+    const dialogo = abrirDialogo();
+    await act(async () => {
+      fireEvent.click(dialogo.getByRole("button", { name: ACCION_CONFIRMAR_ELIMINAR }));
+    });
+    expect(eliminarMock).toHaveBeenCalledWith({ id: "p7" });
+    // La suscripción pasa a "skip" (best-effort): tras el borrado, `obtener` daría NOT_FOUND.
+    expect(useQueryMock).toHaveBeenCalledWith(expect.anything(), "skip");
+    // Orden determinista de éxito: flash → replace a /actividad.
+    expect(consumirFlash()).toBe(TOAST_PROSPECTO_ELIMINADO);
+    expect(replaceMock).toHaveBeenCalledWith("/actividad");
+  });
+
+  it("NOT_FOUND reactivo durante el borrado: muestra «Eliminando…» y NO propaga al límite de la ruta (§6.1)", async () => {
+    // React registra el error capturado por el límite en console.error; se silencia para no ensuciar.
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let resolver: (v: null) => void = () => {};
+    eliminarMock.mockReturnValue(new Promise<null>((r) => (resolver = r)));
+    render(<FichaProspectoPage />);
+    const dialogo = abrirDialogo();
+    // Tras confirmar, `obtener` pasa a LANZAR NOT_FOUND (invalidación reactiva del borrado).
+    useQueryMock.mockImplementation(() => {
+      throw new ConvexError({ code: "NOT_FOUND" });
+    });
+    await act(async () => {
+      fireEvent.click(dialogo.getByRole("button", { name: ACCION_CONFIRMAR_ELIMINAR }));
+    });
+    // El límite LOCAL lo absorbió: pantalla neutra, y el render NO lanzó (no hay error.tsx de ruta).
+    expect(textosDeStatus()).toContain(ELIMINANDO);
+    expect(eliminarMock).toHaveBeenCalledTimes(1);
+    await act(async () => resolver(null));
+    spy.mockRestore();
+  });
+
+  it("rechazo NOT_FOUND (ya borrado): se trata como ÉXITO — flash + replace", async () => {
+    eliminarMock.mockRejectedValue(new ConvexError({ code: "NOT_FOUND" }));
+    render(<FichaProspectoPage />);
+    const dialogo = abrirDialogo();
+    await act(async () => {
+      fireEvent.click(dialogo.getByRole("button", { name: ACCION_CONFIRMAR_ELIMINAR }));
+    });
+    expect(consumirFlash()).toBe(TOAST_PROSPECTO_ELIMINADO);
+    expect(replaceMock).toHaveBeenCalledWith("/actividad");
+  });
+
+  it("rechazo ConvexError (otro código): diálogo con error accesible y REINTENTO; no navega ni flash", async () => {
+    eliminarMock.mockRejectedValue(new ConvexError({ code: "UNAUTHENTICATED" }));
+    render(<FichaProspectoPage />);
+    const dialogo = abrirDialogo();
+    await act(async () => {
+      fireEvent.click(dialogo.getByRole("button", { name: ACCION_CONFIRMAR_ELIMINAR }));
+    });
+    expect(screen.getByRole("alert").textContent).toBe(ERROR_ELIMINAR);
+    expect(screen.getByRole("dialog")).toBeDefined();
+    // Reintento disponible: el botón de confirmar sigue presente y habilitado.
+    expect(dialogo.getByRole("button", { name: ACCION_CONFIRMAR_ELIMINAR })).toHaveProperty("disabled", false);
+    expect(replaceMock).not.toHaveBeenCalled();
+    expect(consumirFlash()).toBeNull();
+  });
+
+  it("rechazo de RED (incierto): «no confirmado» con acción única de salir, SIN reintento", async () => {
+    eliminarMock.mockRejectedValue(new Error("network"));
+    render(<FichaProspectoPage />);
+    const dialogo = abrirDialogo();
+    await act(async () => {
+      fireEvent.click(dialogo.getByRole("button", { name: ACCION_CONFIRMAR_ELIMINAR }));
+    });
+    const alerta = within(screen.getByRole("alertdialog"));
+    expect(screen.getByText(TITULO_ELIMINAR_INCIERTO)).toBeDefined();
+    // No hay reintento (no está el botón "Eliminar"); solo "Salir".
+    expect(alerta.queryByRole("button", { name: ACCION_CONFIRMAR_ELIMINAR })).toBeNull();
+    expect(replaceMock).not.toHaveBeenCalled();
+    expect(eliminarMock).toHaveBeenCalledTimes(1);
+    fireEvent.click(alerta.getByRole("button", { name: ACCION_ELIMINAR_INCIERTO }));
+    expect(replaceMock).toHaveBeenCalledWith("/actividad");
+  });
+
+  it("resultado incierto: el modal ATRAPA el foco (Tab y Shift+Tab no lo sacan)", async () => {
+    eliminarMock.mockRejectedValue(new Error("network"));
+    render(<FichaProspectoPage />);
+    const dialogo = abrirDialogo();
+    await act(async () => {
+      fireEvent.click(dialogo.getByRole("button", { name: ACCION_CONFIRMAR_ELIMINAR }));
+    });
+    const modal = screen.getByRole("alertdialog");
+    const salir = within(modal).getByRole("button", { name: ACCION_ELIMINAR_INCIERTO });
+    expect(document.activeElement).toBe(salir); // foco inicial en la única acción
+    fireEvent.keyDown(modal, { key: "Tab" });
+    expect(document.activeElement).toBe(salir);
+    fireEvent.keyDown(modal, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(salir);
+  });
+
+  it("doble activación rápida: emite UNA sola mutation (guarda síncrona por ref)", async () => {
+    let resolver: (v: null) => void = () => {};
+    eliminarMock.mockReturnValue(new Promise<null>((r) => (resolver = r)));
+    render(<FichaProspectoPage />);
+    const dialogo = abrirDialogo();
+    const confirmar = dialogo.getByRole("button", { name: ACCION_CONFIRMAR_ELIMINAR });
+    await act(async () => {
+      fireEvent.click(confirmar);
+      fireEvent.click(confirmar);
+    });
+    expect(eliminarMock).toHaveBeenCalledTimes(1);
+    await act(async () => resolver(null));
   });
 });
