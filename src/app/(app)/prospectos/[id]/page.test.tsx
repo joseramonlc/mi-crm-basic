@@ -25,6 +25,12 @@ import {
   TITULO_ELIMINAR_INCIERTO,
   ACCION_ELIMINAR_INCIERTO,
   ELIMINANDO,
+  ETIQUETA_CORREGIR_INTERACCION,
+  ETIQUETA_ELIMINAR_INTERACCION,
+  ACCION_CONFIRMAR_ELIMINAR_INTERACCION,
+  TOAST_INTERACCION_ELIMINADA,
+  ERROR_ELIMINAR_INTERACCION,
+  TOAST_INTERACCION_INCIERTO,
   TITULO_EDICION,
   TOAST_ACUERDO_FIJADO,
   TOAST_ACUERDO_QUITADO,
@@ -48,6 +54,7 @@ const {
   fijarMock,
   quitarMock,
   eliminarMock,
+  eliminarInteraccionMock,
   loadMoreMock,
   replaceMock,
 } = vi.hoisted(() => ({
@@ -59,6 +66,7 @@ const {
   fijarMock: vi.fn(),
   quitarMock: vi.fn(),
   eliminarMock: vi.fn(),
+  eliminarInteraccionMock: vi.fn(),
   loadMoreMock: vi.fn(),
   replaceMock: vi.fn(),
 }));
@@ -156,6 +164,7 @@ beforeEach(() => {
     "prospectos:fijarSeguimientoAcordado": fijarMock,
     "prospectos:quitarSeguimientoAcordado": quitarMock,
     "prospectos:eliminar": eliminarMock,
+    "interacciones:eliminar": eliminarInteraccionMock,
   };
   useMutationMock.mockImplementation((referencia) => MOCKS[getFunctionName(referencia)] ?? cambiarEtapaMock);
   prepararHistorial();
@@ -475,8 +484,9 @@ describe("cambio de etapa (JOS-19, bocado 2)", () => {
     render(<FichaProspectoPage />);
     // getFunctionName: el proxy del api genera referencias nuevas por acceso;
     // el nombre canónico es la identidad estable de la función Convex. Desde
-    // JOS-69 conviven varias mutations (contacto acordado) y desde JOS-80 se suma
-    // `eliminar` — y sigue sin estar interacciones.crear, que es lo que este test protege.
+    // JOS-69 conviven varias mutations (contacto acordado); JOS-80 suma `prospectos:eliminar` y, en
+    // el Trozo B, `interacciones:eliminar` (borrar una interacción suelta) — y sigue sin estar
+    // interacciones.crear, que es lo que este test protege.
     const mutations = useMutationMock.mock.calls.map((llamada) => getFunctionName(llamada[0]));
     expect(mutations).toEqual([
       "prospectos:cambiarEtapa",
@@ -484,6 +494,7 @@ describe("cambio de etapa (JOS-19, bocado 2)", () => {
       "prospectos:fijarSeguimientoAcordado",
       "prospectos:quitarSeguimientoAcordado",
       "prospectos:eliminar",
+      "interacciones:eliminar",
     ]);
     expect(mutations).not.toContain("interacciones:crear");
   });
@@ -797,6 +808,113 @@ describe("eliminar prospecto (JOS-80)", () => {
       fireEvent.click(confirmar);
     });
     expect(eliminarMock).toHaveBeenCalledTimes(1);
+    await act(async () => resolver(null));
+  });
+});
+
+describe("corregir / eliminar interacción en el historial (JOS-80 Trozo B)", () => {
+  /** Los botones "Eliminar" de las entradas (no el "Eliminar prospecto"). Orden: i2, luego i1. */
+  function botonesEliminarInteraccion() {
+    return screen.getAllByRole("button", { name: ETIQUETA_ELIMINAR_INTERACCION });
+  }
+
+  it("cada entrada trae enlace «Corregir» a su edición y botón «Eliminar»", () => {
+    render(<FichaProspectoPage />);
+    const corregir = screen.getAllByRole("link", { name: ETIQUETA_CORREGIR_INTERACCION });
+    expect(corregir).toHaveLength(2);
+    // Orden del servidor: i2 (más reciente) primero.
+    expect(corregir[0].getAttribute("href")).toBe("/prospectos/p7/interacciones/i2/editar");
+    expect(corregir[1].getAttribute("href")).toBe("/prospectos/p7/interacciones/i1/editar");
+    expect(botonesEliminarInteraccion()).toHaveLength(2);
+  });
+
+  it("«Eliminar» abre la confirmación; cancelar cierra sin borrar", () => {
+    render(<FichaProspectoPage />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(botonesEliminarInteraccion()[0]);
+    const dialogo = within(screen.getByRole("dialog"));
+    fireEvent.click(dialogo.getByRole("button", { name: ACCION_CANCELAR_ELIMINAR }));
+    expect(eliminarInteraccionMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("confirmar borra i2: llama a interacciones.eliminar con su id, avisa, cierra y NO navega", async () => {
+    eliminarInteraccionMock.mockResolvedValue(null);
+    render(<FichaProspectoPage />);
+    fireEvent.click(botonesEliminarInteraccion()[0]);
+    const dialogo = within(screen.getByRole("dialog"));
+    await act(async () => {
+      fireEvent.click(dialogo.getByRole("button", { name: ACCION_CONFIRMAR_ELIMINAR_INTERACCION }));
+    });
+    expect(eliminarInteraccionMock).toHaveBeenCalledWith({ id: "i2" });
+    expect(textosDeStatus()).toContain(TOAST_INTERACCION_ELIMINADA);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // Borrar una interacción no saca de la Ficha (a diferencia de borrar el prospecto).
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("rechazo NOT_FOUND (ya borrada) → ÉXITO: avisa y cierra, sin error", async () => {
+    eliminarInteraccionMock.mockRejectedValue(new ConvexError({ code: "NOT_FOUND" }));
+    render(<FichaProspectoPage />);
+    fireEvent.click(botonesEliminarInteraccion()[0]);
+    const dialogo = within(screen.getByRole("dialog"));
+    await act(async () => {
+      fireEvent.click(dialogo.getByRole("button", { name: ACCION_CONFIRMAR_ELIMINAR_INTERACCION }));
+    });
+    expect(textosDeStatus()).toContain(TOAST_INTERACCION_ELIMINADA);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("rechazo ConvexError (otro código) → diálogo con error y REINTENTO; no cierra ni avisa de borrado", async () => {
+    eliminarInteraccionMock.mockRejectedValue(new ConvexError({ code: "UNAUTHENTICATED" }));
+    render(<FichaProspectoPage />);
+    fireEvent.click(botonesEliminarInteraccion()[0]);
+    const dialogo = within(screen.getByRole("dialog"));
+    await act(async () => {
+      fireEvent.click(dialogo.getByRole("button", { name: ACCION_CONFIRMAR_ELIMINAR_INTERACCION }));
+    });
+    expect(screen.getByRole("alert").textContent).toBe(ERROR_ELIMINAR_INTERACCION);
+    expect(screen.getByRole("dialog")).toBeDefined();
+    expect(dialogo.getByRole("button", { name: ACCION_CONFIRMAR_ELIMINAR_INTERACCION })).toHaveProperty("disabled", false);
+    expect(textosDeStatus()).not.toContain(TOAST_INTERACCION_ELIMINADA);
+  });
+
+  it("rechazo de TRANSPORTE (posterior al commit) → INCIERTO: cierra el diálogo, avisa y NO ofrece reintento ciego", async () => {
+    eliminarInteraccionMock.mockRejectedValue(new Error("network"));
+    render(<FichaProspectoPage />);
+    fireEvent.click(botonesEliminarInteraccion()[0]);
+    const dialogo = within(screen.getByRole("dialog"));
+    await act(async () => {
+      fireEvent.click(dialogo.getByRole("button", { name: ACCION_CONFIRMAR_ELIMINAR_INTERACCION }));
+    });
+    // No se afirma que la entrada permanece ni se reintenta a ciegas: el diálogo se cierra…
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // …y un aviso explícito lo dice (la lista viva reconciliará la verdad).
+    expect(textosDeStatus()).toContain(TOAST_INTERACCION_INCIERTO);
+    expect(eliminarInteraccionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconciliación: si la entrada desaparece de la lista con el diálogo abierto, el diálogo se cierra solo", () => {
+    const { rerender } = render(<FichaProspectoPage />);
+    fireEvent.click(botonesEliminarInteraccion()[0]); // confirma i2
+    expect(screen.getByRole("dialog")).toBeDefined();
+    // La suscripción viva deja de traer i2 (borrada, aquí o desde otra pestaña).
+    prepararHistorial({ results: [INTERACCIONES[1]] });
+    rerender(<FichaProspectoPage />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("doble activación rápida: emite UNA sola mutation (guarda síncrona por ref)", async () => {
+    let resolver: (v: null) => void = () => {};
+    eliminarInteraccionMock.mockReturnValue(new Promise<null>((r) => (resolver = r)));
+    render(<FichaProspectoPage />);
+    fireEvent.click(botonesEliminarInteraccion()[0]);
+    const confirmar = within(screen.getByRole("dialog")).getByRole("button", { name: ACCION_CONFIRMAR_ELIMINAR_INTERACCION });
+    await act(async () => {
+      fireEvent.click(confirmar);
+      fireEvent.click(confirmar);
+    });
+    expect(eliminarInteraccionMock).toHaveBeenCalledTimes(1);
     await act(async () => resolver(null));
   });
 });

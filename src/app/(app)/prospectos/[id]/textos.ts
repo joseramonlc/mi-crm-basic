@@ -181,3 +181,20 @@ export const TITULO_ELIMINAR_INCIERTO = "No hemos podido confirmar";
 export const MENSAJE_ELIMINAR_INCIERTO =
   "Se perdió la conexión y no podemos confirmar si el prospecto llegó a eliminarse; es posible que sí. Cuando recuperes la conexión, búscalo para comprobarlo.";
 export const ACCION_ELIMINAR_INCIERTO = "Salir";
+
+/* ── Corregir / eliminar una interacción (JOS-80 Trozo B) ─────────────────── */
+
+export const ETIQUETA_CORREGIR_INTERACCION = "Corregir";
+export const ETIQUETA_ELIMINAR_INTERACCION = "Eliminar";
+export const TITULO_CONFIRMAR_ELIMINAR_INTERACCION = "¿Eliminar esta interacción?";
+/** Sin papelera y recalcula las fechas del prospecto: el mensaje lo advierte. */
+export const MENSAJE_CONFIRMAR_ELIMINAR_INTERACCION =
+  "Se borrará este contacto del historial y las fechas del prospecto se recalcularán. Esta acción no se puede deshacer.";
+export const ACCION_CONFIRMAR_ELIMINAR_INTERACCION = "Eliminar";
+export const TOAST_INTERACCION_ELIMINADA = "Interacción eliminada";
+/** Fallo CONFIRMADO por el backend (la transacción se revirtió): la entrada sigue → reintento. */
+export const ERROR_ELIMINAR_INTERACCION = "No se pudo eliminar. Comprueba tu conexión e inténtalo de nuevo.";
+/* Resultado INCIERTO por caída de red: el borrado PUDO completarse. NO se afirma que la entrada
+   permanece ni se ofrece reintento ciego; la lista viva reconcilia y este aviso lo dice. */
+export const TOAST_INTERACCION_INCIERTO =
+  "Se perdió la conexión y no podemos confirmar si se eliminó. Revisa el historial en un momento.";

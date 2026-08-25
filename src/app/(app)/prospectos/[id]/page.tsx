@@ -35,6 +35,14 @@ import {
   TITULO_ELIMINAR_INCIERTO,
   MENSAJE_ELIMINAR_INCIERTO,
   ACCION_ELIMINAR_INCIERTO,
+  ETIQUETA_CORREGIR_INTERACCION,
+  ETIQUETA_ELIMINAR_INTERACCION,
+  TITULO_CONFIRMAR_ELIMINAR_INTERACCION,
+  MENSAJE_CONFIRMAR_ELIMINAR_INTERACCION,
+  ACCION_CONFIRMAR_ELIMINAR_INTERACCION,
+  TOAST_INTERACCION_ELIMINADA,
+  ERROR_ELIMINAR_INTERACCION,
+  TOAST_INTERACCION_INCIERTO,
   ICONO_CANAL,
   INDICADOR_TERMINAL,
   PREFIJO_SIGUIENTE_PASO,
@@ -98,6 +106,14 @@ function FichaProspectoContenido({ borrandoRef }: { borrandoRef: React.MutableRe
   // Guarda SÍNCRONA anti doble activación (el estado no cambia hasta el re-render).
   const eliminandoRef = React.useRef(false);
 
+  // Borrado de una INTERACCIÓN suelta (JOS-80 Trozo B). A diferencia del borrado del prospecto, aquí
+  // no se navega fuera: el prospecto sigue existiendo, así que la lista viva `listarPorProspecto`
+  // reconcilia la verdad (si se borró, la entrada desaparece sola). No hace falta LimiteBorrado.
+  const [confirmandoInteraccionId, setConfirmandoInteraccionId] = React.useState<Id<"interacciones"> | null>(null);
+  const [eliminandoInteraccionId, setEliminandoInteraccionId] = React.useState<Id<"interacciones"> | null>(null);
+  const [errorEliminarInteraccion, setErrorEliminarInteraccion] = React.useState<string | null>(null);
+  const eliminandoInteraccionRef = React.useRef(false);
+
   const prospecto = useQuery(api.prospectos.obtener, eliminando ? "skip" : { id: prospectoId });
   const historial = usePaginatedQuery(
     api.interacciones.listarPorProspecto,
@@ -109,6 +125,7 @@ function FichaProspectoContenido({ borrandoRef }: { borrandoRef: React.MutableRe
   const fijarAcordado = useMutation(api.prospectos.fijarSeguimientoAcordado);
   const quitarAcordado = useMutation(api.prospectos.quitarSeguimientoAcordado);
   const eliminar = useMutation(api.prospectos.eliminar);
+  const eliminarInteraccion = useMutation(api.interacciones.eliminar);
 
   // Drenaje automático (P11): la API de M2 pagina por contrato, pero JOS-20 no
   // admite paginación visible — se piden bloques de 50 hasta agotar el cursor.
@@ -221,6 +238,44 @@ function FichaProspectoContenido({ borrandoRef }: { borrandoRef: React.MutableRe
     }
   }
 
+  // Borrado de una INTERACCIÓN (JOS-80 §6.2 del Trozo A, adaptado a que aquí la lista sigue viva). Un
+  // rechazo de `eliminarInteraccion` NO implica que no se borrara (una caída de red TRAS el commit
+  // rechaza en local con la fila ya borrada): se distingue el desenlace.
+  async function manejarEliminarInteraccion(id: Id<"interacciones">) {
+    if (eliminandoInteraccionRef.current) return;
+    eliminandoInteraccionRef.current = true;
+    setEliminandoInteraccionId(id);
+    setErrorEliminarInteraccion(null);
+    try {
+      await eliminarInteraccion({ id });
+      // Éxito: la lista viva quita la entrada y baja las fechas recalculadas del prospecto.
+      eliminandoInteraccionRef.current = false;
+      setEliminandoInteraccionId(null);
+      setConfirmandoInteraccionId(null);
+      setAviso(TOAST_INTERACCION_ELIMINADA);
+    } catch (e) {
+      eliminandoInteraccionRef.current = false;
+      setEliminandoInteraccionId(null);
+      if (e instanceof ConvexError) {
+        const code = (e.data as { code?: string } | null | undefined)?.code;
+        if (code === "NOT_FOUND") {
+          // Ya no existe (doble envío / borrada por otra vía) = ÉXITO.
+          setConfirmandoInteraccionId(null);
+          setAviso(TOAST_INTERACCION_ELIMINADA);
+          return;
+        }
+        // Fallo CONFIRMADO antes del commit (la transacción se revierte): la entrada SIGUE. Diálogo
+        // con error accesible y REINTENTO (se deja abierto).
+        setErrorEliminarInteraccion(ERROR_ELIMINAR_INTERACCION);
+        return;
+      }
+      // Error de TRANSPORTE → INCIERTO: el borrado PUDO completarse. NO se afirma que la entrada
+      // permanece ni se ofrece reintento ciego; se cierra el diálogo y la lista viva reconcilia.
+      setConfirmandoInteraccionId(null);
+      setAviso(TOAST_INTERACCION_INCIERTO);
+    }
+  }
+
   React.useEffect(() => {
     // Lectura única de un sistema externo (sessionStorage) tras el commit (en
     // un initializer divergiría del HTML del servidor en la hidratación). La
@@ -235,6 +290,12 @@ function FichaProspectoContenido({ borrandoRef }: { borrandoRef: React.MutableRe
   }, []);
 
   const rutaRegistrar = `/prospectos/${prospectoId}/interacciones/nueva`;
+
+  // El diálogo de borrado de interacción se muestra SOLO si la entrada aún está en la lista viva. Si
+  // desaparece (éxito, o borrada desde otra pestaña) el diálogo se cierra solo, derivado del render,
+  // sin efecto ni setState: nunca queda un diálogo apuntando a una entrada que ya no existe (§5.1).
+  const mostrarConfirmInteraccion =
+    confirmandoInteraccionId !== null && historial.results.some((i) => i.id === confirmandoInteraccionId);
 
   return (
     <div
@@ -291,6 +352,11 @@ function FichaProspectoContenido({ borrandoRef }: { borrandoRef: React.MutableRe
           completo={status === "Exhausted"}
           cargandoPrimera={status === "LoadingFirstPage"}
           rutaRegistrar={rutaRegistrar}
+          prospectoId={prospectoId}
+          onEliminar={(id) => {
+            setErrorEliminarInteraccion(null);
+            setConfirmandoInteraccionId(id);
+          }}
         />
       </div>
 
@@ -324,6 +390,22 @@ function FichaProspectoContenido({ borrandoRef }: { borrandoRef: React.MutableRe
             error={errorEliminar}
           />
         )
+      )}
+
+      {mostrarConfirmInteraccion && (
+        <ConfirmDialog
+          titulo={TITULO_CONFIRMAR_ELIMINAR_INTERACCION}
+          mensaje={MENSAJE_CONFIRMAR_ELIMINAR_INTERACCION}
+          etiquetaConfirmar={ACCION_CONFIRMAR_ELIMINAR_INTERACCION}
+          etiquetaCancelar={ACCION_CANCELAR_ELIMINAR}
+          onConfirmar={() => manejarEliminarInteraccion(confirmandoInteraccionId!)}
+          onCancelar={() => {
+            setConfirmandoInteraccionId(null);
+            setErrorEliminarInteraccion(null);
+          }}
+          procesando={eliminandoInteraccionId !== null}
+          error={errorEliminarInteraccion}
+        />
       )}
 
       {aviso !== null && <Toast mensaje={aviso} onClose={() => setAviso(null)} />}
@@ -570,11 +652,15 @@ function SeccionHistorial({
   completo,
   cargandoPrimera,
   rutaRegistrar,
+  prospectoId,
+  onEliminar,
 }: {
   entradas: InteraccionPublica[];
   completo: boolean;
   cargandoPrimera: boolean;
   rutaRegistrar: string;
+  prospectoId: Id<"prospectos">;
+  onEliminar: (id: Id<"interacciones">) => void;
 }) {
   return (
     <section aria-label="Historial" className="mt-8 lg:mt-0 flex flex-col gap-3">
@@ -611,7 +697,12 @@ function SeccionHistorial({
         <>
           <ul className="flex flex-col gap-3" style={{ listStyle: "none", margin: 0, padding: 0 }}>
             {entradas.map((interaccion) => (
-              <EntradaHistorial key={interaccion.id} interaccion={interaccion} />
+              <EntradaHistorial
+                key={interaccion.id}
+                interaccion={interaccion}
+                prospectoId={prospectoId}
+                onEliminar={onEliminar}
+              />
             ))}
           </ul>
           {/* Carga progresiva del drenaje (P11): lo recibido ya se muestra. */}
@@ -626,7 +717,15 @@ function SeccionHistorial({
   );
 }
 
-function EntradaHistorial({ interaccion }: { interaccion: InteraccionPublica }) {
+function EntradaHistorial({
+  interaccion,
+  prospectoId,
+  onEliminar,
+}: {
+  interaccion: InteraccionPublica;
+  prospectoId: Id<"prospectos">;
+  onEliminar: (id: Id<"interacciones">) => void;
+}) {
   const tipo = metaTipo(interaccion.tipo);
   const badge = RESULTADO_BADGE[interaccion.resultado];
   return (
@@ -660,6 +759,26 @@ function EntradaHistorial({ interaccion }: { interaccion: InteraccionPublica }) 
               {PREFIJO_SIGUIENTE_PASO + interaccion.siguientePasoAcordado}
             </p>
           )}
+
+          {/* Corregir / eliminar la interacción (JOS-80 Trozo B), discretos y al pie de la tarjeta.
+              Corregir navega a la pantalla de edición; Eliminar abre la confirmación en la Ficha. */}
+          <div className="flex items-center justify-end gap-1 mt-1">
+            <Link
+              href={`/prospectos/${prospectoId}/interacciones/${interaccion.id}/editar`}
+              style={{ ...buttonStyle({ variant: "ghost", size: "sm" }), color: "var(--color-neutral-600)" }}
+            >
+              <Icon name="square-pen" size={14} color="var(--color-neutral-500)" />
+              {ETIQUETA_CORREGIR_INTERACCION}
+            </Link>
+            <button
+              type="button"
+              onClick={() => onEliminar(interaccion.id)}
+              style={{ ...buttonStyle({ variant: "ghost", size: "sm" }), color: "var(--color-error-text)" }}
+            >
+              <Icon name="trash-2" size={14} color="var(--color-error-text)" />
+              {ETIQUETA_ELIMINAR_INTERACCION}
+            </button>
+          </div>
         </article>
       </Card>
     </li>
