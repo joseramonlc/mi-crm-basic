@@ -1,10 +1,11 @@
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
+import type { Doc } from "./_generated/dataModel";
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
-import { calcularFechaProximoSeguimiento, esTerminal, type Etapa } from "./lib/seguimiento";
+import { calcularFechaProximoSeguimiento, esTerminal, seguimientoTrasCambioEtapa, type Etapa } from "./lib/seguimiento";
 import { requireUsuario } from "./lib/usuario";
-import { prospectoDelUsuario } from "./lib/acceso";
-import { validationError } from "./lib/errores";
+import { interaccionDelUsuario, prospectoDelUsuario } from "./lib/acceso";
+import { notFound, validationError } from "./lib/errores";
 import {
   interaccionPublicaValidator,
   prospectoPublicoValidator,
@@ -162,5 +163,140 @@ export const listarPorProspecto = query({
       .order("desc")
       .paginate(conLimites(paginationOpts));
     return { ...resultado, page: resultado.page.map(toInteraccionPublica) };
+  },
+});
+
+/**
+ * Deja las fechas derivadas del prospecto correctas DESPUÉS de que su historial de interacciones
+ * haya cambiado (borrado, o edición de la fecha) — JOS-80 Trozo B.
+ *
+ * `fechaUltimoContacto` deja de mantenerse con el `Math.max` de `crear` (que solo AVANZA) y pasa a
+ * ser el máximo REAL de las interacciones que quedan: el índice `by_usuario_prospecto_fecha` ya está
+ * ordenado por fecha, así que la más reciente es `.order("desc").first()` — una sola lectura. Si no
+ * queda ninguna, el campo queda ausente (`undefined` en el patch lo elimina).
+ *
+ * `fechaProximoSeguimiento`/`seguimientoManual` NO se pueden reconstruir desde las interacciones (la
+ * fecha acordada de JOS-68 no se guarda en ellas), así que se recalculan con la MISMA precedencia que
+ * un cambio de etapa —terminal → acuerdo vigente → motor— reutilizando la función pura ya probada
+ * `seguimientoTrasCambioEtapa`. Una cita acordada vigente se CONSERVA: es un compromiso futuro,
+ * independiente de cualquier contacto pasado (si sobra, se retira con JOS-69).
+ *
+ * `referencia` = nuevo último contacto ?? fechaAlta (caso 4 de JOS-8), igual que el resto del motor.
+ */
+async function recalcularProspectoTrasHistorial(
+  ctx: Pick<MutationCtx, "db">,
+  prospecto: Doc<"prospectos">,
+): Promise<void> {
+  const ultima = await ctx.db
+    .query("interacciones")
+    .withIndex("by_usuario_prospecto_fecha", (q) =>
+      q.eq("usuarioId", prospecto.usuarioId).eq("prospectoId", prospecto._id),
+    )
+    .order("desc")
+    .first();
+  const nuevaFechaUltimoContacto = ultima?.fecha;
+  const referencia = nuevaFechaUltimoContacto ?? prospecto.fechaAlta;
+  await ctx.db.patch(prospecto._id, {
+    // undefined ELIMINA el campo: sin interacciones no hay "último contacto".
+    fechaUltimoContacto: nuevaFechaUltimoContacto,
+    ...seguimientoTrasCambioEtapa(prospecto.etapaActual, referencia, prospecto),
+  });
+}
+
+/**
+ * DELETE /prospectos/:id/interacciones/:interaccionId (JOS-80 Trozo B). Borra una interacción
+ * registrada por error y RECALCULA las fechas derivadas del prospecto en la misma transacción.
+ *
+ * Autorización opaca por la propia fila (`interaccionDelUsuario`): un id ajeno o inexistente da el
+ * mismo NOT_FOUND. Se borra ANTES de recalcular, para que el nuevo "último contacto" se lea sobre lo
+ * que queda. No borra cascadas ni toca otros documentos: es O(1), muy por debajo de los límites de
+ * Convex, así que —a diferencia del borrado del prospecto entero— no necesita gate.
+ *
+ * `prospecto` puede ser `null` si la interacción quedó huérfana (Convex no impone integridad
+ * referencial): se borra igual —es basura— y se omite el recálculo, no hay documento sobre el que
+ * actuar.
+ */
+export const eliminar = mutation({
+  args: { id: v.id("interacciones") },
+  returns: v.null(),
+  handler: async (ctx, { id }) => {
+    const usuarioId = await requireUsuario(ctx);
+    const interaccion = await interaccionDelUsuario(ctx, id, usuarioId);
+    const prospecto = await ctx.db.get(interaccion.prospectoId);
+    await ctx.db.delete(interaccion._id);
+    if (prospecto !== null) await recalcularProspectoTrasHistorial(ctx, prospecto);
+    return null;
+  },
+});
+
+/**
+ * PATCH /prospectos/:id/interacciones/:interaccionId (JOS-80 Trozo B). Corrige una interacción ya
+ * guardada. Solo se editan los campos que la interacción ALMACENA; la "fecha acordada" (JOS-68) no
+ * está entre ellos —no se guarda en la interacción— y se sigue gestionando en la Ficha (JOS-69).
+ *
+ * Solo un cambio de `fecha` puede mover las fechas del prospecto (subir o bajar el último contacto):
+ * en ese caso se recalcula igual que en el borrado. Editar tipo/queOcurrio/resultado/siguiente paso
+ * no toca ninguna fecha.
+ *
+ * Sin ningún campo → patch vacío, no-op idempotente que devuelve la interacción sin cambios (misma
+ * convención que `prospectos.actualizar`). Autorización opaca por la fila; huérfana tratada como en
+ * `eliminar`.
+ */
+export const actualizar = mutation({
+  args: {
+    id: v.id("interacciones"),
+    fecha: v.optional(v.number()),
+    tipo: v.optional(tipoInteraccion),
+    queOcurrio: v.optional(v.string()),
+    resultado: v.optional(resultadoInteraccion),
+    siguientePasoAcordado: v.optional(v.string()),
+  },
+  returns: interaccionPublicaValidator,
+  handler: async (ctx, args) => {
+    const usuarioId = await requireUsuario(ctx);
+    const interaccion = await interaccionDelUsuario(ctx, args.id, usuarioId);
+
+    const patch: Partial<Doc<"interacciones">> = {};
+    if (args.fecha !== undefined) {
+      validarFechaInteraccion(args.fecha, Date.now());
+      patch.fecha = args.fecha;
+    }
+    if (args.tipo !== undefined) patch.tipo = args.tipo;
+    if (args.resultado !== undefined) patch.resultado = args.resultado;
+    if (args.queOcurrio !== undefined) patch.queOcurrio = queOcurrioObligatorio(args.queOcurrio);
+    // Cadena vacía elimina el campo (nulos por ausencia), igual que en `crear`.
+    if (args.siguientePasoAcordado !== undefined) {
+      patch.siguientePasoAcordado = siguientePasoOpcional(args.siguientePasoAcordado);
+    }
+
+    const fechaCambia = args.fecha !== undefined && args.fecha !== interaccion.fecha;
+    await ctx.db.patch(interaccion._id, patch);
+    if (fechaCambia) {
+      const prospecto = await ctx.db.get(interaccion.prospectoId);
+      if (prospecto !== null) await recalcularProspectoTrasHistorial(ctx, prospecto);
+    }
+    // self-get: la interacción existe, se acaba de patchear.
+    return toInteraccionPublica((await ctx.db.get(interaccion._id))!);
+  },
+});
+
+/**
+ * GET /prospectos/:prospectoId/interacciones/:id (JOS-80 Trozo B). Una interacción por id, para
+ * precargar la pantalla de edición. NOT_FOUND opaco para id ajeno o inexistente.
+ *
+ * La ruta es ANIDADA, así que la interacción debe pertenecer a ESE prospecto: `prospectoId` viaja
+ * también y se comprueba la relación. Sin ello, `/prospectos/A/interacciones/B/editar` (B propio pero
+ * de otro prospecto) montaría el formulario con el contexto de A editando B —fallo de identidad de
+ * recurso—; con la comprobación, el par que no casa da el MISMO NOT_FOUND opaco (ni siquiera revela
+ * que B exista).
+ */
+export const obtener = query({
+  args: { prospectoId: v.id("prospectos"), id: v.id("interacciones") },
+  returns: interaccionPublicaValidator,
+  handler: async (ctx, { prospectoId, id }) => {
+    const usuarioId = await requireUsuario(ctx);
+    const interaccion = await interaccionDelUsuario(ctx, id, usuarioId);
+    if (interaccion.prospectoId !== prospectoId) throw notFound("Interacción no encontrada");
+    return toInteraccionPublica(interaccion);
   },
 });

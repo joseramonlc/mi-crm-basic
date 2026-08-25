@@ -3,6 +3,7 @@ import { convexTest, type TestConvex } from "convex-test";
 import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { APP_TZ, ventanaDia } from "./lib/fecha";
 import { calcularFechaProximoSeguimiento } from "./lib/seguimiento";
 import { FUTURO_MARGEN_MS, LONGITUD_MAX_TEXTO_INTERACCION } from "./lib/validacion";
@@ -458,6 +459,272 @@ describe("aislamiento multi-tenant · dos sesiones", () => {
       b.query(api.interacciones.listarPorProspecto, { prospectoId, paginationOpts: PAGINA } as never),
     );
     expect(data).toEqual({ code: "NOT_FOUND", message: "Prospecto no encontrado" });
+  });
+});
+
+/* ── JOS-80 Trozo B: borrar / corregir una interacción + recálculo de fechas ── */
+
+const ACORDADA = ventanaDia("2026-07-26", APP_TZ).hoyInicio;
+
+/** Crea una interacción y devuelve su id (proyección pública). */
+async function crearId(t: TestSesion, prospectoId: Id<"prospectos">, fecha: number, extra: Record<string, unknown> = {}) {
+  const r = await crear(t, prospectoId, { fecha, ...extra });
+  return r.interaccion.id;
+}
+
+function leerProspecto(t: TestSesion, prospectoId: Id<"prospectos">) {
+  return t.run((ctx) => ctx.db.get(prospectoId));
+}
+
+describe("interacciones.eliminar · borrado y recálculo (criterio 4)", () => {
+  it("borra la MÁS reciente → fechaUltimoContacto baja a la siguiente y el motor recalcula", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t);
+    await crearId(t, prospectoId, AHORA - 5 * DIA);
+    const recienteId = await crearId(t, prospectoId, AHORA - 2 * DIA);
+
+    await t.mutation(api.interacciones.eliminar, { id: recienteId } as never);
+
+    const doc = await leerProspecto(t, prospectoId);
+    expect(doc!.fechaUltimoContacto).toBe(AHORA - 5 * DIA);
+    expect(doc!.fechaProximoSeguimiento).toBe(calcularFechaProximoSeguimiento("contacted", AHORA - 5 * DIA));
+  });
+
+  it("borra la ÚNICA interacción → fechaUltimoContacto ausente y referencia = fechaAlta", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t);
+    const soloId = await crearId(t, prospectoId, AHORA - 2 * DIA);
+
+    await t.mutation(api.interacciones.eliminar, { id: soloId } as never);
+
+    const doc = await leerProspecto(t, prospectoId);
+    expect(doc).not.toHaveProperty("fechaUltimoContacto");
+    // fechaAlta de conProspecto = AHORA - 10 * DIA.
+    expect(doc!.fechaProximoSeguimiento).toBe(calcularFechaProximoSeguimiento("contacted", AHORA - 10 * DIA));
+    expect(await t.run((ctx) => ctx.db.query("interacciones").collect())).toEqual([]);
+  });
+
+  it("borra una que NO es la más reciente → fechaUltimoContacto no cambia (invariante)", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t);
+    const antiguaId = await crearId(t, prospectoId, AHORA - 5 * DIA);
+    await crearId(t, prospectoId, AHORA - 2 * DIA);
+
+    await t.mutation(api.interacciones.eliminar, { id: antiguaId } as never);
+
+    const doc = await leerProspecto(t, prospectoId);
+    expect(doc!.fechaUltimoContacto).toBe(AHORA - 2 * DIA);
+    expect(doc!.fechaProximoSeguimiento).toBe(calcularFechaProximoSeguimiento("contacted", AHORA - 2 * DIA));
+  });
+
+  it("con cita acordada vigente → borrar CONSERVA la fecha y seguimientoManual (rama 2)", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t);
+    await crearId(t, prospectoId, AHORA - 5 * DIA);
+    const recienteId = await crearId(t, prospectoId, AHORA - 2 * DIA);
+    // El usuario fija una cita DESPUÉS de registrar los contactos (si no, crear la consumiría).
+    await t.run((ctx) => ctx.db.patch(prospectoId, { fechaProximoSeguimiento: ACORDADA, seguimientoManual: true }));
+
+    await t.mutation(api.interacciones.eliminar, { id: recienteId } as never);
+
+    const doc = await leerProspecto(t, prospectoId);
+    // El último contacto sí baja…
+    expect(doc!.fechaUltimoContacto).toBe(AHORA - 5 * DIA);
+    // …pero la cita acordada manda y NO se toca.
+    expect(doc!.fechaProximoSeguimiento).toBe(ACORDADA);
+    expect(doc!.seguimientoManual).toBe(true);
+  });
+
+  it("etapa terminal → tras borrar no queda seguimiento", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t, { etapaActual: "joined" });
+    const id = await crearId(t, prospectoId, AHORA - 2 * DIA);
+
+    await t.mutation(api.interacciones.eliminar, { id } as never);
+
+    const doc = await leerProspecto(t, prospectoId);
+    expect(doc).not.toHaveProperty("fechaUltimoContacto");
+    expect(doc).not.toHaveProperty("fechaProximoSeguimiento");
+    expect(doc).not.toHaveProperty("seguimientoManual");
+  });
+});
+
+describe("interacciones.actualizar · edición y recálculo", () => {
+  it("editar la fecha de la más reciente a una anterior → fechaUltimoContacto baja", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t);
+    await crearId(t, prospectoId, AHORA - 5 * DIA);
+    const recienteId = await crearId(t, prospectoId, AHORA - 2 * DIA);
+
+    await t.mutation(api.interacciones.actualizar, { id: recienteId, fecha: AHORA - 8 * DIA } as never);
+
+    const doc = await leerProspecto(t, prospectoId);
+    expect(doc!.fechaUltimoContacto).toBe(AHORA - 5 * DIA);
+    expect(doc!.fechaProximoSeguimiento).toBe(calcularFechaProximoSeguimiento("contacted", AHORA - 5 * DIA));
+  });
+
+  it("editar la fecha de otra para hacerla la nueva más reciente → fechaUltimoContacto sube", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t);
+    const antiguaId = await crearId(t, prospectoId, AHORA - 5 * DIA);
+    await crearId(t, prospectoId, AHORA - 2 * DIA);
+
+    await t.mutation(api.interacciones.actualizar, { id: antiguaId, fecha: AHORA - 1 * DIA } as never);
+
+    const doc = await leerProspecto(t, prospectoId);
+    expect(doc!.fechaUltimoContacto).toBe(AHORA - 1 * DIA);
+  });
+
+  it("editar solo texto/tipo/resultado (sin fecha) → las fechas del prospecto no cambian", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t);
+    const id = await crearId(t, prospectoId, AHORA - 2 * DIA);
+    const antes = await leerProspecto(t, prospectoId);
+
+    const r = await t.mutation(api.interacciones.actualizar, {
+      id,
+      tipo: "meeting",
+      resultado: "thinking",
+      queOcurrio: "Texto corregido",
+      siguientePasoAcordado: "nuevo paso",
+    } as never);
+
+    expect(r.tipo).toBe("meeting");
+    expect(r.queOcurrio).toBe("Texto corregido");
+    const doc = await leerProspecto(t, prospectoId);
+    expect(doc!.fechaUltimoContacto).toBe(antes!.fechaUltimoContacto);
+    expect(doc!.fechaProximoSeguimiento).toBe(antes!.fechaProximoSeguimiento);
+  });
+
+  it("editar la fecha con cita acordada vigente → cambia el último contacto pero conserva el acuerdo", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t);
+    await crearId(t, prospectoId, AHORA - 5 * DIA);
+    const recienteId = await crearId(t, prospectoId, AHORA - 2 * DIA);
+    await t.run((ctx) => ctx.db.patch(prospectoId, { fechaProximoSeguimiento: ACORDADA, seguimientoManual: true }));
+
+    await t.mutation(api.interacciones.actualizar, { id: recienteId, fecha: AHORA - 8 * DIA } as never);
+
+    const doc = await leerProspecto(t, prospectoId);
+    expect(doc!.fechaUltimoContacto).toBe(AHORA - 5 * DIA);
+    expect(doc!.fechaProximoSeguimiento).toBe(ACORDADA);
+    expect(doc!.seguimientoManual).toBe(true);
+  });
+
+  it("editar la fecha en etapa terminal → sigue sin seguimiento", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t, { etapaActual: "joined" });
+    await crearId(t, prospectoId, AHORA - 5 * DIA);
+    const recienteId = await crearId(t, prospectoId, AHORA - 2 * DIA);
+
+    await t.mutation(api.interacciones.actualizar, { id: recienteId, fecha: AHORA - 8 * DIA } as never);
+
+    const doc = await leerProspecto(t, prospectoId);
+    expect(doc!.fechaUltimoContacto).toBe(AHORA - 5 * DIA);
+    expect(doc).not.toHaveProperty("fechaProximoSeguimiento");
+    expect(doc).not.toHaveProperty("seguimientoManual");
+  });
+
+  it("sin ningún campo editable → no-op: devuelve la interacción sin cambios", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t);
+    const id = await crearId(t, prospectoId, AHORA - 2 * DIA, { queOcurrio: "Original", siguientePasoAcordado: "paso" });
+    const antesProspecto = await leerProspecto(t, prospectoId);
+
+    const r = await t.mutation(api.interacciones.actualizar, { id } as never);
+
+    expect(r).toMatchObject({ id, fecha: AHORA - 2 * DIA, queOcurrio: "Original", siguientePasoAcordado: "paso" });
+    const doc = await leerProspecto(t, prospectoId);
+    expect(doc!.fechaUltimoContacto).toBe(antesProspecto!.fechaUltimoContacto);
+    expect(doc!.fechaProximoSeguimiento).toBe(antesProspecto!.fechaProximoSeguimiento);
+  });
+
+  it.each([
+    ["fecha futura", { fecha: AHORA + FUTURO_MARGEN_MS + 1 }, "fecha"],
+    ["queOcurrio vacío", { queOcurrio: "   " }, "queOcurrio"],
+  ])("validación de edición: %s → VALIDATION_ERROR sin cambiar la interacción", async (_n, cambio, field) => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t);
+    const id = await crearId(t, prospectoId, AHORA - 2 * DIA, { queOcurrio: "Intacto" });
+
+    const data = await dataDeError(t.mutation(api.interacciones.actualizar, { id, ...cambio } as never));
+
+    expect(data).toMatchObject({ code: "VALIDATION_ERROR", field });
+    const doc = await t.run((ctx) => ctx.db.get(id as never));
+    expect((doc as { fecha: number; queOcurrio: string }).fecha).toBe(AHORA - 2 * DIA);
+    expect((doc as { fecha: number; queOcurrio: string }).queOcurrio).toBe("Intacto");
+  });
+});
+
+describe("interacciones.obtener", () => {
+  it("devuelve la interacción del tenant en proyección pública", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t);
+    const id = await crearId(t, prospectoId, AHORA - 2 * DIA, { siguientePasoAcordado: "seguir" });
+    const r = await t.query(api.interacciones.obtener, { prospectoId, id } as never);
+    expect(r).toMatchObject({ id, prospectoId, queOcurrio: "Llamada de prueba", siguientePasoAcordado: "seguir" });
+    expect(r).not.toHaveProperty("usuarioId");
+  });
+
+  it("ruta anidada: pedirla bajo OTRO prospecto propio (no relacionado) → NOT_FOUND opaco", async () => {
+    const t = nuevoTest();
+    const prospectoA = await conProspecto(t);
+    const prospectoB = await conProspecto(t, { nombre: "Otro prospecto del mismo usuario" });
+    const id = await crearId(t, prospectoA, AHORA - 2 * DIA); // interacción de A
+
+    // /prospectos/B/interacciones/<id de A>/editar no debe montar el contexto equivocado.
+    const data = await dataDeError(t.query(api.interacciones.obtener, { prospectoId: prospectoB, id } as never));
+    expect(data).toEqual({ code: "NOT_FOUND", message: "Interacción no encontrada" });
+    // Con el prospecto correcto sí la devuelve.
+    const r = await t.query(api.interacciones.obtener, { prospectoId: prospectoA, id } as never);
+    expect(r).toMatchObject({ id, prospectoId: prospectoA });
+  });
+});
+
+describe("interacciones · Trozo B: tenencia opaca", () => {
+  it("eliminar/actualizar/obtener sobre interacción ajena → NOT_FOUND (mismo error)", async () => {
+    const { a, b } = dosTenants();
+    const prospectoId = await conProspecto(a);
+    const id = await crearId(a, prospectoId, AHORA - 2 * DIA);
+
+    const esperado = { code: "NOT_FOUND", message: "Interacción no encontrada" };
+    expect(await dataDeError(b.mutation(api.interacciones.eliminar, { id } as never))).toEqual(esperado);
+    expect(await dataDeError(b.mutation(api.interacciones.actualizar, { id, queOcurrio: "intruso" } as never))).toEqual(esperado);
+    expect(await dataDeError(b.query(api.interacciones.obtener, { prospectoId, id } as never))).toEqual(esperado);
+    // No la tocó: sigue existiendo tal cual.
+    expect(await a.run((ctx) => ctx.db.query("interacciones").collect())).toHaveLength(1);
+  });
+
+  it("interacción inexistente → mismo NOT_FOUND que ajena", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t);
+    const id = await crearId(t, prospectoId, AHORA - 2 * DIA);
+    await t.mutation(api.interacciones.eliminar, { id } as never);
+    const data = await dataDeError(t.mutation(api.interacciones.eliminar, { id } as never));
+    expect(data).toEqual({ code: "NOT_FOUND", message: "Interacción no encontrada" });
+  });
+});
+
+describe("interacciones · Trozo B: interacción huérfana (sin prospecto)", () => {
+  it("eliminar una huérfana la borra igual y omite el recálculo, sin error", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t);
+    const id = await crearId(t, prospectoId, AHORA - 2 * DIA);
+    // Corrupción simulada: se borra el prospecto por debajo, dejando la interacción huérfana.
+    await t.run((ctx) => ctx.db.delete(prospectoId as never));
+
+    await expect(t.mutation(api.interacciones.eliminar, { id } as never)).resolves.toBeNull();
+    expect(await t.run((ctx) => ctx.db.query("interacciones").collect())).toEqual([]);
+  });
+
+  it("editar la fecha de una huérfana la patchea igual y omite el recálculo, sin error", async () => {
+    const t = nuevoTest();
+    const prospectoId = await conProspecto(t);
+    const id = await crearId(t, prospectoId, AHORA - 2 * DIA);
+    await t.run((ctx) => ctx.db.delete(prospectoId as never));
+
+    const r = await t.mutation(api.interacciones.actualizar, { id, fecha: AHORA - 6 * DIA } as never);
+    expect(r.fecha).toBe(AHORA - 6 * DIA);
   });
 });
 
