@@ -235,3 +235,33 @@ describe("RecuperarPage — guard de sesión", () => {
     expect(replaceMock).not.toHaveBeenCalled();
   });
 });
+
+describe("RecuperarPage — endurecimiento de inputs (JOS-176)", () => {
+  /** Los tres atributos que PIDEN al navegador/teclado no autocapitalizar ni autocorregir lo tecleado
+   *  (son hints: los navegadores compatibles los respetan, no lo garantizan en todos los SO/teclados). */
+  function assertEndurecido(input: HTMLElement) {
+    expect(input.getAttribute("autocapitalize")).toBe("none");
+    expect(input.getAttribute("autocorrect")).toBe("off");
+    expect(input.getAttribute("spellcheck")).toBe("false");
+  }
+
+  it("el email desactiva autocapitalización, autocorrección y corrector", () => {
+    render(<RecuperarPage />);
+    const email = screen.getByLabelText("Email");
+    assertEndurecido(email);
+    expect(email.getAttribute("inputmode")).toBe("email");
+  });
+
+  it("la contraseña nueva sigue endurecida al pulsar «Mostrar contraseña» (type=text)", async () => {
+    const { container } = render(<RecuperarPage />);
+    await irAPasoCodigo(container);
+    const pass = screen.getByLabelText("Contraseña nueva");
+    expect(pass.getAttribute("type")).toBe("password");
+    assertEndurecido(pass);
+    // El incidente ocurría con la contraseña VISIBLE: al revelarla el campo pasa
+    // a type=text y es entonces cuando el teclado del móvil la alteraba.
+    fireEvent.click(screen.getByRole("button", { name: /mostrar contraseña/i }));
+    expect(pass.getAttribute("type")).toBe("text");
+    assertEndurecido(pass);
+  });
+});

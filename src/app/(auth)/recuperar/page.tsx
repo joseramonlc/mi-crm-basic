@@ -197,6 +197,9 @@ export default function RecuperarPage() {
             label="Contraseña nueva"
             type={showPassword ? "text" : "password"}
             autoComplete="new-password"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
             required
             helper="Mínimo 8 caracteres."
             value={password}
@@ -239,7 +242,11 @@ export default function RecuperarPage() {
         <Input
           label="Email"
           type="email"
+          inputMode="email"
           autoComplete="email"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
           required
           value={email}
           onChange={(e) => setEmail(e.target.value)}

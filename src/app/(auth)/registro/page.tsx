@@ -134,11 +134,25 @@ export default function RegistroPage() {
           </p>
         )}
         <Input label="Nombre" required value={name} onChange={(e) => setName(e.target.value)} />
-        <Input label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+        <Input
+          label="Email"
+          type="email"
+          inputMode="email"
+          autoComplete="email"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
         <Input
           label="Contraseña"
           type="password"
           autoComplete="new-password"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
           required
           helper="Mínimo 8 caracteres."
           value={password}
