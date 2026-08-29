@@ -189,7 +189,7 @@ export const ETIQUETA_ELIMINAR_INTERACCION = "Eliminar";
 export const TITULO_CONFIRMAR_ELIMINAR_INTERACCION = "¿Eliminar esta interacción?";
 /** Sin papelera y recalcula las fechas del prospecto: el mensaje lo advierte. */
 export const MENSAJE_CONFIRMAR_ELIMINAR_INTERACCION =
-  "Se borrará este contacto del historial y las fechas del prospecto se recalcularán. Esta acción no se puede deshacer.";
+  "Se eliminará esta interacción del historial y las fechas del prospecto se recalcularán. Esta acción no se puede deshacer.";
 export const ACCION_CONFIRMAR_ELIMINAR_INTERACCION = "Eliminar";
 export const TOAST_INTERACCION_ELIMINADA = "Interacción eliminada";
 /** Fallo CONFIRMADO por el backend (la transacción se revirtió): la entrada sigue → reintento. */
