@@ -206,7 +206,9 @@ describe("sección de datos (P3) y notas (P8)", () => {
     expect(screen.getAllByText("Contactado").length).toBeGreaterThanOrEqual(1);
     // JOS-52: la prioridad (Media, del fixture) se ve en lectura junto a la etapa.
     expect(screen.getByText("Media")).toBeDefined();
-    expect(screen.getByText("WhatsApp")).toBeDefined();
+    // Acotado a la sección de datos: desde JOS-83 "WhatsApp" es también la
+    // etiqueta del botón de contactar, y sin acotar la búsqueda es ambigua.
+    expect(within(screen.getByRole("region", { name: "Datos del prospecto" })).getByText("WhatsApp")).toBeDefined();
     expect(screen.getByText("+34 600 111 222")).toBeDefined();
     expect(screen.getByText("ana@ejemplo.com")).toBeDefined();
     expect(screen.getByText("Evento")).toBeDefined();
@@ -365,8 +367,10 @@ describe("cambio de etapa (JOS-19, bocado 2)", () => {
     const { container } = render(<FichaProspectoPage />);
     const secciones = Array.from(container.querySelectorAll("section[aria-label]")).map((s) => s.getAttribute("aria-label"));
     // JOS-80: "Eliminar prospecto" es la última sección de la columna izquierda, antes del historial.
+    // JOS-83: "Contactar" va pegada a los datos, con los que se construye.
     expect(secciones).toEqual([
       "Datos del prospecto",
+      "Contactar",
       "Seguimiento",
       "Etapa del pipeline",
       "Notas",
@@ -543,6 +547,17 @@ describe("edición de datos (JOS-18, bocado 3)", () => {
     // …pero seguimiento y etapa siguen presentes y operativos.
     expect(screen.getByRole("region", { name: "Seguimiento" })).toBeDefined();
     expect(screen.getByRole("radiogroup", { name: "Etapa del pipeline" })).toBeDefined();
+  });
+
+  it("«Contactar» también desaparece al editar: sus datos están en el formulario (JOS-83)", () => {
+    // Mismo criterio que las notas: unos botones construidos con el teléfono y el
+    // email YA GUARDADOS contradirían lo que el usuario está escribiendo.
+    render(<FichaProspectoPage />);
+    expect(screen.getByRole("region", { name: "Contactar" })).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: ETIQUETA_EDITAR }));
+
+    expect(screen.queryByRole("region", { name: "Contactar" })).toBeNull();
   });
 
   it("guardar con cambios: llama a actualizar con el diff + id de la ruta, toast literal y vuelta a lectura (P5/P6)", async () => {
