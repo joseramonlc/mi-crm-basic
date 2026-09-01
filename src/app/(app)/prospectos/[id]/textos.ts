@@ -198,3 +198,22 @@ export const ERROR_ELIMINAR_INTERACCION = "No se pudo eliminar. Comprueba tu con
    permanece ni se ofrece reintento ciego; la lista viva reconcilia y este aviso lo dice. */
 export const TOAST_INTERACCION_INCIERTO =
   "Se perdió la conexión y no podemos confirmar si se eliminó. Revisa el historial en un momento.";
+
+/* ── Contactar: abrir WhatsApp o el correo del usuario (JOS-83) ───────────── */
+
+export const TITULO_CONTACTAR = "Contactar";
+export const ETIQUETA_CONTACTAR_WHATSAPP = "WhatsApp";
+export const ETIQUETA_CONTACTAR_EMAIL = "Correo";
+/** Ni teléfono ni email: no hay nada que abrir, así que se dice qué falta. */
+export const SIN_DATOS_CONTACTO = "Añade un teléfono o un email para contactar desde aquí.";
+/* El dato existe pero no permite construir un enlace fiable: el botón se ve pero
+   está desactivado, y el aviso explica por qué y dónde se arregla. Nunca se
+   «limpia» el dato a la fuerza para forzar un enlace. */
+export const AVISO_TELEFONO_NO_VALIDO =
+  "El teléfono guardado no tiene un formato que WhatsApp pueda abrir. Corrígelo con «Editar».";
+export const AVISO_EMAIL_NO_VALIDO =
+  "El email guardado no tiene un formato que el correo pueda abrir. Corrígelo con «Editar».";
+/* El CRM NO puede saber si el usuario llegó a pulsar Enviar en la otra app (se
+   asume, JOS-83). Al volver se le ofrece el registro en vez de esperar a que lo
+   busque; el enlace es el mismo de siempre y lo registra el motor de JOS-23. */
+export const PREGUNTA_YA_ENVIADO = "¿Ya lo has enviado?";

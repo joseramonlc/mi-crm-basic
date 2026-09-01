@@ -15,6 +15,7 @@ import { formatearFechaEs } from "@/lib/etiquetas";
 import { SelectorEtapa } from "./SelectorEtapa";
 import { EdicionDatos, type PatchDatos } from "./EdicionDatos";
 import { DatoFecha, SeguimientoAcordado } from "./SeguimientoAcordado";
+import { SeccionContactar } from "./SeccionContactar";
 import { LimiteBorrado, PantallaEliminando } from "./LimiteBorrado";
 import {
   CARGANDO_HISTORIAL,
@@ -327,6 +328,12 @@ function FichaProspectoContenido({ borrandoRef }: { borrandoRef: React.MutableRe
               ) : (
                 <SeccionDatos prospecto={prospecto} onEditar={() => setEditando(true)} />
               )}
+              {/* Contactar (JOS-83) va pegada a los datos porque se construye con
+                  ellos. Se oculta al editar por el mismo criterio que las notas
+                  (P2): el teléfono y el email están dentro del formulario, y unos
+                  botones hechos con el valor ya guardado contradirían lo que el
+                  usuario está escribiendo. */}
+              {!editando && <SeccionContactar prospecto={prospecto} rutaRegistrar={rutaRegistrar} />}
               <TarjetaSeguimiento prospecto={prospecto} onFijar={fijarAcuerdo} onQuitar={quitarAcuerdo} />
               <SeccionEtapa
                 etapaActual={prospecto.etapaActual}
