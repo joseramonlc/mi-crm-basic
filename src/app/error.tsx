@@ -5,11 +5,13 @@ import { Button, Icon } from "@/components/ui";
 import { registrarError } from "@/lib/observabilidad";
 
 /**
- * Error boundary del segmento /actividad (contrato Next 16: error + unstable_retry).
- * "Reintentar" re-obtiene y re-renderiza el segmento; si la causa era transitoria
- * (p. ej. red caída al suscribirse a Convex), la pantalla se recupera sola.
+ * Error boundary raíz (contrato Next 16: error + unstable_retry). Cubre los
+ * segmentos sin boundary propio — hoy, `(auth)` (login/registro/recuperar) —
+ * y cualquier segmento futuro que no añada el suyo. Los segmentos con
+ * boundary propio (actividad, resumen, prospectos…) siguen usando el suyo,
+ * más cercano en el árbol y con su propio texto.
  */
-export default function ActividadError({
+export default function ErrorRaiz({
   error,
   unstable_retry,
 }: {
@@ -40,7 +42,7 @@ export default function ActividadError({
         <Icon name="alert-circle" size={32} color="var(--color-error-text)" />
       </div>
       <h2 style={{ fontSize: 18, fontWeight: 600, color: "var(--color-neutral-900)" }}>
-        No se pudo cargar la actividad
+        No se pudo cargar la pantalla
       </h2>
       <p style={{ fontSize: 15, color: "var(--color-neutral-500)", maxWidth: 300, lineHeight: 1.5 }}>
         Ha ocurrido un error inesperado. Puedes intentarlo de nuevo.
