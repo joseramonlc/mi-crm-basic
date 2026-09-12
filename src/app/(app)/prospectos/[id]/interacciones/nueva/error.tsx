@@ -3,6 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { Button, buttonStyle, Icon } from "@/components/ui";
+import { registrarError } from "@/lib/observabilidad";
 
 /**
  * Error boundary del segmento (contrato Next 16: error + unstable_retry).
@@ -18,7 +19,7 @@ export default function RegistrarInteraccionError({
   unstable_retry: () => void;
 }) {
   React.useEffect(() => {
-    console.error(error);
+    registrarError(error);
   }, [error]);
 
   const noEncontrado = (error as { data?: { code?: string } }).data?.code === "NOT_FOUND";

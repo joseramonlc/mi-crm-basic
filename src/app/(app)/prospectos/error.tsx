@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { Button, Icon } from "@/components/ui";
+import { registrarError } from "@/lib/observabilidad";
 
 /**
  * Error boundary del segmento /prospectos (contrato Next 16: error + unstable_retry).
@@ -19,7 +20,7 @@ export default function ProspectosError({
   unstable_retry: () => void;
 }) {
   React.useEffect(() => {
-    console.error(error);
+    registrarError(error);
   }, [error]);
 
   return (
