@@ -9,10 +9,8 @@ function ritmo(parcial: Partial<Ritmo>): Ritmo {
   return {
     completados: 0,
     pendientes: 0,
-    total: 0,
     completadosTruncados: false,
     pendientesTruncados: false,
-    aproximado: true,
     ...parcial,
   };
 }
@@ -24,42 +22,44 @@ describe("BANNER_VISTA_PARCIAL", () => {
 });
 
 describe("textoRitmo", () => {
-  it("sin truncamiento: fracción N de M en plural", () => {
-    expect(textoRitmo(ritmo({ completados: 3, pendientes: 2, total: 5 }))).toBe(
-      "3 de 5 seguimientos de hoy (aprox.)",
+  it("sin truncamiento: dos recuentos separados en plural", () => {
+    expect(textoRitmo(ritmo({ completados: 3, pendientes: 2 }))).toBe(
+      "3 contactados hoy · 2 seguimientos pendientes para hoy",
     );
   });
 
-  it("sin truncamiento: singular cuando el total es 1", () => {
-    expect(textoRitmo(ritmo({ completados: 0, pendientes: 1, total: 1 }))).toBe(
-      "0 de 1 seguimiento de hoy (aprox.)",
+  it("singular en ambos recuentos", () => {
+    expect(textoRitmo(ritmo({ completados: 1, pendientes: 1 }))).toBe(
+      "1 contactado hoy · 1 seguimiento pendiente para hoy",
     );
+  });
+
+  it("cero: plural en ambos", () => {
+    expect(textoRitmo(ritmo({}))).toBe("0 contactados hoy · 0 seguimientos pendientes para hoy");
   });
 
   it("solo completados truncados: ≥ únicamente en esa cantidad", () => {
-    expect(
-      textoRitmo(ritmo({ completados: 500, pendientes: 2, total: 502, completadosTruncados: true })),
-    ).toBe("≥500 completados · 2 pendientes (aprox.)");
+    expect(textoRitmo(ritmo({ completados: 500, pendientes: 2, completadosTruncados: true }))).toBe(
+      "≥500 contactados hoy · 2 seguimientos pendientes para hoy",
+    );
   });
 
   it("solo pendientes truncados: ≥ únicamente en esa cantidad", () => {
-    expect(
-      textoRitmo(ritmo({ completados: 3, pendientes: 500, total: 503, pendientesTruncados: true })),
-    ).toBe("3 completados · ≥500 pendientes (aprox.)");
+    expect(textoRitmo(ritmo({ completados: 3, pendientes: 500, pendientesTruncados: true }))).toBe(
+      "3 contactados hoy · ≥500 seguimientos pendientes para hoy",
+    );
   });
 
   it("ambos truncados: ≥ en las dos cantidades", () => {
     expect(
-      textoRitmo(
-        ritmo({ completados: 500, pendientes: 500, total: 1000, completadosTruncados: true, pendientesTruncados: true }),
-      ),
-    ).toBe("≥500 completados · ≥500 pendientes (aprox.)");
+      textoRitmo(ritmo({ completados: 500, pendientes: 500, completadosTruncados: true, pendientesTruncados: true })),
+    ).toBe("≥500 contactados hoy · ≥500 seguimientos pendientes para hoy");
   });
 
-  it("cantidad no truncada en singular", () => {
-    expect(
-      textoRitmo(ritmo({ completados: 1, pendientes: 500, total: 501, pendientesTruncados: true })),
-    ).toBe("1 completado · ≥500 pendientes (aprox.)");
+  it("cantidad no truncada en singular junto a una truncada", () => {
+    expect(textoRitmo(ritmo({ completados: 1, pendientes: 500, pendientesTruncados: true }))).toBe(
+      "1 contactado hoy · ≥500 seguimientos pendientes para hoy",
+    );
   });
 });
 

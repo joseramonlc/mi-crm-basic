@@ -162,9 +162,9 @@ function Actividad({ datos }: { datos: DatosActividad }) {
 }
 
 /**
- * El ritmo es aproximado por diseño: cuenta contactos de hoy, no seguimientos
- * cumplidos. JOS-23 no cambia este cálculo — solo añade la acción rápida; la
- * exactitud es JOS-77.
+ * Dos recuentos separados, sin fracción: «contactados hoy» (prospectos distintos
+ * con interacción hoy, exacto sobre `interacciones`, JOS-77; incluye contactos
+ * espontáneos) y «seguimientos pendientes para hoy». Se solapan, así que no se suman.
  */
 function LineaRitmo({ ritmo, centrada = false }: { ritmo: DatosActividad["ritmo"]; centrada?: boolean }) {
   return (
