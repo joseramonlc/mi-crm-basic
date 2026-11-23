@@ -11,25 +11,20 @@ export const BANNER_VISTA_PARCIAL = `Mostrando una vista parcial de ${MAX_ACTIVI
 export interface Ritmo {
   completados: number;
   pendientes: number;
-  total: number;
   completadosTruncados: boolean;
   pendientesTruncados: boolean;
-  aproximado: true;
 }
 
 /**
- * Línea de ritmo diario. Sin truncamiento: fracción "N de M". Con cualquier
- * cantidad truncada, la fracción sería ambigua — se listan las cantidades por
- * separado y "≥" prefija SOLO la cantidad cuyo flag está activo.
+ * Línea de ritmo diario (JOS-77): dos recuentos separados con unidades explícitas,
+ * sin fracción (los conjuntos se solapan). "≥" prefija SOLO el recuento cuyo flag
+ * de truncamiento está activo. «para hoy» distingue los pendientes de los vencidos,
+ * que se listan aparte.
  */
 export function textoRitmo(ritmo: Ritmo): string {
-  if (!ritmo.completadosTruncados && !ritmo.pendientesTruncados) {
-    const unidad = ritmo.total === 1 ? "seguimiento" : "seguimientos";
-    return `${ritmo.completados} de ${ritmo.total} ${unidad} de hoy (aprox.)`;
-  }
-  const completados = `${ritmo.completadosTruncados ? "≥" : ""}${ritmo.completados} ${ritmo.completados === 1 ? "completado" : "completados"}`;
-  const pendientes = `${ritmo.pendientesTruncados ? "≥" : ""}${ritmo.pendientes} ${ritmo.pendientes === 1 ? "pendiente" : "pendientes"}`;
-  return `${completados} · ${pendientes} (aprox.)`;
+  const completados = `${ritmo.completadosTruncados ? "≥" : ""}${ritmo.completados} ${ritmo.completados === 1 ? "contactado" : "contactados"} hoy`;
+  const pendientes = `${ritmo.pendientesTruncados ? "≥" : ""}${ritmo.pendientes} ${ritmo.pendientes === 1 ? "seguimiento pendiente" : "seguimientos pendientes"} para hoy`;
+  return `${completados} · ${pendientes}`;
 }
 
 /**

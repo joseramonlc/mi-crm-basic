@@ -1,0 +1,616 @@
+diff --git a/convex/prospectos.test.ts b/convex/prospectos.test.ts
+index 63cdbd6..c0ff394 100644
+--- a/convex/prospectos.test.ts
++++ b/convex/prospectos.test.ts
+@@ -2,7 +2,7 @@
+ import { convexTest, type TestConvex } from "convex-test";
+ import { beforeEach, describe, expect, it } from "vitest";
+ import { api, internal } from "./_generated/api";
+-import type { Doc } from "./_generated/dataModel";
++import type { Doc, Id } from "./_generated/dataModel";
+ import { MAX_ACTIVIDAD, MAX_PIPELINE } from "./lib/constants";
+ import {
+   LONGITUD_MAX_COMO_SE_CONOCIO,
+@@ -45,10 +45,11 @@ function nuevoTest(): TestConvex<typeof schema> {
+   return convexTest(schema, modules);
+ }
+ 
+-async function insertar(t: TestConvex<typeof schema>, docs: Nuevo[]) {
+-  await t.run(async (ctx) => {
++async function insertar(t: TestConvex<typeof schema>, docs: Nuevo[]): Promise<Id<"prospectos">[]> {
++  return await t.run(async (ctx) => {
++    const ids: Id<"prospectos">[] = [];
+     for (const d of docs) {
+-      await ctx.db.insert("prospectos", {
++      const id = await ctx.db.insert("prospectos", {
+         usuarioId: d.usuarioId ?? TENANT_A,
+         nombre: d.nombre,
+         comoSeConocio: "Test",
+@@ -61,6 +62,26 @@ async function insertar(t: TestConvex<typeof schema>, docs: Nuevo[]) {
+         // los niveles explícitos high/low para no fabricar un estado que la API no crea.
+         ...(d.prioridad !== undefined && d.prioridad !== "medium" ? { prioridad: d.prioridad } : {}),
+       });
++      ids.push(id);
++    }
++    return ids;
++  });
++}
++
++type NuevaInteraccion = { prospectoId: Id<"prospectos">; fecha: number; usuarioId?: string };
++
++/** Inserta interacciones directamente (fuente de verdad del ritmo, JOS-77). */
++async function insertarInteracciones(t: TestConvex<typeof schema>, items: NuevaInteraccion[]) {
++  await t.run(async (ctx) => {
++    for (const i of items) {
++      await ctx.db.insert("interacciones", {
++        usuarioId: i.usuarioId ?? TENANT_A,
++        prospectoId: i.prospectoId,
++        fecha: i.fecha,
++        tipo: "call",
++        queOcurrio: "Test",
++        resultado: "other",
++      });
+     }
+   });
+ }
+@@ -100,7 +121,7 @@ describe("actividadDiaria · estados de tieneProspectos", () => {
+     expect(r).toEqual({
+       dayKey: DAY_KEY,
+       tieneProspectos: false,
+-      ritmo: { completados: 0, pendientes: 0, total: 0, completadosTruncados: false, pendientesTruncados: false, aproximado: true },
++      ritmo: { completados: 0, pendientes: 0, completadosTruncados: false, pendientesTruncados: false },
+       hoy: [],
+       vencidos: [],
+       truncado: { hoy: false, vencidos: false },
+@@ -131,14 +152,15 @@ describe("actividadDiaria · estados de tieneProspectos", () => {
+ 
+   it("completados hoy sin pendientes → true, listas vacías y ritmo.completados > 0", async () => {
+     const t = nuevoTest();
+-    await insertar(t, [
++    const [id] = await insertar(t, [
+       { nombre: "Contactada hoy", fechaUltimoContacto: hoyInicio + 10 * HORA, fechaProximoSeguimiento: mananaInicio + 2 * DIA },
+     ]);
++    await insertarInteracciones(t, [{ prospectoId: id, fecha: hoyInicio + 10 * HORA }]);
+     const r = await actividad(t);
+     expect(r.tieneProspectos).toBe(true);
+     expect(r.hoy).toEqual([]);
+     expect(r.vencidos).toEqual([]);
+-    expect(r.ritmo).toMatchObject({ completados: 1, pendientes: 0, total: 1 });
++    expect(r.ritmo).toMatchObject({ completados: 1, pendientes: 0 });
+   });
+ });
+ 
+@@ -177,23 +199,27 @@ describe("actividadDiaria · partición, orden y proyección", () => {
+     expect(ana.id).toBeDefined();
+   });
+ 
+-  it("ritmo: completados = contactos dentro de [hoyInicio, mananaInicio)", async () => {
++  it("ritmo: completados = prospectos con interacción dentro de [hoyInicio, mananaInicio)", async () => {
+     const t = nuevoTest();
+-    await insertar(t, [
++    const [dentro, limite, fuera, pendiente] = await insertar(t, [
+       { nombre: "Comp dentro", fechaUltimoContacto: hoyInicio + 9 * HORA, fechaProximoSeguimiento: mananaInicio + 2 * DIA },
+       { nombre: "Comp límite", fechaUltimoContacto: mananaInicio - 1, fechaProximoSeguimiento: mananaInicio + 2 * DIA },
+       { nombre: "Fuera límite", fechaUltimoContacto: mananaInicio, fechaProximoSeguimiento: mananaInicio + 3 * DIA },
+       { nombre: "Pendiente hoy", fechaProximoSeguimiento: hoyInicio + HORA, fechaUltimoContacto: hoyInicio - 3 * DIA },
+     ]);
++    await insertarInteracciones(t, [
++      { prospectoId: dentro, fecha: hoyInicio + 9 * HORA },
++      { prospectoId: limite, fecha: mananaInicio - 1 },
++      { prospectoId: fuera, fecha: mananaInicio },
++      { prospectoId: pendiente, fecha: hoyInicio - 3 * DIA },
++    ]);
+ 
+     const r = await actividad(t);
+     expect(r.ritmo).toEqual({
+       completados: 2,
+       pendientes: 1,
+-      total: 3,
+       completadosTruncados: false,
+       pendientesTruncados: false,
+-      aproximado: true,
+     });
+     // Los completados tienen seguimiento futuro: no aparecen en las listas
+     expect(r.hoy.map((p) => p.nombre)).toEqual(["Pendiente hoy"]);
+@@ -304,10 +330,14 @@ describe("actividadDiaria · truncamiento (MAX_ACTIVIDAD+1 leídos, centinela de
+       fechaAlta: hoyInicio - (i + 1) * 60_000,
+     }));
+     await insertar(t, muchos);
+-    await insertar(t, [
++    const [c1, c2] = await insertar(t, [
+       { nombre: "Comp 1", fechaUltimoContacto: hoyInicio + 9 * HORA, fechaProximoSeguimiento: mananaInicio + 2 * DIA },
+       { nombre: "Comp 2", fechaUltimoContacto: hoyInicio + 10 * HORA, fechaProximoSeguimiento: mananaInicio + 2 * DIA },
+     ]);
++    await insertarInteracciones(t, [
++      { prospectoId: c1, fecha: hoyInicio + 9 * HORA },
++      { prospectoId: c2, fecha: hoyInicio + 10 * HORA },
++    ]);
+ 
+     const r = await actividad(t);
+     expect(r.hoy).toHaveLength(MAX_ACTIVIDAD);
+@@ -315,10 +345,8 @@ describe("actividadDiaria · truncamiento (MAX_ACTIVIDAD+1 leídos, centinela de
+     expect(r.ritmo).toEqual({
+       completados: 2,
+       pendientes: MAX_ACTIVIDAD,
+-      total: MAX_ACTIVIDAD + 2,
+       completadosTruncados: false,
+       pendientesTruncados: true,
+-      aproximado: true,
+     });
+   });
+ 
+@@ -345,21 +373,141 @@ describe("actividadDiaria · truncamiento (MAX_ACTIVIDAD+1 leídos, centinela de
+       fechaUltimoContacto: hoyInicio + (i % 20) * 60_000,
+       fechaProximoSeguimiento: mananaInicio + 2 * DIA,
+     }));
+-    await insertar(t, muchos);
++    const ids = await insertar(t, muchos);
++    // fecha estrictamente creciente: el orden de lectura del índice es determinista,
++    // y el prospecto 501 (el centinela) aparece solo en la fila 501.
++    await insertarInteracciones(t, ids.map((prospectoId, i) => ({ prospectoId, fecha: hoyInicio + i * 60_000 })));
+ 
+     const r = await actividad(t);
+     expect(r.ritmo).toEqual({
+       completados: MAX_ACTIVIDAD,
+       pendientes: 0,
+-      total: MAX_ACTIVIDAD,
+       completadosTruncados: true,
+       pendientesTruncados: false,
+-      aproximado: true,
+     });
+     expect(r.hoy).toEqual([]);
+     expect(r.vencidos).toEqual([]);
+     expect(r.tieneProspectos).toBe(true);
+   });
++
++  it("completados truncados con repetidos: cuenta prospectos distintos entre las MAX_ACTIVIDAD filas leídas", async () => {
++    const t = nuevoTest();
++    // 501 interacciones en 4 prospectos (≤ MAX_INTERACCIONES_POR_PROSPECTO = 150 cada uno).
++    const ids = await insertar(t, Array.from({ length: 4 }, (_, i) => ({ nombre: `Rep ${i}` })));
++    const items = Array.from({ length: MAX_ACTIVIDAD + 1 }, (_, i) => ({
++      prospectoId: ids[Math.floor(i / 126)], // 126·4 = 504 ≥ 501 → 126,126,126,123
++      fecha: hoyInicio + i * 60_000,
++    }));
++    await insertarInteracciones(t, items);
++    // Las primeras 500 filas por fecha creciente: el esperado se calcula de los datos.
++    const esperado = new Set(items.slice(0, MAX_ACTIVIDAD).map((i) => i.prospectoId)).size;
++    expect(esperado).toBe(4);
++
++    const r = await actividad(t);
++    expect(r.ritmo.completadosTruncados).toBe(true);
++    expect(r.ritmo.completados).toBe(esperado);
++  });
++});
++
++describe("actividadDiaria · completados sobre interacciones (JOS-77)", () => {
++  it("una persona con 3 interacciones hoy cuenta 1", async () => {
++    const t = nuevoTest();
++    const [id] = await insertar(t, [{ nombre: "Triple" }]);
++    await insertarInteracciones(t, [
++      { prospectoId: id, fecha: hoyInicio + HORA },
++      { prospectoId: id, fecha: hoyInicio + 2 * HORA },
++      { prospectoId: id, fecha: hoyInicio + 3 * HORA },
++    ]);
++    const r = await actividad(t);
++    expect(r.ritmo.completados).toBe(1);
++    expect(r.ritmo.completadosTruncados).toBe(false);
++  });
++
++  it("dos personas con interacción hoy cuentan 2", async () => {
++    const t = nuevoTest();
++    const [a, b] = await insertar(t, [{ nombre: "A" }, { nombre: "B" }]);
++    await insertarInteracciones(t, [
++      { prospectoId: a, fecha: hoyInicio + HORA },
++      { prospectoId: b, fecha: hoyInicio + 2 * HORA },
++    ]);
++    expect((await actividad(t)).ritmo.completados).toBe(2);
++  });
++
++  it("límites del día: hoyInicio y mananaInicio-1 cuentan; mananaInicio y hoyInicio-1 no", async () => {
++    const t = nuevoTest();
++    const [i0, i1, i2, i3] = await insertar(t, [
++      { nombre: "En hoyInicio" },
++      { nombre: "En mananaInicio-1" },
++      { nombre: "En mananaInicio" },
++      { nombre: "En hoyInicio-1" },
++    ]);
++    await insertarInteracciones(t, [
++      { prospectoId: i0, fecha: hoyInicio },
++      { prospectoId: i1, fecha: mananaInicio - 1 },
++      { prospectoId: i2, fecha: mananaInicio },
++      { prospectoId: i3, fecha: hoyInicio - 1 },
++    ]);
++    expect((await actividad(t)).ritmo.completados).toBe(2);
++  });
++
++  it("regresión: fechaUltimoContacto hoy SIN interacciones hoy ya no cuenta", async () => {
++    const t = nuevoTest();
++    await insertar(t, [{ nombre: "Derivado desviado", fechaUltimoContacto: hoyInicio + 5 * HORA }]);
++    expect((await actividad(t)).ritmo.completados).toBe(0);
++  });
++
++  it("aislamiento por tenant: interacciones de otro usuarioId no cuentan", async () => {
++    const t = nuevoTest();
++    const [propio] = await insertar(t, [{ nombre: "Mío" }]);
++    const [ajeno] = await insertar(t, [{ nombre: "Ajeno", usuarioId: TENANT_B }]);
++    await insertarInteracciones(t, [
++      { prospectoId: propio, fecha: hoyInicio + HORA },
++      { prospectoId: ajeno, fecha: hoyInicio + HORA, usuarioId: TENANT_B },
++    ]);
++    expect((await actividad(t)).ritmo.completados).toBe(1);
++  });
++
++  it("ritmo ya no contiene `aproximado` ni `total`", async () => {
++    const r = await actividad(nuevoTest());
++    expect(r.ritmo).not.toHaveProperty("aproximado");
++    expect(r.ritmo).not.toHaveProperty("total");
++  });
++
++  it("solapamiento: interacción hoy Y seguimiento hoy cuenta en completados y en pendientes", async () => {
++    const t = nuevoTest();
++    const [id] = await insertar(t, [{ nombre: "Solapado", fechaProximoSeguimiento: hoyInicio + 5 * HORA }]);
++    await insertarInteracciones(t, [{ prospectoId: id, fecha: hoyInicio + HORA }]);
++    const r = await actividad(t);
++    expect(r.ritmo).toMatchObject({ completados: 1, pendientes: 1 });
++  });
++
++  it("borrar el prospecto con la mutación `eliminar` retira su interacción del recuento", async () => {
++    const t = nuevoTest();
++    const [id] = await insertar(t, [{ nombre: "Efímero" }]);
++    await insertarInteracciones(t, [{ prospectoId: id, fecha: hoyInicio + HORA }]);
++    expect((await actividad(t)).ritmo.completados).toBe(1);
++
++    await t.withIdentity(IDENT_A).mutation(api.prospectos.eliminar, { id });
++    expect((await actividad(t)).ritmo.completados).toBe(0);
++  });
++
++  it("borrar solo la última interacción del día (`interacciones.eliminar`) baja completados de 1 a 0 y conserva el prospecto", async () => {
++    const t = nuevoTest();
++    const [id] = await insertar(t, [{ nombre: "Se queda" }]);
++    await insertarInteracciones(t, [{ prospectoId: id, fecha: hoyInicio + HORA }]);
++    expect((await actividad(t)).ritmo.completados).toBe(1);
++
++    const interaccionId = await t.run(async (ctx) => {
++      const fila = await ctx.db.query("interacciones").first();
++      return fila!._id;
++    });
++    await t.withIdentity(IDENT_A).mutation(api.interacciones.eliminar, { id: interaccionId });
++
++    const r = await actividad(t);
++    expect(r.ritmo.completados).toBe(0);
++    expect(r.tieneProspectos).toBe(true);
++    expect(await t.run(async (ctx) => (await ctx.db.get(id)) !== null)).toBe(true);
++  });
+ });
+ 
+ describe("pipeline · guardas y aislamiento (JOS-21)", () => {
+@@ -714,7 +862,7 @@ describe("seed", () => {
+     expect(r.hoy.map((p) => p.nombre)).toEqual(["Lucía Ferrer", "Carlos Vega", "Marta Ruiz"]);
+     expect(r.vencidos.map((p) => p.nombre)).toEqual(["Elena Prat", "Andrés Molina"]);
+     expect(r.vencidos.map((p) => p.diasVencido)).toEqual([7, 2]);
+-    expect(r.ritmo).toMatchObject({ completados: 1, pendientes: 3, total: 4 });
++    expect(r.ritmo).toMatchObject({ completados: 1, pendientes: 3 });
+   });
+ 
+   it("pipeline puebla las 6 etapas (escenario del recorrido manual de JOS-21)", async () => {
+diff --git a/convex/prospectos.ts b/convex/prospectos.ts
+index 74690a3..f4dcd64 100644
+--- a/convex/prospectos.ts
++++ b/convex/prospectos.ts
+@@ -111,13 +111,18 @@ export const actividadDiaria = query({
+       .take(MAX_ACTIVIDAD + 1);
+     const hoyAcotado = acotar(hoyLeidos);
+ 
+-    const completadosLeidos = await ctx.db
+-      .query("prospectos")
+-      .withIndex("by_usuario_ultimo_contacto", (q) =>
+-        q.eq("usuarioId", usuarioId).gte("fechaUltimoContacto", hoyInicio).lt("fechaUltimoContacto", mananaInicio),
++    // JOS-77: fuente de verdad = `interacciones` (no el derivado fechaUltimoContacto).
++    // Se cuentan prospectos DISTINTOS con alguna interacción en el día visible; el
++    // prefijo usuarioId del índice garantiza el aislamiento por tenant.
++    const interaccionesHoy = await ctx.db
++      .query("interacciones")
++      .withIndex("by_usuario_fecha", (q) =>
++        q.eq("usuarioId", usuarioId).gte("fecha", hoyInicio).lt("fecha", mananaInicio),
+       )
+       .take(MAX_ACTIVIDAD + 1);
+-    const completados = Math.min(completadosLeidos.length, MAX_ACTIVIDAD);
++    const completadosTruncados = interaccionesHoy.length > MAX_ACTIVIDAD;
++    // Se descarta el centinela: como mucho MAX_ACTIVIDAD interacciones procesadas.
++    const completados = new Set(interaccionesHoy.slice(0, MAX_ACTIVIDAD).map((i) => i.prospectoId)).size;
+ 
+     const proyectar = (p: Doc<"prospectos">, vencido: boolean): ProspectoActividad => ({
+       id: p._id,
+@@ -136,16 +141,16 @@ export const actividadDiaria = query({
+     return {
+       dayKey,
+       tieneProspectos,
+-      // "Completados" aproxima contactos de hoy, no seguimientos planificados
+-      // cumplidos. JOS-23 (acción rápida "Ya contacté") NO cambia este cálculo:
+-      // computarlo directamente sobre `interacciones` es JOS-77.
++      // `completados` = prospectos distintos con interacción hoy (exacto sobre
++      // `interacciones`). Incluye contactos espontáneos y se solapa con `pendientes`
++      // (un prospecto contactado hoy puede tener seguimiento hoy), por eso no hay
++      // `total`: la UI muestra ambos recuentos por separado.
++      // `completadosTruncados`: había más interacciones de las leídas → N es cota inferior.
+       ritmo: {
+         completados,
+         pendientes,
+-        total: completados + pendientes,
+-        completadosTruncados: completadosLeidos.length > MAX_ACTIVIDAD,
++        completadosTruncados,
+         pendientesTruncados: hoyAcotado.truncado,
+-        aproximado: true as const,
+       },
+       hoy: hoyAcotado.filas.map((p) => proyectar(p, false)),
+       vencidos: vencidosAcotado.filas.map((p) => proyectar(p, true)),
+diff --git a/src/app/(app)/actividad/page.test.tsx b/src/app/(app)/actividad/page.test.tsx
+index a71e54e..dd1eca8 100644
+--- a/src/app/(app)/actividad/page.test.tsx
++++ b/src/app/(app)/actividad/page.test.tsx
+@@ -23,10 +23,8 @@ type Payload = {
+   ritmo: {
+     completados: number;
+     pendientes: number;
+-    total: number;
+     completadosTruncados: boolean;
+     pendientesTruncados: boolean;
+-    aproximado: true;
+   };
+   hoy: Prospecto[];
+   vencidos: Prospecto[];
+@@ -47,7 +45,7 @@ function payload(overrides: Partial<Payload> = {}): Payload {
+   return {
+     dayKey: "2026-07-12",
+     tieneProspectos: true,
+-    ritmo: { completados: 0, pendientes: 0, total: 0, completadosTruncados: false, pendientesTruncados: false, aproximado: true },
++    ritmo: { completados: 0, pendientes: 0, completadosTruncados: false, pendientesTruncados: false },
+     hoy: [],
+     vencidos: [],
+     truncado: { hoy: false, vencidos: false },
+@@ -94,12 +92,12 @@ describe("estados de la pantalla", () => {
+ 
+   it("todo al día: mensaje positivo, ritmo visible, CTA de alta y sin afirmar que no hay prospectos", () => {
+     useQueryMock.mockReturnValue(
+-      payload({ ritmo: { completados: 2, pendientes: 0, total: 2, completadosTruncados: false, pendientesTruncados: false, aproximado: true } }),
++      payload({ ritmo: { completados: 2, pendientes: 0, completadosTruncados: false, pendientesTruncados: false } }),
+     );
+     render(<ActividadPage />);
+     expect(screen.getByText("¡Todo al día!")).toBeDefined();
+     expect(screen.getByText("No tienes seguimientos pendientes.")).toBeDefined();
+-    expect(screen.getByText("2 de 2 seguimientos de hoy (aprox.)")).toBeDefined();
++    expect(screen.getByText("2 contactados hoy · 0 seguimientos pendientes para hoy")).toBeDefined();
+     // Botón de alta exigido por JOS-22 también en este estado
+     const cta = screen.getByRole("link", { name: /Añadir prospecto/ });
+     expect(cta.getAttribute("href")).toBe("/prospectos/nuevo");
+@@ -110,14 +108,30 @@ describe("estados de la pantalla", () => {
+     useQueryMock.mockReturnValue(payload());
+     render(<ActividadPage />);
+     expect(screen.getByText("¡Todo al día!")).toBeDefined();
+-    expect(screen.queryByText(/aprox\./)).toBeNull();
++    expect(screen.queryByText(/contactados hoy/)).toBeNull();
+     expect(screen.getByRole("link", { name: /Añadir prospecto/ })).toBeDefined();
+   });
+ 
++  it("solo vencidos: el ritmo dice «para hoy» y no contradice la sección de vencidos (JOS-77)", () => {
++    useQueryMock.mockReturnValue(
++      payload({
++        hoy: [],
++        vencidos: [
++          prospecto("v1", "Venc Uno", { diasVencido: 1 }),
++          prospecto("v2", "Venc Dos", { diasVencido: 2 }),
++          prospecto("v3", "Venc Tres", { diasVencido: 3 }),
++        ],
++      }),
++    );
++    render(<ActividadPage />);
++    expect(screen.getByRole("heading", { name: /Seguimientos vencidos \(3\)/ })).toBeDefined();
++    expect(screen.getByText("0 contactados hoy · 0 seguimientos pendientes para hoy")).toBeDefined();
++  });
++
+   it("actividad: secciones, tarjetas, ritmo y navegación a la ficha", () => {
+     useQueryMock.mockReturnValue(
+       payload({
+-        ritmo: { completados: 1, pendientes: 2, total: 3, completadosTruncados: false, pendientesTruncados: false, aproximado: true },
++        ritmo: { completados: 1, pendientes: 2, completadosTruncados: false, pendientesTruncados: false },
+         hoy: [prospecto("p1", "Marta Ruiz"), prospecto("p2", "Carlos Vega", { etapaActual: "contacted" })],
+         vencidos: [prospecto("p3", "Elena Prat", { etapaActual: "presented", diasVencido: 7 })],
+       }),
+@@ -128,7 +142,7 @@ describe("estados de la pantalla", () => {
+     expect(screen.getByText("Marta Ruiz")).toBeDefined();
+     expect(screen.getByText("Elena Prat")).toBeDefined();
+     expect(screen.getByText("Vencido hace 7 días")).toBeDefined();
+-    expect(screen.getByText("1 de 3 seguimientos de hoy (aprox.)")).toBeDefined();
++    expect(screen.getByText("1 contactado hoy · 2 seguimientos pendientes para hoy")).toBeDefined();
+     expect(screen.queryByText(BANNER_VISTA_PARCIAL)).toBeNull();
+ 
+     fireEvent.click(screen.getByText("Elena Prat"));
+@@ -156,14 +170,14 @@ describe("estados de la pantalla", () => {
+   it("actividad truncada: banner exacto de vista parcial y '≥' solo en la cantidad truncada", () => {
+     useQueryMock.mockReturnValue(
+       payload({
+-        ritmo: { completados: 3, pendientes: MAX_ACTIVIDAD, total: MAX_ACTIVIDAD + 3, completadosTruncados: false, pendientesTruncados: true, aproximado: true },
++        ritmo: { completados: 3, pendientes: MAX_ACTIVIDAD, completadosTruncados: false, pendientesTruncados: true },
+         hoy: Array.from({ length: 30 }, (_, i) => prospecto(`h${i}`, `Hoy ${i}`)),
+         truncado: { hoy: true, vencidos: false },
+       }),
+     );
+     render(<ActividadPage />);
+     expect(screen.getByText(BANNER_VISTA_PARCIAL)).toBeDefined();
+-    expect(screen.getByText(`3 completados · ≥${MAX_ACTIVIDAD} pendientes (aprox.)`)).toBeDefined();
++    expect(screen.getByText(`3 contactados hoy · ≥${MAX_ACTIVIDAD} seguimientos pendientes para hoy`)).toBeDefined();
+   });
+ });
+ 
+@@ -250,10 +264,8 @@ describe("reactividad tras registrar el contacto (JOS-23, puntos 7 y 8)", () =>
+   const ritmo = (completados: number, pendientes: number) => ({
+     completados,
+     pendientes,
+-    total: completados + pendientes,
+     completadosTruncados: false,
+     pendientesTruncados: false,
+-    aproximado: true as const,
+   });
+ 
+   it("cuando la query se reemite sin el prospecto contactado, este sale de «Para hoy» y el ritmo sube", () => {
+@@ -262,7 +274,7 @@ describe("reactividad tras registrar el contacto (JOS-23, puntos 7 y 8)", () =>
+     );
+     const { rerender } = render(<ActividadPage />);
+     expect(screen.getByText("Marta Ruiz")).toBeDefined();
+-    expect(screen.getByText("0 de 2 seguimientos de hoy (aprox.)")).toBeDefined();
++    expect(screen.getByText("0 contactados hoy · 2 seguimientos pendientes para hoy")).toBeDefined();
+ 
+     // Lo que hace Convex por su cuenta al confirmarse la mutación: reemite la
+     // query ya recalculada. No hay refresco manual en la pantalla.
+@@ -272,7 +284,7 @@ describe("reactividad tras registrar el contacto (JOS-23, puntos 7 y 8)", () =>
+     expect(screen.queryByText("Marta Ruiz")).toBeNull();
+     expect(screen.getByText("Carlos Vega")).toBeDefined();
+     expect(screen.getByRole("heading", { name: /Para hoy \(1\)/ })).toBeDefined();
+-    expect(screen.getByText("1 de 2 seguimientos de hoy (aprox.)")).toBeDefined();
++    expect(screen.getByText("1 contactado hoy · 1 seguimiento pendiente para hoy")).toBeDefined();
+   });
+ 
+   it("si era el último pendiente, la pantalla pasa a «¡Todo al día!»", () => {
+@@ -285,7 +297,7 @@ describe("reactividad tras registrar el contacto (JOS-23, puntos 7 y 8)", () =>
+ 
+     expect(screen.queryByText("Marta Ruiz")).toBeNull();
+     expect(screen.getByText("¡Todo al día!")).toBeDefined();
+-    expect(screen.getByText("1 de 1 seguimiento de hoy (aprox.)")).toBeDefined();
++    expect(screen.getByText("1 contactado hoy · 0 seguimientos pendientes para hoy")).toBeDefined();
+   });
+ });
+ 
+diff --git a/src/app/(app)/actividad/page.tsx b/src/app/(app)/actividad/page.tsx
+index c7933d1..8363e74 100644
+--- a/src/app/(app)/actividad/page.tsx
++++ b/src/app/(app)/actividad/page.tsx
+@@ -162,9 +162,9 @@ function Actividad({ datos }: { datos: DatosActividad }) {
+ }
+ 
+ /**
+- * El ritmo es aproximado por diseño: cuenta contactos de hoy, no seguimientos
+- * cumplidos. JOS-23 no cambia este cálculo — solo añade la acción rápida; la
+- * exactitud es JOS-77.
++ * Dos recuentos separados, sin fracción: «contactados hoy» (prospectos distintos
++ * con interacción hoy, exacto sobre `interacciones`, JOS-77; incluye contactos
++ * espontáneos) y «seguimientos pendientes para hoy». Se solapan, así que no se suman.
+  */
+ function LineaRitmo({ ritmo, centrada = false }: { ritmo: DatosActividad["ritmo"]; centrada?: boolean }) {
+   return (
+diff --git a/src/app/(app)/actividad/textos.test.ts b/src/app/(app)/actividad/textos.test.ts
+index a9a7e2c..848988b 100644
+--- a/src/app/(app)/actividad/textos.test.ts
++++ b/src/app/(app)/actividad/textos.test.ts
+@@ -9,10 +9,8 @@ function ritmo(parcial: Partial<Ritmo>): Ritmo {
+   return {
+     completados: 0,
+     pendientes: 0,
+-    total: 0,
+     completadosTruncados: false,
+     pendientesTruncados: false,
+-    aproximado: true,
+     ...parcial,
+   };
+ }
+@@ -24,42 +22,44 @@ describe("BANNER_VISTA_PARCIAL", () => {
+ });
+ 
+ describe("textoRitmo", () => {
+-  it("sin truncamiento: fracción N de M en plural", () => {
+-    expect(textoRitmo(ritmo({ completados: 3, pendientes: 2, total: 5 }))).toBe(
+-      "3 de 5 seguimientos de hoy (aprox.)",
++  it("sin truncamiento: dos recuentos separados en plural", () => {
++    expect(textoRitmo(ritmo({ completados: 3, pendientes: 2 }))).toBe(
++      "3 contactados hoy · 2 seguimientos pendientes para hoy",
+     );
+   });
+ 
+-  it("sin truncamiento: singular cuando el total es 1", () => {
+-    expect(textoRitmo(ritmo({ completados: 0, pendientes: 1, total: 1 }))).toBe(
+-      "0 de 1 seguimiento de hoy (aprox.)",
++  it("singular en ambos recuentos", () => {
++    expect(textoRitmo(ritmo({ completados: 1, pendientes: 1 }))).toBe(
++      "1 contactado hoy · 1 seguimiento pendiente para hoy",
+     );
+   });
+ 
++  it("cero: plural en ambos", () => {
++    expect(textoRitmo(ritmo({}))).toBe("0 contactados hoy · 0 seguimientos pendientes para hoy");
++  });
++
+   it("solo completados truncados: ≥ únicamente en esa cantidad", () => {
+-    expect(
+-      textoRitmo(ritmo({ completados: 500, pendientes: 2, total: 502, completadosTruncados: true })),
+-    ).toBe("≥500 completados · 2 pendientes (aprox.)");
++    expect(textoRitmo(ritmo({ completados: 500, pendientes: 2, completadosTruncados: true }))).toBe(
++      "≥500 contactados hoy · 2 seguimientos pendientes para hoy",
++    );
+   });
+ 
+   it("solo pendientes truncados: ≥ únicamente en esa cantidad", () => {
+-    expect(
+-      textoRitmo(ritmo({ completados: 3, pendientes: 500, total: 503, pendientesTruncados: true })),
+-    ).toBe("3 completados · ≥500 pendientes (aprox.)");
++    expect(textoRitmo(ritmo({ completados: 3, pendientes: 500, pendientesTruncados: true }))).toBe(
++      "3 contactados hoy · ≥500 seguimientos pendientes para hoy",
++    );
+   });
+ 
+   it("ambos truncados: ≥ en las dos cantidades", () => {
+     expect(
+-      textoRitmo(
+-        ritmo({ completados: 500, pendientes: 500, total: 1000, completadosTruncados: true, pendientesTruncados: true }),
+-      ),
+-    ).toBe("≥500 completados · ≥500 pendientes (aprox.)");
++      textoRitmo(ritmo({ completados: 500, pendientes: 500, completadosTruncados: true, pendientesTruncados: true })),
++    ).toBe("≥500 contactados hoy · ≥500 seguimientos pendientes para hoy");
+   });
+ 
+-  it("cantidad no truncada en singular", () => {
+-    expect(
+-      textoRitmo(ritmo({ completados: 1, pendientes: 500, total: 501, pendientesTruncados: true })),
+-    ).toBe("1 completado · ≥500 pendientes (aprox.)");
++  it("cantidad no truncada en singular junto a una truncada", () => {
++    expect(textoRitmo(ritmo({ completados: 1, pendientes: 500, pendientesTruncados: true }))).toBe(
++      "1 contactado hoy · ≥500 seguimientos pendientes para hoy",
++    );
+   });
+ });
+ 
+diff --git a/src/app/(app)/actividad/textos.ts b/src/app/(app)/actividad/textos.ts
+index 3086dbe..186c289 100644
+--- a/src/app/(app)/actividad/textos.ts
++++ b/src/app/(app)/actividad/textos.ts
+@@ -11,25 +11,20 @@ export const BANNER_VISTA_PARCIAL = `Mostrando una vista parcial de ${MAX_ACTIVI
+ export interface Ritmo {
+   completados: number;
+   pendientes: number;
+-  total: number;
+   completadosTruncados: boolean;
+   pendientesTruncados: boolean;
+-  aproximado: true;
+ }
+ 
+ /**
+- * Línea de ritmo diario. Sin truncamiento: fracción "N de M". Con cualquier
+- * cantidad truncada, la fracción sería ambigua — se listan las cantidades por
+- * separado y "≥" prefija SOLO la cantidad cuyo flag está activo.
++ * Línea de ritmo diario (JOS-77): dos recuentos separados con unidades explícitas,
++ * sin fracción (los conjuntos se solapan). "≥" prefija SOLO el recuento cuyo flag
++ * de truncamiento está activo. «para hoy» distingue los pendientes de los vencidos,
++ * que se listan aparte.
+  */
+ export function textoRitmo(ritmo: Ritmo): string {
+-  if (!ritmo.completadosTruncados && !ritmo.pendientesTruncados) {
+-    const unidad = ritmo.total === 1 ? "seguimiento" : "seguimientos";
+-    return `${ritmo.completados} de ${ritmo.total} ${unidad} de hoy (aprox.)`;
+-  }
+-  const completados = `${ritmo.completadosTruncados ? "≥" : ""}${ritmo.completados} ${ritmo.completados === 1 ? "completado" : "completados"}`;
+-  const pendientes = `${ritmo.pendientesTruncados ? "≥" : ""}${ritmo.pendientes} ${ritmo.pendientes === 1 ? "pendiente" : "pendientes"}`;
+-  return `${completados} · ${pendientes} (aprox.)`;
++  const completados = `${ritmo.completadosTruncados ? "≥" : ""}${ritmo.completados} ${ritmo.completados === 1 ? "contactado" : "contactados"} hoy`;
++  const pendientes = `${ritmo.pendientesTruncados ? "≥" : ""}${ritmo.pendientes} ${ritmo.pendientes === 1 ? "seguimiento pendiente" : "seguimientos pendientes"} para hoy`;
++  return `${completados} · ${pendientes}`;
+ }
+ 
+ /**

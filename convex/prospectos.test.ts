@@ -2,7 +2,7 @@
 import { convexTest, type TestConvex } from "convex-test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { api, internal } from "./_generated/api";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { MAX_ACTIVIDAD, MAX_PIPELINE } from "./lib/constants";
 import {
   LONGITUD_MAX_COMO_SE_CONOCIO,
@@ -45,10 +45,11 @@ function nuevoTest(): TestConvex<typeof schema> {
   return convexTest(schema, modules);
 }
 
-async function insertar(t: TestConvex<typeof schema>, docs: Nuevo[]) {
-  await t.run(async (ctx) => {
+async function insertar(t: TestConvex<typeof schema>, docs: Nuevo[]): Promise<Id<"prospectos">[]> {
+  return await t.run(async (ctx) => {
+    const ids: Id<"prospectos">[] = [];
     for (const d of docs) {
-      await ctx.db.insert("prospectos", {
+      const id = await ctx.db.insert("prospectos", {
         usuarioId: d.usuarioId ?? TENANT_A,
         nombre: d.nombre,
         comoSeConocio: "Test",
@@ -60,6 +61,26 @@ async function insertar(t: TestConvex<typeof schema>, docs: Nuevo[]) {
         // JOS-54: "medium" se guarda por AUSENCIA (como en producción); solo persistimos
         // los niveles explícitos high/low para no fabricar un estado que la API no crea.
         ...(d.prioridad !== undefined && d.prioridad !== "medium" ? { prioridad: d.prioridad } : {}),
+      });
+      ids.push(id);
+    }
+    return ids;
+  });
+}
+
+type NuevaInteraccion = { prospectoId: Id<"prospectos">; fecha: number; usuarioId?: string };
+
+/** Inserta interacciones directamente (fuente de verdad del ritmo, JOS-77). */
+async function insertarInteracciones(t: TestConvex<typeof schema>, items: NuevaInteraccion[]) {
+  await t.run(async (ctx) => {
+    for (const i of items) {
+      await ctx.db.insert("interacciones", {
+        usuarioId: i.usuarioId ?? TENANT_A,
+        prospectoId: i.prospectoId,
+        fecha: i.fecha,
+        tipo: "call",
+        queOcurrio: "Test",
+        resultado: "other",
       });
     }
   });
@@ -100,7 +121,7 @@ describe("actividadDiaria · estados de tieneProspectos", () => {
     expect(r).toEqual({
       dayKey: DAY_KEY,
       tieneProspectos: false,
-      ritmo: { completados: 0, pendientes: 0, total: 0, completadosTruncados: false, pendientesTruncados: false, aproximado: true },
+      ritmo: { completados: 0, pendientes: 0, completadosTruncados: false, pendientesTruncados: false },
       hoy: [],
       vencidos: [],
       truncado: { hoy: false, vencidos: false },
@@ -131,14 +152,15 @@ describe("actividadDiaria · estados de tieneProspectos", () => {
 
   it("completados hoy sin pendientes → true, listas vacías y ritmo.completados > 0", async () => {
     const t = nuevoTest();
-    await insertar(t, [
+    const [id] = await insertar(t, [
       { nombre: "Contactada hoy", fechaUltimoContacto: hoyInicio + 10 * HORA, fechaProximoSeguimiento: mananaInicio + 2 * DIA },
     ]);
+    await insertarInteracciones(t, [{ prospectoId: id, fecha: hoyInicio + 10 * HORA }]);
     const r = await actividad(t);
     expect(r.tieneProspectos).toBe(true);
     expect(r.hoy).toEqual([]);
     expect(r.vencidos).toEqual([]);
-    expect(r.ritmo).toMatchObject({ completados: 1, pendientes: 0, total: 1 });
+    expect(r.ritmo).toMatchObject({ completados: 1, pendientes: 0 });
   });
 });
 
@@ -177,23 +199,27 @@ describe("actividadDiaria · partición, orden y proyección", () => {
     expect(ana.id).toBeDefined();
   });
 
-  it("ritmo: completados = contactos dentro de [hoyInicio, mananaInicio)", async () => {
+  it("ritmo: completados = prospectos con interacción dentro de [hoyInicio, mananaInicio)", async () => {
     const t = nuevoTest();
-    await insertar(t, [
+    const [dentro, limite, fuera, pendiente] = await insertar(t, [
       { nombre: "Comp dentro", fechaUltimoContacto: hoyInicio + 9 * HORA, fechaProximoSeguimiento: mananaInicio + 2 * DIA },
       { nombre: "Comp límite", fechaUltimoContacto: mananaInicio - 1, fechaProximoSeguimiento: mananaInicio + 2 * DIA },
       { nombre: "Fuera límite", fechaUltimoContacto: mananaInicio, fechaProximoSeguimiento: mananaInicio + 3 * DIA },
       { nombre: "Pendiente hoy", fechaProximoSeguimiento: hoyInicio + HORA, fechaUltimoContacto: hoyInicio - 3 * DIA },
+    ]);
+    await insertarInteracciones(t, [
+      { prospectoId: dentro, fecha: hoyInicio + 9 * HORA },
+      { prospectoId: limite, fecha: mananaInicio - 1 },
+      { prospectoId: fuera, fecha: mananaInicio },
+      { prospectoId: pendiente, fecha: hoyInicio - 3 * DIA },
     ]);
 
     const r = await actividad(t);
     expect(r.ritmo).toEqual({
       completados: 2,
       pendientes: 1,
-      total: 3,
       completadosTruncados: false,
       pendientesTruncados: false,
-      aproximado: true,
     });
     // Los completados tienen seguimiento futuro: no aparecen en las listas
     expect(r.hoy.map((p) => p.nombre)).toEqual(["Pendiente hoy"]);
@@ -304,9 +330,13 @@ describe("actividadDiaria · truncamiento (MAX_ACTIVIDAD+1 leídos, centinela de
       fechaAlta: hoyInicio - (i + 1) * 60_000,
     }));
     await insertar(t, muchos);
-    await insertar(t, [
+    const [c1, c2] = await insertar(t, [
       { nombre: "Comp 1", fechaUltimoContacto: hoyInicio + 9 * HORA, fechaProximoSeguimiento: mananaInicio + 2 * DIA },
       { nombre: "Comp 2", fechaUltimoContacto: hoyInicio + 10 * HORA, fechaProximoSeguimiento: mananaInicio + 2 * DIA },
+    ]);
+    await insertarInteracciones(t, [
+      { prospectoId: c1, fecha: hoyInicio + 9 * HORA },
+      { prospectoId: c2, fecha: hoyInicio + 10 * HORA },
     ]);
 
     const r = await actividad(t);
@@ -315,10 +345,8 @@ describe("actividadDiaria · truncamiento (MAX_ACTIVIDAD+1 leídos, centinela de
     expect(r.ritmo).toEqual({
       completados: 2,
       pendientes: MAX_ACTIVIDAD,
-      total: MAX_ACTIVIDAD + 2,
       completadosTruncados: false,
       pendientesTruncados: true,
-      aproximado: true,
     });
   });
 
@@ -345,20 +373,140 @@ describe("actividadDiaria · truncamiento (MAX_ACTIVIDAD+1 leídos, centinela de
       fechaUltimoContacto: hoyInicio + (i % 20) * 60_000,
       fechaProximoSeguimiento: mananaInicio + 2 * DIA,
     }));
-    await insertar(t, muchos);
+    const ids = await insertar(t, muchos);
+    // fecha estrictamente creciente: el orden de lectura del índice es determinista,
+    // y el prospecto 501 (el centinela) aparece solo en la fila 501.
+    await insertarInteracciones(t, ids.map((prospectoId, i) => ({ prospectoId, fecha: hoyInicio + i * 60_000 })));
 
     const r = await actividad(t);
     expect(r.ritmo).toEqual({
       completados: MAX_ACTIVIDAD,
       pendientes: 0,
-      total: MAX_ACTIVIDAD,
       completadosTruncados: true,
       pendientesTruncados: false,
-      aproximado: true,
     });
     expect(r.hoy).toEqual([]);
     expect(r.vencidos).toEqual([]);
     expect(r.tieneProspectos).toBe(true);
+  });
+
+  it("completados truncados con repetidos: cuenta prospectos distintos entre las MAX_ACTIVIDAD filas leídas", async () => {
+    const t = nuevoTest();
+    // 501 interacciones en 4 prospectos (≤ MAX_INTERACCIONES_POR_PROSPECTO = 150 cada uno).
+    const ids = await insertar(t, Array.from({ length: 4 }, (_, i) => ({ nombre: `Rep ${i}` })));
+    const items = Array.from({ length: MAX_ACTIVIDAD + 1 }, (_, i) => ({
+      prospectoId: ids[Math.floor(i / 126)], // 126·4 = 504 ≥ 501 → 126,126,126,123
+      fecha: hoyInicio + i * 60_000,
+    }));
+    await insertarInteracciones(t, items);
+    // Las primeras 500 filas por fecha creciente: el esperado se calcula de los datos.
+    const esperado = new Set(items.slice(0, MAX_ACTIVIDAD).map((i) => i.prospectoId)).size;
+    expect(esperado).toBe(4);
+
+    const r = await actividad(t);
+    expect(r.ritmo.completadosTruncados).toBe(true);
+    expect(r.ritmo.completados).toBe(esperado);
+  });
+});
+
+describe("actividadDiaria · completados sobre interacciones (JOS-77)", () => {
+  it("una persona con 3 interacciones hoy cuenta 1", async () => {
+    const t = nuevoTest();
+    const [id] = await insertar(t, [{ nombre: "Triple" }]);
+    await insertarInteracciones(t, [
+      { prospectoId: id, fecha: hoyInicio + HORA },
+      { prospectoId: id, fecha: hoyInicio + 2 * HORA },
+      { prospectoId: id, fecha: hoyInicio + 3 * HORA },
+    ]);
+    const r = await actividad(t);
+    expect(r.ritmo.completados).toBe(1);
+    expect(r.ritmo.completadosTruncados).toBe(false);
+  });
+
+  it("dos personas con interacción hoy cuentan 2", async () => {
+    const t = nuevoTest();
+    const [a, b] = await insertar(t, [{ nombre: "A" }, { nombre: "B" }]);
+    await insertarInteracciones(t, [
+      { prospectoId: a, fecha: hoyInicio + HORA },
+      { prospectoId: b, fecha: hoyInicio + 2 * HORA },
+    ]);
+    expect((await actividad(t)).ritmo.completados).toBe(2);
+  });
+
+  it("límites del día: hoyInicio y mananaInicio-1 cuentan; mananaInicio y hoyInicio-1 no", async () => {
+    const t = nuevoTest();
+    const [i0, i1, i2, i3] = await insertar(t, [
+      { nombre: "En hoyInicio" },
+      { nombre: "En mananaInicio-1" },
+      { nombre: "En mananaInicio" },
+      { nombre: "En hoyInicio-1" },
+    ]);
+    await insertarInteracciones(t, [
+      { prospectoId: i0, fecha: hoyInicio },
+      { prospectoId: i1, fecha: mananaInicio - 1 },
+      { prospectoId: i2, fecha: mananaInicio },
+      { prospectoId: i3, fecha: hoyInicio - 1 },
+    ]);
+    expect((await actividad(t)).ritmo.completados).toBe(2);
+  });
+
+  it("regresión: fechaUltimoContacto hoy SIN interacciones hoy ya no cuenta", async () => {
+    const t = nuevoTest();
+    await insertar(t, [{ nombre: "Derivado desviado", fechaUltimoContacto: hoyInicio + 5 * HORA }]);
+    expect((await actividad(t)).ritmo.completados).toBe(0);
+  });
+
+  it("aislamiento por tenant: interacciones de otro usuarioId no cuentan", async () => {
+    const t = nuevoTest();
+    const [propio] = await insertar(t, [{ nombre: "Mío" }]);
+    const [ajeno] = await insertar(t, [{ nombre: "Ajeno", usuarioId: TENANT_B }]);
+    await insertarInteracciones(t, [
+      { prospectoId: propio, fecha: hoyInicio + HORA },
+      { prospectoId: ajeno, fecha: hoyInicio + HORA, usuarioId: TENANT_B },
+    ]);
+    expect((await actividad(t)).ritmo.completados).toBe(1);
+  });
+
+  it("ritmo ya no contiene `aproximado` ni `total`", async () => {
+    const r = await actividad(nuevoTest());
+    expect(r.ritmo).not.toHaveProperty("aproximado");
+    expect(r.ritmo).not.toHaveProperty("total");
+  });
+
+  it("solapamiento: interacción hoy Y seguimiento hoy cuenta en completados y en pendientes", async () => {
+    const t = nuevoTest();
+    const [id] = await insertar(t, [{ nombre: "Solapado", fechaProximoSeguimiento: hoyInicio + 5 * HORA }]);
+    await insertarInteracciones(t, [{ prospectoId: id, fecha: hoyInicio + HORA }]);
+    const r = await actividad(t);
+    expect(r.ritmo).toMatchObject({ completados: 1, pendientes: 1 });
+  });
+
+  it("borrar el prospecto con la mutación `eliminar` retira su interacción del recuento", async () => {
+    const t = nuevoTest();
+    const [id] = await insertar(t, [{ nombre: "Efímero" }]);
+    await insertarInteracciones(t, [{ prospectoId: id, fecha: hoyInicio + HORA }]);
+    expect((await actividad(t)).ritmo.completados).toBe(1);
+
+    await t.withIdentity(IDENT_A).mutation(api.prospectos.eliminar, { id });
+    expect((await actividad(t)).ritmo.completados).toBe(0);
+  });
+
+  it("borrar solo la última interacción del día (`interacciones.eliminar`) baja completados de 1 a 0 y conserva el prospecto", async () => {
+    const t = nuevoTest();
+    const [id] = await insertar(t, [{ nombre: "Se queda" }]);
+    await insertarInteracciones(t, [{ prospectoId: id, fecha: hoyInicio + HORA }]);
+    expect((await actividad(t)).ritmo.completados).toBe(1);
+
+    const interaccionId = await t.run(async (ctx) => {
+      const fila = await ctx.db.query("interacciones").first();
+      return fila!._id;
+    });
+    await t.withIdentity(IDENT_A).mutation(api.interacciones.eliminar, { id: interaccionId });
+
+    const r = await actividad(t);
+    expect(r.ritmo.completados).toBe(0);
+    expect(r.tieneProspectos).toBe(true);
+    expect(await t.run(async (ctx) => (await ctx.db.get(id)) !== null)).toBe(true);
   });
 });
 
@@ -714,7 +862,7 @@ describe("seed", () => {
     expect(r.hoy.map((p) => p.nombre)).toEqual(["Lucía Ferrer", "Carlos Vega", "Marta Ruiz"]);
     expect(r.vencidos.map((p) => p.nombre)).toEqual(["Elena Prat", "Andrés Molina"]);
     expect(r.vencidos.map((p) => p.diasVencido)).toEqual([7, 2]);
-    expect(r.ritmo).toMatchObject({ completados: 1, pendientes: 3, total: 4 });
+    expect(r.ritmo).toMatchObject({ completados: 1, pendientes: 3 });
   });
 
   it("pipeline puebla las 6 etapas (escenario del recorrido manual de JOS-21)", async () => {

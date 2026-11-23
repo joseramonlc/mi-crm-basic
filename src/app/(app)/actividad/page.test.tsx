@@ -23,10 +23,8 @@ type Payload = {
   ritmo: {
     completados: number;
     pendientes: number;
-    total: number;
     completadosTruncados: boolean;
     pendientesTruncados: boolean;
-    aproximado: true;
   };
   hoy: Prospecto[];
   vencidos: Prospecto[];
@@ -47,7 +45,7 @@ function payload(overrides: Partial<Payload> = {}): Payload {
   return {
     dayKey: "2026-07-12",
     tieneProspectos: true,
-    ritmo: { completados: 0, pendientes: 0, total: 0, completadosTruncados: false, pendientesTruncados: false, aproximado: true },
+    ritmo: { completados: 0, pendientes: 0, completadosTruncados: false, pendientesTruncados: false },
     hoy: [],
     vencidos: [],
     truncado: { hoy: false, vencidos: false },
@@ -94,12 +92,12 @@ describe("estados de la pantalla", () => {
 
   it("todo al día: mensaje positivo, ritmo visible, CTA de alta y sin afirmar que no hay prospectos", () => {
     useQueryMock.mockReturnValue(
-      payload({ ritmo: { completados: 2, pendientes: 0, total: 2, completadosTruncados: false, pendientesTruncados: false, aproximado: true } }),
+      payload({ ritmo: { completados: 2, pendientes: 0, completadosTruncados: false, pendientesTruncados: false } }),
     );
     render(<ActividadPage />);
     expect(screen.getByText("¡Todo al día!")).toBeDefined();
     expect(screen.getByText("No tienes seguimientos pendientes.")).toBeDefined();
-    expect(screen.getByText("2 de 2 seguimientos de hoy (aprox.)")).toBeDefined();
+    expect(screen.getByText("2 contactados hoy · 0 seguimientos pendientes para hoy")).toBeDefined();
     // Botón de alta exigido por JOS-22 también en este estado
     const cta = screen.getByRole("link", { name: /Añadir prospecto/ });
     expect(cta.getAttribute("href")).toBe("/prospectos/nuevo");
@@ -110,14 +108,30 @@ describe("estados de la pantalla", () => {
     useQueryMock.mockReturnValue(payload());
     render(<ActividadPage />);
     expect(screen.getByText("¡Todo al día!")).toBeDefined();
-    expect(screen.queryByText(/aprox\./)).toBeNull();
+    expect(screen.queryByText(/contactados hoy/)).toBeNull();
     expect(screen.getByRole("link", { name: /Añadir prospecto/ })).toBeDefined();
+  });
+
+  it("solo vencidos: el ritmo dice «para hoy» y no contradice la sección de vencidos (JOS-77)", () => {
+    useQueryMock.mockReturnValue(
+      payload({
+        hoy: [],
+        vencidos: [
+          prospecto("v1", "Venc Uno", { diasVencido: 1 }),
+          prospecto("v2", "Venc Dos", { diasVencido: 2 }),
+          prospecto("v3", "Venc Tres", { diasVencido: 3 }),
+        ],
+      }),
+    );
+    render(<ActividadPage />);
+    expect(screen.getByRole("heading", { name: /Seguimientos vencidos \(3\)/ })).toBeDefined();
+    expect(screen.getByText("0 contactados hoy · 0 seguimientos pendientes para hoy")).toBeDefined();
   });
 
   it("actividad: secciones, tarjetas, ritmo y navegación a la ficha", () => {
     useQueryMock.mockReturnValue(
       payload({
-        ritmo: { completados: 1, pendientes: 2, total: 3, completadosTruncados: false, pendientesTruncados: false, aproximado: true },
+        ritmo: { completados: 1, pendientes: 2, completadosTruncados: false, pendientesTruncados: false },
         hoy: [prospecto("p1", "Marta Ruiz"), prospecto("p2", "Carlos Vega", { etapaActual: "contacted" })],
         vencidos: [prospecto("p3", "Elena Prat", { etapaActual: "presented", diasVencido: 7 })],
       }),
@@ -128,7 +142,7 @@ describe("estados de la pantalla", () => {
     expect(screen.getByText("Marta Ruiz")).toBeDefined();
     expect(screen.getByText("Elena Prat")).toBeDefined();
     expect(screen.getByText("Vencido hace 7 días")).toBeDefined();
-    expect(screen.getByText("1 de 3 seguimientos de hoy (aprox.)")).toBeDefined();
+    expect(screen.getByText("1 contactado hoy · 2 seguimientos pendientes para hoy")).toBeDefined();
     expect(screen.queryByText(BANNER_VISTA_PARCIAL)).toBeNull();
 
     fireEvent.click(screen.getByText("Elena Prat"));
@@ -156,14 +170,14 @@ describe("estados de la pantalla", () => {
   it("actividad truncada: banner exacto de vista parcial y '≥' solo en la cantidad truncada", () => {
     useQueryMock.mockReturnValue(
       payload({
-        ritmo: { completados: 3, pendientes: MAX_ACTIVIDAD, total: MAX_ACTIVIDAD + 3, completadosTruncados: false, pendientesTruncados: true, aproximado: true },
+        ritmo: { completados: 3, pendientes: MAX_ACTIVIDAD, completadosTruncados: false, pendientesTruncados: true },
         hoy: Array.from({ length: 30 }, (_, i) => prospecto(`h${i}`, `Hoy ${i}`)),
         truncado: { hoy: true, vencidos: false },
       }),
     );
     render(<ActividadPage />);
     expect(screen.getByText(BANNER_VISTA_PARCIAL)).toBeDefined();
-    expect(screen.getByText(`3 completados · ≥${MAX_ACTIVIDAD} pendientes (aprox.)`)).toBeDefined();
+    expect(screen.getByText(`3 contactados hoy · ≥${MAX_ACTIVIDAD} seguimientos pendientes para hoy`)).toBeDefined();
   });
 });
 
@@ -250,10 +264,8 @@ describe("reactividad tras registrar el contacto (JOS-23, puntos 7 y 8)", () => 
   const ritmo = (completados: number, pendientes: number) => ({
     completados,
     pendientes,
-    total: completados + pendientes,
     completadosTruncados: false,
     pendientesTruncados: false,
-    aproximado: true as const,
   });
 
   it("cuando la query se reemite sin el prospecto contactado, este sale de «Para hoy» y el ritmo sube", () => {
@@ -262,7 +274,7 @@ describe("reactividad tras registrar el contacto (JOS-23, puntos 7 y 8)", () => 
     );
     const { rerender } = render(<ActividadPage />);
     expect(screen.getByText("Marta Ruiz")).toBeDefined();
-    expect(screen.getByText("0 de 2 seguimientos de hoy (aprox.)")).toBeDefined();
+    expect(screen.getByText("0 contactados hoy · 2 seguimientos pendientes para hoy")).toBeDefined();
 
     // Lo que hace Convex por su cuenta al confirmarse la mutación: reemite la
     // query ya recalculada. No hay refresco manual en la pantalla.
@@ -272,7 +284,7 @@ describe("reactividad tras registrar el contacto (JOS-23, puntos 7 y 8)", () => 
     expect(screen.queryByText("Marta Ruiz")).toBeNull();
     expect(screen.getByText("Carlos Vega")).toBeDefined();
     expect(screen.getByRole("heading", { name: /Para hoy \(1\)/ })).toBeDefined();
-    expect(screen.getByText("1 de 2 seguimientos de hoy (aprox.)")).toBeDefined();
+    expect(screen.getByText("1 contactado hoy · 1 seguimiento pendiente para hoy")).toBeDefined();
   });
 
   it("si era el último pendiente, la pantalla pasa a «¡Todo al día!»", () => {
@@ -285,7 +297,7 @@ describe("reactividad tras registrar el contacto (JOS-23, puntos 7 y 8)", () => 
 
     expect(screen.queryByText("Marta Ruiz")).toBeNull();
     expect(screen.getByText("¡Todo al día!")).toBeDefined();
-    expect(screen.getByText("1 de 1 seguimiento de hoy (aprox.)")).toBeDefined();
+    expect(screen.getByText("1 contactado hoy · 0 seguimientos pendientes para hoy")).toBeDefined();
   });
 });
 

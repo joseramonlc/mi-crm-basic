@@ -111,13 +111,18 @@ export const actividadDiaria = query({
       .take(MAX_ACTIVIDAD + 1);
     const hoyAcotado = acotar(hoyLeidos);
 
-    const completadosLeidos = await ctx.db
-      .query("prospectos")
-      .withIndex("by_usuario_ultimo_contacto", (q) =>
-        q.eq("usuarioId", usuarioId).gte("fechaUltimoContacto", hoyInicio).lt("fechaUltimoContacto", mananaInicio),
+    // JOS-77: fuente de verdad = `interacciones` (no el derivado fechaUltimoContacto).
+    // Se cuentan prospectos DISTINTOS con alguna interacción en el día visible; el
+    // prefijo usuarioId del índice garantiza el aislamiento por tenant.
+    const interaccionesHoy = await ctx.db
+      .query("interacciones")
+      .withIndex("by_usuario_fecha", (q) =>
+        q.eq("usuarioId", usuarioId).gte("fecha", hoyInicio).lt("fecha", mananaInicio),
       )
       .take(MAX_ACTIVIDAD + 1);
-    const completados = Math.min(completadosLeidos.length, MAX_ACTIVIDAD);
+    const completadosTruncados = interaccionesHoy.length > MAX_ACTIVIDAD;
+    // Se descarta el centinela: como mucho MAX_ACTIVIDAD interacciones procesadas.
+    const completados = new Set(interaccionesHoy.slice(0, MAX_ACTIVIDAD).map((i) => i.prospectoId)).size;
 
     const proyectar = (p: Doc<"prospectos">, vencido: boolean): ProspectoActividad => ({
       id: p._id,
@@ -136,16 +141,16 @@ export const actividadDiaria = query({
     return {
       dayKey,
       tieneProspectos,
-      // "Completados" aproxima contactos de hoy, no seguimientos planificados
-      // cumplidos. JOS-23 (acción rápida "Ya contacté") NO cambia este cálculo:
-      // computarlo directamente sobre `interacciones` es JOS-77.
+      // `completados` = prospectos distintos con interacción hoy (exacto sobre
+      // `interacciones`). Incluye contactos espontáneos y se solapa con `pendientes`
+      // (un prospecto contactado hoy puede tener seguimiento hoy), por eso no hay
+      // `total`: la UI muestra ambos recuentos por separado.
+      // `completadosTruncados`: había más interacciones de las leídas → N es cota inferior.
       ritmo: {
         completados,
         pendientes,
-        total: completados + pendientes,
-        completadosTruncados: completadosLeidos.length > MAX_ACTIVIDAD,
+        completadosTruncados,
         pendientesTruncados: hoyAcotado.truncado,
-        aproximado: true as const,
       },
       hoy: hoyAcotado.filas.map((p) => proyectar(p, false)),
       vencidos: vencidosAcotado.filas.map((p) => proyectar(p, true)),
